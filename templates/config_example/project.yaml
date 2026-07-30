@@ -1,0 +1,23 @@
+# =============================================================================
+# project.yaml — Project-level settings
+# =============================================================================
+
+# Two-digit project identifier (e.g. "01", "02").
+# This determines the directory naming convention:
+#   M{id}/  I{id}/  R{id}/  P{id}/
+project_id: "01"
+
+# Absolute path to the project directory on the HPC filesystem.
+# The workflow will create M{id}/ and all subdirectories here.
+# Example: /work/noaa/nos-surge/user/my_project
+project_dir: /work/noaa/nos-surge/USER/PROJECT
+
+# Simulation start and end dates (inclusive). Format: YYYY-MM-DD
+# The workflow will generate one time group per calendar month
+# between these dates.
+start_date: "2024-09-01"
+end_date:   "2026-06-30"
+
+# Time grouping for inputs and run directories.
+# Only "monthly" is supported at this time.
+grouping: monthly

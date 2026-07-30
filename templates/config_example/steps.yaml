@@ -1,0 +1,13 @@
+# =============================================================================
+# steps.yaml — Step execution flags
+# =============================================================================
+# Set a step to true to enable it, false to skip it.
+# Run the workflow one step at a time: enable one step, test it,
+# then disable it and enable the next.
+#
+# Phase 1 — Head node (requires internet access):
+download_hycom: true
+
+# Phase 2 — Compute nodes (no internet required):
+# These will be implemented in future versions.
+aggregate_hycom: false

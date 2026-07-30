@@ -1,0 +1,18 @@
+# =============================================================================
+# envs.yaml — Conda environment settings
+# =============================================================================
+
+# Absolute path to your conda/miniconda installation base directory.
+conda_base: /work2/noaa/nos-surge/felicioc/envs/miniconda3
+
+# Per-step conda environment name.
+# Only steps that invoke Python need an entry here.
+# Steps that only call Fortran binaries or shell commands do not need one.
+#
+# The workflow will call environments using their full path and will special-case
+# the base environment:
+#   base env:       {conda_base}/bin/python
+#   named env:      {conda_base}/envs/{env_name}/bin/python
+# This avoids conda activation issues in non-interactive HPC shells.
+conda_envs:
+  aggregate_hycom: base

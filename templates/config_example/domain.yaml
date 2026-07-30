@@ -1,0 +1,24 @@
+# =============================================================================
+# domain.yaml — Spatial domain settings
+# =============================================================================
+
+# Bounding box for data downloads. All values in decimal degrees.
+# These should generously cover the model domain and any sponge/nudging layers.
+lon_min: 150.0
+lon_max: 230.0
+lat_min:  45.0
+lat_max:  78.0
+
+# Longitude reference frame used by the mesh (hgrid.gr3).
+# This ensures downloaded data is consistent with the grid coordinate system.
+#
+# Options:
+#   "180"    ->  -180 to +180, with 0 at Greenwich  (standard geographic)
+#   "360"    ->     0 to  360, with 0 at Greenwich  (e.g. Bering Sea models
+#                              where 180 crosses the domain)
+#
+# The Bering Sea / Alaska model uses "360".
+#
+# NOTE: The "360" path is the proven production path. The "180" convention is
+# implemented but not yet validated against real HYCOM data (experimental).
+lon_reference: "360"

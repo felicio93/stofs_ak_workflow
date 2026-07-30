@@ -55,19 +55,12 @@ cdo --version
 
 ### Python packages
 
-The orchestrator and download script require:
+Phase 1 runs inside a single conda environment (`ak_workflow`) that provides
+both the Python dependencies and the NCO/CDO tools. See
+[One-Time Setup](#one-time-setup) for the `conda create` command. The Python
+dependencies are:
 - `pyyaml`
 - `python-dateutil`
-
-Install into your conda base environment (once):
-```bash
-conda install -c conda-forge pyyaml python-dateutil
-```
-
-Or if using pip:
-```bash
-pip install pyyaml python-dateutil
-```
 
 ---
 
@@ -150,13 +143,28 @@ cd ~
 git clone https://github.com/felicio93/stofs_ak_workflow
 ```
 
-### 2. Verify Python dependencies
+### 2. Create the workflow conda environment
+
+Create one self-contained environment (`ak_workflow`) that holds everything
+Phase 1 needs: the Python dependencies plus the NCO/CDO command-line tools.
+This keeps the workflow independent of any data-specific environments.
 
 ```bash
-python -c "import yaml, dateutil; print('OK')"
+conda create -n ak_workflow -c conda-forge python=3.11 pyyaml python-dateutil nco cdo
 ```
 
-If this fails, install the missing packages (see [Prerequisites](#prerequisites)).
+Verify it:
+```bash
+conda activate ak_workflow
+python --version                       # >= 3.8
+python -c "import yaml, dateutil; print('deps OK')"
+ncks --version
+cdo --version
+```
+
+The `download_hycom` step is configured to expect this environment in
+`envs.yaml` (`conda_envs.download_hycom: ak_workflow`). Activate it before
+running the download; the workflow will warn if a different env is active.
 
 ### 3. Add the repo to your PATH (optional but convenient)
 

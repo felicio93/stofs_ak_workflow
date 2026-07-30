@@ -192,7 +192,7 @@ def check_dtn():
     print("The HYCOM download needs external internet access, which on Hercules")
     print("is only available on the DTN. Connect to it first, then re-run:")
     print("    ssh hercules-dtn.hpc.msstate.edu")
-    print("    conda activate hycom_env   # or your download environment")
+    print("    conda activate ak_workflow   # workflow env with pyyaml/dateutil/NCO/CDO")
     print("    python orchestrator.py --run --config <config_dir>")
     print()
     print("If you are on a system whose transfer node is not named 'dtn',")

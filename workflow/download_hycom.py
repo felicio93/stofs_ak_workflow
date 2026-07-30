@@ -14,7 +14,9 @@ Usage (called by orchestrator.py, not directly):
 """
 
 import argparse
+import os
 import shutil
+import socket
 import subprocess
 import sys
 from datetime import date, timedelta
@@ -25,6 +27,12 @@ import yaml
 
 # Command-line tools required by the download/processing steps.
 REQUIRED_TOOLS = ["ncks", "ncpdq", "ncap2", "ncrename", "ncatted"]
+
+# Substring that identifies a Data Transfer Node on Hercules. The HYCOM
+# OPeNDAP download requires external internet access, which is only available
+# on the DTN (e.g. hercules-dtn.hpc.msstate.edu), not the regular login/compute
+# nodes.
+DTN_HOSTNAME_HINT = "dtn"
 
 
 # =============================================================================
@@ -129,6 +137,67 @@ def check_required_tools():
         print("These are provided by NCO. On Hercules, load the module first, e.g.:")
         print("    module load nco")
         sys.exit(1)
+
+
+def check_active_env(cfg: dict):
+    """
+    Warn if the active conda environment does not match the one configured for
+    the download_hycom step in envs.yaml.
+
+    Phase 1 downloads run INSIDE the environment the user activated on the DTN
+    (e.g. `conda activate hycom_env`). We do not switch environments here; we
+    only verify that the expected env is active so a wrong-env mistake is
+    caught early. This is a soft warning, not a hard failure.
+    """
+    expected = cfg.get("conda_envs", {}).get("download_hycom")
+    if not expected:
+        return  # nothing configured to verify against
+
+    active = os.environ.get("CONDA_DEFAULT_ENV")
+    if active is None:
+        print(f"  WARNING: no active conda environment detected, but envs.yaml "
+              f"expects '{expected}' for download_hycom.")
+    elif active != expected:
+        print(f"  WARNING: active conda environment is '{active}', but envs.yaml "
+              f"expects '{expected}' for download_hycom.")
+        print(f"           If this is intentional you can ignore this. Otherwise:")
+        print(f"           conda activate {expected}")
+    else:
+        print(f"  Env check: active conda environment '{active}' matches config. OK.")
+
+
+def check_dtn():
+    """
+    Warn if we do not appear to be on a Data Transfer Node.
+
+    The HYCOM OPeNDAP download requires external internet access, which on
+    Hercules is only available from the DTN (hercules-dtn.hpc.msstate.edu).
+    Regular login and compute nodes cannot reach tds.hycom.org, so the
+    download would fail with connection errors.
+
+    This is a soft check: set ALLOW_NON_DTN=1 to bypass it (e.g. if running
+    on another system whose transfer nodes are not named 'dtn').
+    """
+    hostname = socket.gethostname()
+    if DTN_HOSTNAME_HINT in hostname.lower():
+        print(f"  Host check: running on '{hostname}' (looks like a DTN). OK.")
+        return
+
+    if os.environ.get("ALLOW_NON_DTN") == "1":
+        print(f"  Host check: '{hostname}' is not a DTN, but ALLOW_NON_DTN=1 is set. "
+              f"Proceeding anyway.")
+        return
+
+    print(f"ERROR: current host '{hostname}' does not look like a Data Transfer Node.")
+    print("The HYCOM download needs external internet access, which on Hercules")
+    print("is only available on the DTN. Connect to it first, then re-run:")
+    print("    ssh hercules-dtn.hpc.msstate.edu")
+    print("    conda activate hycom_env   # or your download environment")
+    print("    python orchestrator.py --run --config <config_dir>")
+    print()
+    print("If you are on a system whose transfer node is not named 'dtn',")
+    print("bypass this check by setting:  export ALLOW_NON_DTN=1")
+    sys.exit(1)
 
 
 def hours_since_2000(date_str: str) -> int:
@@ -409,6 +478,8 @@ def _download_with_lon_fallback(date_str, url, variables,
 def run_download(cfg: dict):
     """Main entry point: iterate over all days and download SSH, TS, UV."""
 
+    check_dtn()
+    check_active_env(cfg)
     check_required_tools()
 
     pid         = cfg["project_id"]

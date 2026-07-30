@@ -9,10 +9,18 @@ conda_base: /work2/noaa/nos-surge/felicioc/envs/miniconda3
 # Only steps that invoke Python need an entry here.
 # Steps that only call Fortran binaries or shell commands do not need one.
 #
-# The workflow will call environments using their full path and will special-case
-# the base environment:
-#   base env:       {conda_base}/bin/python
-#   named env:      {conda_base}/envs/{env_name}/bin/python
-# This avoids conda activation issues in non-interactive HPC shells.
+# Two usage patterns:
+#
+#   1. Phase 1 steps run INSIDE the activated env (interactive on the DTN).
+#      For these, the env name is used only for VERIFICATION: the workflow
+#      warns if the currently active conda env does not match. It does not
+#      switch environments.
+#        e.g. download_hycom -> hycom_env
+#
+#   2. Phase 2 compute-node steps CALL a specific env by full interpreter path
+#      (no conda activate needed in non-interactive shells):
+#        base env:    {conda_base}/bin/python
+#        named env:   {conda_base}/envs/{env_name}/bin/python
 conda_envs:
+  download_hycom: hycom_env
   aggregate_hycom: base

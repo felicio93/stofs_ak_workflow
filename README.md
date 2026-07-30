@@ -256,27 +256,52 @@ currently testing. Disable it and enable the next step once it is verified.
 | Field | Type | Description |
 |-------|------|-------------|
 | `conda_base` | string | Absolute path to your miniconda installation |
-| `conda_envs.<step_name>` | string | Name of the conda environment to use for that step |
+| `conda_envs.<step_name>` | string | Name of the conda environment for that step |
 
-The workflow always calls Python via the full path to the environment's
-interpreter, never via `conda activate`. The `base` environment uses
-`{conda_base}/bin/python`; named environments use
-`{conda_base}/envs/{env}/bin/python`.
-This is required for non-interactive HPC shells.
+There are two usage patterns for `conda_envs`:
+
+- **Phase 1 (run inside the env):** steps like `download_hycom` run inside the
+  environment you activated on the DTN. The configured name is used only to
+  **verify** the active environment matches (a soft warning on mismatch); it
+  does not switch environments.
+- **Phase 2 (call the env):** compute-node steps call a specific interpreter by
+  full path, never via `conda activate`. The `base` environment uses
+  `{conda_base}/bin/python`; named environments use
+  `{conda_base}/envs/{env}/bin/python`.
 
 ---
 
 ## Running the Workflow
 
-### Phase 1 — HYCOM download (head node / DTN, internet required)
+### Phase 1 — HYCOM download (DTN node, internet required)
 
-1. In `steps.yaml`, set `download_hycom: true` and all others `false`.
-2. Run:
+The HYCOM OPeNDAP download requires external internet access, which on
+Hercules is **only available on the Data Transfer Node (DTN)**. Regular login
+and compute nodes cannot reach `tds.hycom.org`.
+
+1. Connect to the DTN and activate your download environment:
+
+```bash
+ssh hercules-dtn.hpc.msstate.edu
+conda activate hycom_env          # your environment with NCO/pyyaml/dateutil
+module load nco                   # if NCO is not already in the env
+```
+
+2. In `steps.yaml`, set `download_hycom: true` and all others `false`.
+3. Run:
 
 ```bash
 python ~/stofs_ak_workflow/orchestrator.py \
     --run \
     --config /work/noaa/nos-surge/USER/my_project/M01/config
+```
+
+The script performs a host check up front and will refuse to run if it does
+not detect a DTN hostname (a substring `dtn`). If you are on a different
+system whose transfer node is not named `dtn`, bypass the check with:
+
+```bash
+export ALLOW_NON_DTN=1
 ```
 
 The script will loop over every day between `start_date` and `end_date`,
@@ -287,12 +312,10 @@ M01/raw/hycom/ts/ts_YYYYMMDD.nc
 M01/raw/hycom/uv/uv_YYYYMMDD.nc
 ```
 
-**Resume behaviour:** If a file already exists for a given day and variable,
-it is skipped. If the download is interrupted, simply re-run the same command
+**Resume behaviour:** If a valid (non-empty) file already exists for a given
+day and variable, it is skipped. Incomplete files are automatically
+re-downloaded. If the download is interrupted, simply re-run the same command
 and it will pick up where it left off.
-
-**On Hercules specifically:** Run this on the DTN node (`hercules-dtn`) which
-has external internet access. The regular head nodes may not.
 
 ---
 

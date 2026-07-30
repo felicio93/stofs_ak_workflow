@@ -22,3 +22,16 @@ lat_max:  78.0
 # NOTE: The "360" path is the proven production path. The "180" convention is
 # implemented but not yet validated against real HYCOM data (experimental).
 lon_reference: "360"
+
+# -----------------------------------------------------------------------------
+# Debug plotting options (used by the plotting_debug step).
+# -----------------------------------------------------------------------------
+# Colormap for all HYCOM debug plots.
+plot_cmap: jet
+
+# Color scale limits per variable. Use [auto, auto] to derive robust limits
+# from the 2nd/98th percentiles of the data (adapts to any domain/season), or
+# set explicit numeric bounds, e.g. [-2, 16].
+plot_temp_range: [auto, auto]
+plot_salt_range: [auto, auto]
+plot_ssh_range:  [auto, auto]

@@ -23,4 +23,5 @@ conda_base: /work2/noaa/nos-surge/felicioc/envs/miniconda3
 #        named env:   {conda_base}/envs/{env_name}/bin/python
 conda_envs:
   download_hycom: ak_workflow
-  aggregate_hycom: base
+  aggregate_hycom: ak_workflow
+  plotting_debug: ak_plots

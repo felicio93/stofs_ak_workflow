@@ -5,9 +5,13 @@
 # Run the workflow one step at a time: enable one step, test it,
 # then disable it and enable the next.
 #
-# Phase 1 — Head node (requires internet access):
+# Phase 1 — Head node / DTN (requires internet access):
 download_hycom: true
 
-# Phase 2 — Compute nodes (no internet required):
-# These will be implemented in future versions.
+# Phase 2 — Any node, no internet required:
+# aggregate_hycom runs interactively (fast: ncrcat + cdo).
 aggregate_hycom: false
+
+# plotting_debug submits a SLURM job array (one task per month) to generate
+# debug GIFs (temperature, salinity, ssh) from the aggregated monthly files.
+plotting_debug: false

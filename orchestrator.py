@@ -35,25 +35,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from dateutil.relativedelta import relativedelta
 
-import yaml
+from workflow.config import load_config
 
 
 # =============================================================================
-# Config loader
+# Config validation
 # =============================================================================
-
-def load_config(config_dir: Path) -> dict:
-    """Load and merge all YAML config files from the config directory."""
-    cfg = {}
-    for fname in ("project.yaml", "domain.yaml", "steps.yaml", "envs.yaml"):
-        fpath = config_dir / fname
-        if not fpath.exists():
-            print(f"ERROR: Config file not found: {fpath}")
-            sys.exit(1)
-        with open(fpath) as f:
-            cfg.update(yaml.safe_load(f))
-    return cfg
-
 
 def validate_config(cfg: dict):
     """Validate config values that affect directory layout and execution."""
@@ -138,8 +125,9 @@ def init_project(cfg: dict):
     print(f"\n  Generating {len(months)} monthly time groups "
           f"({months[0]} -> {months[-1]})\n")
 
-    # --- I, R, P directories with monthly subdirectories ---
-    for prefix, label in [("I", "Inputs"), ("R", "Run"), ("P", "Postprocessing")]:
+    # --- I, R, P, D directories with monthly subdirectories ---
+    for prefix, label in [("I", "Inputs"), ("R", "Run"),
+                          ("P", "Postprocessing"), ("D", "Debug plots")]:
         parent = model_dir / f"{prefix}{pid}"
         parent.mkdir(parents=True, exist_ok=True)
         print(f"  Created: {parent}  ({label})")
@@ -147,6 +135,9 @@ def init_project(cfg: dict):
             sub = parent / f"{prefix}{pid}_{ym}"
             sub.mkdir(parents=True, exist_ok=True)
             print(f"    {sub.name}/")
+
+    # --- SLURM log directory for debug plotting jobs ---
+    (model_dir / f"D{pid}" / "logs").mkdir(parents=True, exist_ok=True)
 
     print(f"\n  Init complete. Next steps:")
     print(f"    1. Copy your mesh and fixed files into:  {model_dir}/fix/")
@@ -177,13 +168,24 @@ def run_workflow(cfg: dict, config_dir: Path):
         print("[SKIP] download_hycom (disabled in steps.yaml)")
 
     # -------------------------------------------------------------------------
-    # Step: aggregate_hycom  (not yet implemented)
+    # Step: aggregate_hycom  (interactive: ncrcat daily -> monthly SCHISM stacks)
     # -------------------------------------------------------------------------
     if bool(cfg.get("aggregate_hycom", False)):
         print("[STEP] aggregate_hycom")
-        print("  WARNING: aggregate_hycom is not yet implemented.")
+        from workflow.aggregate_hycom import run_aggregate
+        run_aggregate(cfg)
     else:
         print("[SKIP] aggregate_hycom (disabled in steps.yaml)")
+
+    # -------------------------------------------------------------------------
+    # Step: plotting_debug  (submits a SLURM job array, one task per month)
+    # -------------------------------------------------------------------------
+    if bool(cfg.get("plotting_debug", False)):
+        print("[STEP] plotting_debug")
+        from workflow.submit_plots import submit_plotting_jobs
+        submit_plotting_jobs(cfg, config_dir)
+    else:
+        print("[SKIP] plotting_debug (disabled in steps.yaml)")
 
     print(f"\n{'='*60}")
     print("  Workflow complete.")

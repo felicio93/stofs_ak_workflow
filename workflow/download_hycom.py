@@ -435,25 +435,32 @@ def field_signature(nc_file: Path, varname: str, tmp_dir: Path):
 
 def stale_check_month(ym, ssh_dir, ts_dir, uv_dir, tmp_dir):
     """
-    Compare the first and last downloaded day of a month. If the field means
+    Compare the first vs the last AVAILABLE day of a month. If the field means
     are identical (to within a tiny tolerance) the data is almost certainly
     stale (e.g. an expired aggregation echoing its final timestep).
+
+    Works for partial months too: it uses the earliest and latest days that
+    actually have files, and skips the check only if fewer than two days exist.
     Returns a list of warning strings (empty if all good).
     """
     year, month = int(ym[:4]), int(ym[4:])
     ndays = monthrange(year, month)[1]
-    first = f"{ym}01"
-    last = f"{ym}{ndays:02d}"
 
     warnings = []
     checks = [("ssh", ssh_dir, "surf_el"),
               ("ts", ts_dir, "water_temp"),
               ("uv", uv_dir, "water_u")]
     for prod, vdir, var in checks:
-        f0 = vdir / f"{prod}_{first}.nc"
-        f1 = vdir / f"{prod}_{last}.nc"
-        if not (f0.exists() and f1.exists()):
-            continue
+        # Collect the days that actually have files this month.
+        present = []
+        for d in range(1, ndays + 1):
+            flat = f"{ym}{d:02d}"
+            f = vdir / f"{prod}_{flat}.nc"
+            if f.exists() and f.stat().st_size > 0:
+                present.append(f)
+        if len(present) < 2:
+            continue  # not enough days to compare
+        f0, f1 = present[0], present[-1]
         try:
             s0 = field_signature(f0, var, tmp_dir)
             s1 = field_signature(f1, var, tmp_dir)
@@ -463,8 +470,8 @@ def stale_check_month(ym, ssh_dir, ts_dir, uv_dir, tmp_dir):
         if s0 == s0 and s1 == s1 and abs(s0 - s1) < 1e-9:  # not NaN and equal
             warnings.append(
                 f"[{ym} {prod}] STALE DATA SUSPECTED: {var} mean identical on "
-                f"{first} and {last} ({s0:.6f}). The source aggregation may have "
-                f"expired for this date range -- check the epoch mapping.")
+                f"{f0.stem} and {f1.stem} ({s0:.6f}). The source aggregation may "
+                f"have expired for this date range -- check the epoch mapping.")
     return warnings
 
 
@@ -508,50 +515,78 @@ def run_download(cfg: dict):
     total_days = (end - start).days + 1
     prog = ProgressTracker(total=total_days, label="HYCOM download")
 
-    current = start
     failed_days = []
-    months_seen = []
 
+    # Group the date range into months and process one month at a time.
+    # After a month finishes downloading, run the stale-data check on it
+    # immediately; if it looks stale, STOP (later dates from the same expired
+    # source would also be stale, so continuing wastes time).
+    def month_key(d):
+        return d.strftime("%Y%m")
+
+    current = start
     while current <= end:
-        date_str = current.isoformat()
-        date_flat = current.strftime("%Y%m%d")
-        ym = current.strftime("%Y%m")
-        if ym not in months_seen:
-            months_seen.append(ym)
-        epoch = select_epoch(date_flat)
+        ym = month_key(current)
 
-        print(f"\n--- {date_str}  (epoch base: {epoch['base']}) ---")
+        # Determine the last day of this month within the requested range.
+        yr, mo = int(ym[:4]), int(ym[4:])
+        month_last_day = date(yr, mo, monthrange(yr, mo)[1])
+        month_end = min(end, month_last_day)
 
-        for prod, vdir in products:
-            out = vdir / f"{prod}_{date_flat}.nc"
-            if is_complete_file(out):
-                print(f"  {prod.upper()}: already exists, skipping.")
-                continue
-            if out.exists():
-                print(f"  {prod.upper()}: incomplete file, re-downloading.")
-                out.unlink()
-            try:
-                download_product(prod, date_str, epoch, out,
-                                 lon_min, lon_max, lat_min, lat_max,
-                                 lon_ref, tmp_dir)
-                print(f"  {prod.upper()}: OK")
-            except Exception as exc:
-                print(f"  ERROR: {prod.upper()} failed for {date_str}: {exc}")
-                failed_days.append((date_str, prod))
+        print(f"\n{'#'*60}\n#  Month {ym}  ({current} -> {month_end})\n{'#'*60}")
 
-        prog.update(date_str)
-        current += timedelta(days=1)
+        # --- Download every day of this month ---
+        day = current
+        while day <= month_end:
+            date_str = day.isoformat()
+            date_flat = day.strftime("%Y%m%d")
+            epoch = select_epoch(date_flat)
 
-    # --- Stale-data sanity check per fully-downloaded month ---
-    print(f"\n{'='*60}\n  Running stale-data sanity checks...\n{'='*60}")
-    stale_warnings = []
-    for ym in months_seen:
-        stale_warnings += stale_check_month(ym, ssh_dir, ts_dir, uv_dir, tmp_dir)
-    if stale_warnings:
-        for w in stale_warnings:
-            print("  WARNING: " + w)
-    else:
-        print("  Stale-data check passed (first vs last day differ).")
+            print(f"\n--- {date_str}  (epoch base: {epoch['base']}) ---")
+
+            for prod, vdir in products:
+                out = vdir / f"{prod}_{date_flat}.nc"
+                if is_complete_file(out):
+                    print(f"  {prod.upper()}: already exists, skipping.")
+                    continue
+                if out.exists():
+                    print(f"  {prod.upper()}: incomplete file, re-downloading.")
+                    out.unlink()
+                try:
+                    download_product(prod, date_str, epoch, out,
+                                     lon_min, lon_max, lat_min, lat_max,
+                                     lon_ref, tmp_dir)
+                    print(f"  {prod.upper()}: OK")
+                except Exception as exc:
+                    print(f"  ERROR: {prod.upper()} failed for {date_str}: {exc}")
+                    failed_days.append((date_str, prod))
+
+            prog.update(date_str)
+            day += timedelta(days=1)
+
+        # --- Stale-data check for THIS month, before proceeding ---
+        print(f"\n  Stale-data check for {ym}...")
+        stale = stale_check_month(ym, ssh_dir, ts_dir, uv_dir, tmp_dir)
+        if stale:
+            print(f"\n{'='*60}")
+            print(f"  STOPPING: month {ym} failed the stale-data check.")
+            for w in stale:
+                print("  WARNING: " + w)
+            print("  Later dates from the same source would also be stale, so")
+            print("  the download is halted. Investigate the epoch mapping for")
+            print(f"  this date range, then re-run (completed months are kept).")
+            if failed_days:
+                print(f"\n  Note: {len(failed_days)} day/var download failure(s) so far:")
+                for d, var in failed_days:
+                    print(f"    {d}  {var}")
+            print(f"  Full command trace: {_DEBUG.path}")
+            print(f"{'='*60}\n")
+            _DEBUG.close()
+            sys.exit(1)
+        print(f"  Stale-data check passed for {ym} (first vs last day differ).")
+
+        # Advance to the first day of the next month.
+        current = month_last_day + timedelta(days=1)
 
     # --- Summary ---
     print(f"\n{'='*60}")
@@ -562,8 +597,7 @@ def run_download(cfg: dict):
         for d, var in failed_days:
             print(f"    {d}  {var}")
         print("  Re-run to retry (existing valid files are skipped).")
-    if stale_warnings:
-        print(f"  {len(stale_warnings)} STALE-DATA WARNING(S) above -- investigate!")
+    print(f"  All months passed the stale-data check.")
     print(f"  Full command trace: {_DEBUG.path}")
     print(f"{'='*60}\n")
 

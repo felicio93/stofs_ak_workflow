@@ -123,6 +123,39 @@ def make_gif(frames, gif_path: Path, fps=5):
     print(f"  Wrote {gif_path}")
 
 
+def bottom_layer(block):
+    """
+    Return the deepest VALID (non-NaN) value at each (ylat, xlon) point.
+
+    HYCOM native depth ordering has depth[0] = surface and increasing index =
+    deeper. The "bottom" is the deepest level that still has valid data before
+    hitting land/fill values. Implemented with numpy (no bottleneck dependency,
+    unlike xarray's ffill).
+    """
+    # block dims: (depth, ylat, xlon)
+    arr = block.values  # numpy array, NaN where invalid
+    depth_axis = block.get_axis_num("depth")
+    valid = np.isfinite(arr)
+    # Index of the deepest valid level along depth for each column.
+    # np.where(valid) then take max index; do it vectorized:
+    depth_idx = np.arange(arr.shape[depth_axis])
+    shape = [1, 1, 1]
+    shape[depth_axis] = arr.shape[depth_axis]
+    depth_idx = depth_idx.reshape(shape)
+    # Set invalid levels to -1 so they never win the argmax-of-index
+    masked_idx = np.where(valid, depth_idx, -1)
+    deepest = masked_idx.max(axis=depth_axis)  # (ylat, xlon), -1 = all invalid
+    deepest_safe = np.clip(deepest, 0, arr.shape[depth_axis] - 1)
+    bottom_vals = np.take_along_axis(
+        arr, np.expand_dims(deepest_safe, axis=depth_axis), axis=depth_axis
+    ).squeeze(axis=depth_axis)
+    # Columns with no valid data at all -> NaN
+    bottom_vals = np.where(deepest >= 0, bottom_vals, np.nan)
+    # Wrap back into a DataArray using the surface slice's coords
+    surface = block.isel(depth=0)
+    return surface.copy(data=bottom_vals)
+
+
 def plot_two_layer_var(ds, varname, label, cmap, vlim, out_dir: Path,
                        ym, lon_min, lon_max, lat_min, lat_max, tmp_dir: Path):
     """Plot surface + bottom panels for a 3D variable (temperature/salinity)."""
@@ -132,10 +165,9 @@ def plot_two_layer_var(ds, varname, label, cmap, vlim, out_dir: Path,
     for i in range(ntime):
         t = pd.Timestamp(ds.time.values[i]).strftime("%Y-%m-%d")
         block = ds[varname].isel(time=i)
-        # Surface = last depth index in SCHISM-ordered files is surface? HYCOM
-        # raw ordering has depth[0] = surface; use ffill for bottom-most valid.
+        # HYCOM native ordering: depth[0] = surface; bottom = deepest valid.
         surface = block.isel(depth=0)
-        bottom = block.ffill(dim="depth").isel(depth=-1)
+        bottom = bottom_layer(block)
 
         fig, axes, dp = figure_for_panels(2, lon_min, lon_max, lat_min, lat_max)
         im = axes[0].pcolormesh(surface.xlon, surface.ylat, surface,

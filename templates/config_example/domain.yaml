@@ -32,6 +32,6 @@ plot_cmap: jet
 # Color scale limits per variable. Use [auto, auto] to derive robust limits
 # from the 2nd/98th percentiles of the data (adapts to any domain/season), or
 # set explicit numeric bounds, e.g. [-2, 16].
-plot_temp_range: [auto, auto]
-plot_salt_range: [auto, auto]
-plot_ssh_range:  [auto, auto]
+plot_temp_range: [-2, 16]
+plot_salt_range: [31.5, 34]
+plot_ssh_range:  [-2.5, 2.5]

@@ -438,12 +438,13 @@ that some daily downloads are missing).
 
 ## Monitoring and Logs
 
-Currently the orchestrator prints all output to stdout. To save a log:
+The orchestrator prints all output to stdout. Save it under the project's
+`M{ID}/logs/` directory (created by `--init`) so logs stay with the project:
 
 ```bash
 python $WF/orchestrator.py --run \
-    --config /path/to/config \
-    2>&1 | tee download_$(date +%Y%m%d_%H%M%S).log
+    --config /path/to/M01/config \
+    2>&1 | tee <project_dir>/M01/logs/download_$(date +%Y%m%d_%H%M%S).log
 ```
 
 ---

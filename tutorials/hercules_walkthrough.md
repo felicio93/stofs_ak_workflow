@@ -123,7 +123,7 @@ export WF=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/stofs_ak_workflow
 export CFG=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config
 conda activate swf_main
 
-python $WF/orchestrator.py --run --config $CFG 2>&1 | tee ~/hycom_download.log
+python $WF/orchestrator.py --run --config $CFG 2>&1 | tee $PROJ/M01/logs/hycom_download.log
 ```
 
 Expect: DTN check OK, env check OK, `OK` per SSH/TS/UV per day, and a
@@ -132,8 +132,8 @@ identical first/last day, the epoch mapping needs attention).
 
 For the full run, restore the dates and run in the background:
 ```bash
-nohup python $WF/orchestrator.py --run --config $CFG > ~/hycom_full.log 2>&1 &
-tail -f ~/hycom_full.log
+nohup python $WF/orchestrator.py --run --config $CFG > $PROJ/M01/logs/hycom_full.log 2>&1 &
+tail -f $PROJ/M01/logs/hycom_full.log
 ```
 
 Verify a file:
@@ -158,7 +158,7 @@ plotting_debug: false
 
 ```bash
 conda activate swf_main
-python $WF/orchestrator.py --run --config $CFG 2>&1 | tee ~/hycom_aggregate.log
+python $WF/orchestrator.py --run --config $CFG 2>&1 | tee $PROJ/M01/logs/hycom_aggregate.log
 ```
 
 Writes `SSH_1.nc`, `TS_1.nc`, `UV_1.nc` into each `I01_YYYYMM/`. TS is

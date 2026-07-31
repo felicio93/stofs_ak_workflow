@@ -103,7 +103,7 @@ def init_project(cfg: dict):
     print(f"{'='*60}\n")
 
     # --- Top-level fixed directories ---
-    for subdir in ["fix", "bin"]:
+    for subdir in ["fix", "bin", "logs"]:
         d = model_dir / subdir
         d.mkdir(parents=True, exist_ok=True)
         print(f"  Created: {d}")

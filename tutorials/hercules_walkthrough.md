@@ -31,31 +31,10 @@ cd stofs_ak_workflow && git pull
 
 ---
 
-## 1. One-time: create the conda environments (on the DTN)
+## 1. One-time: create the config
 
-Env creation needs internet, so do it on the DTN. The `--setup-envs` command
-creates `swf_main` and `swf_plot` if missing, or verifies their libraries if
-they already exist.
-
-```bash
-ssh hercules-dtn.hpc.msstate.edu
-export WF=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/stofs_ak_workflow
-export CFG=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config
-
-# Need a python with pyyaml to bootstrap the orchestrator itself. If you
-# already have swf_main, activate it; otherwise use any env with pyyaml, or
-# create swf_main manually the first time:
-conda create -y -n swf_main -c conda-forge python=3.11 pyyaml python-dateutil nco cdo
-conda activate swf_main
-
-python $WF/orchestrator.py --setup-envs --config $CFG
-```
-
-This ensures both envs exist and reports any missing packages.
-
----
-
-## 2. One-time: create the config
+The `--setup-envs` and `--init` commands both read the config, so create it
+first.
 
 ```bash
 export WF=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/stofs_ak_workflow
@@ -72,6 +51,33 @@ cat $CFG/project.yaml    # project_dir=/work2/.../STOFS_3D_AK, dates, slurm bloc
 cat $CFG/domain.yaml     # lon 150-230, lat 45-78, lon_reference "360", plot ranges
 cat $CFG/envs.yaml       # conda_base, swf_main / swf_plot
 ```
+
+---
+
+## 2. One-time: create the conda environments (on the DTN)
+
+Env creation needs internet, so do it on the DTN. The `--setup-envs` command
+creates `swf_main` and `swf_plot` if missing, or verifies their libraries if
+they already exist.
+
+Note the bootstrap: you need a python with `pyyaml` just to run the
+orchestrator. So the very first time, create `swf_main` manually, then let
+`--setup-envs` create `swf_plot` and verify `swf_main`.
+
+```bash
+ssh hercules-dtn.hpc.msstate.edu
+export WF=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/stofs_ak_workflow
+export CFG=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config
+
+# First time only: create swf_main manually so the orchestrator can run.
+conda create -y -n swf_main -c conda-forge python=3.11 pyyaml python-dateutil nco cdo
+conda activate swf_main
+
+# Now create/verify all envs referenced by the config (creates swf_plot).
+python $WF/orchestrator.py --setup-envs --config $CFG
+```
+
+This ensures both envs exist and reports any missing packages.
 
 ---
 

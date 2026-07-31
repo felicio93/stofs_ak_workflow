@@ -171,14 +171,24 @@ The workflow uses two conda environments:
 
 The easiest way is the built-in `--setup-envs` command, which creates any
 missing environments and verifies the libraries of existing ones. It needs
-internet, so run it on the DTN:
+internet, so run it on the DTN.
+
+Note: `--setup-envs` reads the config, so you must **create the config first**
+(see "Starting a New Project" below), then run this. There is also a bootstrap
+step — you need a python with `pyyaml` to run the orchestrator at all, so create
+`swf_main` manually the very first time:
 
 ```bash
-# Bootstrap: you need at least a python with pyyaml to run the orchestrator.
-# The first time, create swf_main manually, then let --setup-envs handle the rest:
+# 1. Create the config directory first (see "Starting a New Project"):
+mkdir -p /work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config
+cp ~/stofs_ak_workflow/templates/config_example/*.yaml \
+   /work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config/
+
+# 2. Bootstrap swf_main manually the first time:
 conda create -n swf_main -c conda-forge python=3.11 pyyaml python-dateutil nco cdo
 conda activate swf_main
 
+# 3. Create/verify all envs referenced by the config (creates swf_plot):
 python ~/stofs_ak_workflow/orchestrator.py --setup-envs \
     --config /work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config
 ```

@@ -1,11 +1,11 @@
 """
 submit_plots.py
 ===============
-Step 3 launcher (runs on the interactive/login node in ak_workflow).
+Step 3 launcher (runs on the interactive/login node in swf_main).
 
 Renders the SLURM job-array template and submits it. Each array task plots one
 month's HYCOM debug GIFs on a compute node (no internet needed), using the
-ak_plots conda environment (called by full interpreter path).
+swf_plot conda environment (called by full interpreter path).
 
 Design: one array task per month, 1 core each (plotting is serial). Jobs are
 independent and individually re-submittable.

@@ -150,42 +150,49 @@ def init_project(cfg: dict):
 # --run: execute enabled workflow steps
 # =============================================================================
 
-def run_workflow(cfg: dict, config_dir: Path):
-    """Execute each enabled step in order."""
+def run_workflow(cfg: dict, config_dir: Path, only: str = None):
+    """Execute each enabled step in order. If `only` is set, run just that step."""
+
+    def enabled(step):
+        if only is not None:
+            return step == only
+        return bool(cfg.get(step, False))
 
     print(f"\n{'='*60}")
     print(f"  Running workflow for project M{cfg['project_id']}")
+    if only:
+        print(f"  (restricted to step: {only})")
     print(f"{'='*60}\n")
 
     # -------------------------------------------------------------------------
     # Step: download_hycom
     # -------------------------------------------------------------------------
-    if bool(cfg.get("download_hycom", False)):
+    if enabled("download_hycom"):
         print("[STEP] download_hycom")
         from workflow.download_hycom import run_download
         run_download(cfg)
     else:
-        print("[SKIP] download_hycom (disabled in steps.yaml)")
+        print("[SKIP] download_hycom")
 
     # -------------------------------------------------------------------------
     # Step: aggregate_hycom  (interactive: ncrcat daily -> monthly SCHISM stacks)
     # -------------------------------------------------------------------------
-    if bool(cfg.get("aggregate_hycom", False)):
+    if enabled("aggregate_hycom"):
         print("[STEP] aggregate_hycom")
         from workflow.aggregate_hycom import run_aggregate
         run_aggregate(cfg)
     else:
-        print("[SKIP] aggregate_hycom (disabled in steps.yaml)")
+        print("[SKIP] aggregate_hycom")
 
     # -------------------------------------------------------------------------
     # Step: plotting_debug  (submits a SLURM job array, one task per month)
     # -------------------------------------------------------------------------
-    if bool(cfg.get("plotting_debug", False)):
+    if enabled("plotting_debug"):
         print("[STEP] plotting_debug")
         from workflow.submit_plots import submit_plotting_jobs
         submit_plotting_jobs(cfg, config_dir)
     else:
-        print("[SKIP] plotting_debug (disabled in steps.yaml)")
+        print("[SKIP] plotting_debug")
 
     print(f"\n{'='*60}")
     print("  Workflow complete.")
@@ -210,8 +217,16 @@ def main():
         help="Initialize the project directory structure"
     )
     mode.add_argument(
+        "--setup-envs", action="store_true", dest="setup_envs",
+        help="Create/verify the conda environments (run on the DTN; needs internet)"
+    )
+    mode.add_argument(
         "--run", action="store_true",
         help="Run enabled workflow steps"
+    )
+    parser.add_argument(
+        "--only", default=None,
+        help="Run only the named step (e.g. download_hycom), ignoring steps.yaml flags"
     )
     args = parser.parse_args()
 
@@ -225,8 +240,11 @@ def main():
 
     if args.init:
         init_project(cfg)
+    elif args.setup_envs:
+        from workflow.setup_envs import setup_envs
+        setup_envs(cfg)
     elif args.run:
-        run_workflow(cfg, config_dir)
+        run_workflow(cfg, config_dir, only=args.only)
 
 
 if __name__ == "__main__":

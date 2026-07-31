@@ -1,7 +1,7 @@
 """
 aggregate_hycom.py
 ==================
-Step 2 (interactive, runs in ak_workflow on any node -- no internet needed).
+Step 2 (interactive, runs in swf_main on any node -- no internet needed).
 
 For each month in the date range, concatenate the daily raw HYCOM files into
 monthly SCHISM "stack" files inside the corresponding I{ID}_YYYYMM/ directory:
@@ -20,6 +20,7 @@ within its own self-contained directory.
 - Warns (but proceeds) when days are missing from a month.
 """
 
+import os
 import shutil
 import subprocess
 import sys
@@ -27,10 +28,27 @@ from calendar import monthrange
 from datetime import date, timedelta
 from pathlib import Path
 
-from workflow.config import list_months, model_dir
+from workflow.config import list_months, model_dir, ProgressTracker
 
 
-REQUIRED_TOOLS = ["ncrcat", "ncrename", "ncap2", "cdo"]
+REQUIRED_TOOLS = ["ncrcat", "ncrename", "ncap2", "cdo", "ncks"]
+
+
+def check_active_env(cfg: dict):
+    expected = cfg.get("conda_envs", {}).get("aggregate_hycom")
+    if not expected:
+        return
+    active = os.environ.get("CONDA_DEFAULT_ENV")
+    if active == expected:
+        print(f"  Env check: active conda environment '{active}' matches config. OK.")
+        return
+    print(f"  {'='*56}")
+    print(f"  WARNING: wrong conda environment for aggregate_hycom.")
+    print(f"     active:   '{active or '(none)'}'")
+    print(f"     expected: '{expected}'")
+    print(f"  Activate the correct environment and re-run:")
+    print(f"     conda activate {expected}")
+    print(f"  {'='*56}")
 
 
 def check_required_tools():
@@ -39,7 +57,7 @@ def check_required_tools():
         print("ERROR: required tools not found on PATH:")
         for t in missing:
             print(f"    - {t}")
-        print("These are provided by NCO/CDO. Activate ak_workflow or 'module load nco cdo'.")
+        print("These are provided by NCO/CDO. Activate swf_main or 'module load nco cdo'.")
         sys.exit(1)
 
 
@@ -170,6 +188,7 @@ def aggregate_ts(present, out_file: Path, tmp_dir: Path) -> bool:
 
 
 def run_aggregate(cfg: dict):
+    check_active_env(cfg)
     check_required_tools()
 
     pid = cfg["project_id"]
@@ -187,6 +206,7 @@ def run_aggregate(cfg: dict):
     print(f"{'='*60}\n")
 
     failures = []
+    prog = ProgressTracker(total=len(months), label="HYCOM aggregation")
 
     for ym in months:
         idir = mdir / f"I{pid}" / f"I{pid}_{ym}"
@@ -232,6 +252,8 @@ def run_aggregate(cfg: dict):
             except Exception as exc:
                 print(f"  ERROR: TS aggregation failed for {ym}: {exc}")
                 failures.append((ym, "ts"))
+
+        prog.update(ym)
 
     print(f"\n{'='*60}")
     if not failures:

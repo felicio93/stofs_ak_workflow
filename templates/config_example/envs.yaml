@@ -7,21 +7,22 @@ conda_base: /work2/noaa/nos-surge/felicioc/envs/miniconda3
 
 # Per-step conda environment name.
 # Only steps that invoke Python need an entry here.
-# Steps that only call Fortran binaries or shell commands do not need one.
 #
-# Two usage patterns:
+# Create/verify these environments once with:
+#     python orchestrator.py --setup-envs --config <config_dir>
+# (run on the DTN; it needs internet). Known environments and their packages
+# are defined in workflow/setup_envs.py:
+#     swf_main : orchestrator + NCO/CDO (download + aggregate)
+#     swf_plot : matplotlib/cartopy/xarray (plotting_debug)
 #
-#   1. Phase 1 steps run INSIDE the activated env (interactive on the DTN).
-#      For these, the env name is used only for VERIFICATION: the workflow
-#      warns if the currently active conda env does not match. It does not
-#      switch environments.
-#        e.g. download_hycom -> hycom_env
-#
-#   2. Phase 2 compute-node steps CALL a specific env by full interpreter path
-#      (no conda activate needed in non-interactive shells):
-#        base env:    {conda_base}/bin/python
-#        named env:   {conda_base}/envs/{env_name}/bin/python
+# Usage patterns:
+#   1. Interactive steps (download_hycom, aggregate_hycom) run INSIDE the
+#      activated env. The name is used only to VERIFY the active env matches;
+#      a mismatch prints a warning (no auto-switch).
+#   2. SLURM steps (plotting_debug) CALL the env's interpreter by full path:
+#        base env:  {conda_base}/bin/python
+#        named env: {conda_base}/envs/{env_name}/bin/python
 conda_envs:
-  download_hycom: ak_workflow
-  aggregate_hycom: ak_workflow
-  plotting_debug: ak_plots
+  download_hycom: swf_main
+  aggregate_hycom: swf_main
+  plotting_debug: swf_plot

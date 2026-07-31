@@ -6,7 +6,8 @@ workflow steps.
 """
 
 import sys
-from datetime import date
+import time
+from datetime import date, timedelta
 from pathlib import Path
 
 import yaml
@@ -50,3 +51,46 @@ def list_months(cfg: dict):
 def model_dir(cfg: dict) -> Path:
     """Return the M{ID} directory path."""
     return Path(cfg["project_dir"]) / f"M{cfg['project_id']}"
+
+
+def _fmt_hms(seconds: float) -> str:
+    """Format a duration in seconds as H:MM:SS."""
+    seconds = int(max(0, seconds))
+    h, rem = divmod(seconds, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}:{m:02d}:{s:02d}"
+
+
+class ProgressTracker:
+    """
+    Dependency-free, log-friendly progress reporter.
+
+    Prints one NEW line per completed item (good for `tail -f` on a redirected
+    log, unlike a redrawing tqdm bar). Each line shows count, percent, elapsed
+    time, ETA, and the current item label.
+
+    Usage:
+        prog = ProgressTracker(total=len(items), label="HYCOM download")
+        for it in items:
+            ... do work ...
+            prog.update(str(it))
+    """
+
+    def __init__(self, total: int, label: str = "progress"):
+        self.total = max(1, int(total))
+        self.label = label
+        self.done = 0
+        self.start = time.time()
+
+    def update(self, item: str = ""):
+        """Mark one item complete and print a progress line."""
+        self.done += 1
+        elapsed = time.time() - self.start
+        frac = self.done / self.total
+        per_item = elapsed / self.done
+        remaining = per_item * (self.total - self.done)
+        pct = 100.0 * frac
+        tag = f"  ({item})" if item else ""
+        print(f"  [{self.done:>4}/{self.total}] {pct:5.1f}%  "
+              f"elapsed {_fmt_hms(elapsed)}  ETA {_fmt_hms(remaining)}"
+              f"{tag}", flush=True)

@@ -22,6 +22,6 @@ set -e
 MONTH=$(sed -n "${SLURM_ARRAY_TASK_ID}p" {{MANIFEST}})
 echo "Array task ${SLURM_ARRAY_TASK_ID} -> month ${MONTH}"
 
-# Run the plotting worker using the ak_plots interpreter directly
+# Run the plotting worker using the swf_plot interpreter directly
 # (no conda activate needed in a non-interactive shell).
 {{PY}} {{PLOT_SCRIPT}} --config {{CONFIG_DIR}} --month "${MONTH}"

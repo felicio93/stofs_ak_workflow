@@ -34,4 +34,4 @@ plot_cmap: jet
 # set explicit numeric bounds, e.g. [-2, 16].
 plot_temp_range: [-2, 16]
 plot_salt_range: [31.5, 34]
-plot_ssh_range:  [-2.5, 2.5]
+plot_ssh_range:  [-1, 1]

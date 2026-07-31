@@ -55,7 +55,7 @@ cdo --version
 
 ### Python packages
 
-Phase 1 runs inside a single conda environment (`ak_workflow`) that provides
+Phase 1 runs inside a single conda environment (`swf_main`) that provides
 both the Python dependencies and the NCO/CDO tools. See
 [One-Time Setup](#one-time-setup) for the `conda create` command. The Python
 dependencies are:
@@ -71,10 +71,13 @@ stofs_ak_workflow/              <- git repo (clone this to Hercules)
 ├── orchestrator.py             <- main entry point
 ├── workflow/
 │   ├── config.py               <- shared config loading + month enumeration
+│   ├── setup_envs.py           <- create/verify conda envs (--setup-envs)
 │   ├── download_hycom.py       <- Phase 1: download raw HYCOM data
 │   ├── aggregate_hycom.py      <- Phase 2a: daily -> monthly SCHISM stacks
 │   ├── plot_hycom.py           <- Phase 2b worker: per-month debug GIFs
 │   └── submit_plots.py         <- Phase 2b launcher: SLURM job array
+├── tutorials/
+│   └── hercules_walkthrough.md <- copy-paste steps for the real Hercules case
 ├── templates/
 │   ├── config_example/         <- copy these to your project's config/ dir
 │   │   ├── project.yaml
@@ -160,40 +163,31 @@ cd ~
 git clone https://github.com/felicio93/stofs_ak_workflow
 ```
 
-### 2. Create the workflow conda environment
+### 2. Create the workflow conda environments
 
-Create one self-contained environment (`ak_workflow`) that holds everything
-Phase 1 needs: the Python dependencies plus the NCO/CDO command-line tools.
-This keeps the workflow independent of any data-specific environments.
+The workflow uses two conda environments:
+- `swf_main` — orchestrator + NCO/CDO (download + aggregate)
+- `swf_plot` — matplotlib/cartopy/xarray (plotting_debug, runs on compute nodes)
 
-```bash
-conda create -n ak_workflow -c conda-forge python=3.11 pyyaml python-dateutil nco cdo
-```
-
-Verify it:
-```bash
-conda activate ak_workflow
-python --version                       # >= 3.8
-python -c "import yaml, dateutil; print('deps OK')"
-ncks --version
-cdo --version
-```
-
-The `download_hycom` and `aggregate_hycom` steps expect this environment
-(`conda_envs.*: ak_workflow` in `envs.yaml`). Activate it before running them;
-the workflow will warn if a different env is active.
-
-### 2b. Create the plotting environment (for plotting_debug)
-
-The `plotting_debug` step runs on compute nodes and needs plotting libraries.
-Create a separate environment:
+The easiest way is the built-in `--setup-envs` command, which creates any
+missing environments and verifies the libraries of existing ones. It needs
+internet, so run it on the DTN:
 
 ```bash
-conda create -n ak_plots -c conda-forge python=3.11 xarray matplotlib cartopy imageio netcdf4 pandas pyyaml python-dateutil
+# Bootstrap: you need at least a python with pyyaml to run the orchestrator.
+# The first time, create swf_main manually, then let --setup-envs handle the rest:
+conda create -n swf_main -c conda-forge python=3.11 pyyaml python-dateutil nco cdo
+conda activate swf_main
+
+python ~/stofs_ak_workflow/orchestrator.py --setup-envs \
+    --config /work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config
 ```
 
-You do not activate this env yourself; the SLURM jobs call its Python
-interpreter directly by full path (`conda_envs.plotting_debug: ak_plots`).
+This ensures both `swf_main` and `swf_plot` exist with the correct packages
+(defined in `workflow/setup_envs.py`). Re-run it any time to verify envs.
+
+You do not activate `swf_plot` yourself; the SLURM plotting jobs call its
+Python interpreter directly by full path.
 
 ### 3. Add the repo to your PATH (optional but convenient)
 
@@ -320,7 +314,7 @@ and compute nodes cannot reach `tds.hycom.org`.
 
 ```bash
 ssh hercules-dtn.hpc.msstate.edu
-conda activate ak_workflow        # env with pyyaml/dateutil/NCO/CDO
+conda activate swf_main        # env with pyyaml/dateutil/NCO/CDO
 ```
 
 2. In `steps.yaml`, set `download_hycom: true` and all others `false`.
@@ -353,17 +347,29 @@ day and variable, it is skipped. Incomplete files are automatically
 re-downloaded. If the download is interrupted, simply re-run the same command
 and it will pick up where it left off.
 
+**HYCOM source mapping:** the correct HYCOM dataset is selected automatically
+per date. GOFS 3.1 `expt_93.0` ends **2024-09-04**; dates on/after
+**2024-09-05** are fetched from **ESPC-D-V02** (which stores temperature,
+salinity, u, and v in separate files that are merged automatically). Older
+dates map to earlier GOFS experiments back through the 53.X reanalysis.
+
+**Stale-data sanity check:** after downloading, the workflow compares the first
+and last day of each month. If their field means are identical, it prints a
+STALE-DATA WARNING — a strong signal that an expired aggregation was echoing
+its last timestep (the bug that motivated the full source mapping). A clean run
+reports "Stale-data check passed".
+
 ### Phase 2a — Aggregate HYCOM into monthly stacks (interactive, any node)
 
 Once the daily raw files are downloaded, aggregate them into monthly SCHISM
-stack files. This runs interactively in `ak_workflow` (no internet needed) and
+stack files. This runs interactively in `swf_main` (no internet needed) and
 is fast (`ncrcat` + `cdo`).
 
 1. In `steps.yaml`, set `download_hycom: false` and `aggregate_hycom: true`.
 2. Run:
 
 ```bash
-conda activate ak_workflow
+conda activate swf_main
 python ~/stofs_ak_workflow/orchestrator.py \
     --run \
     --config /work/noaa/nos-surge/USER/my_project/M01/config
@@ -384,14 +390,14 @@ Generate GIF animations to sanity-check the aggregated HYCOM data.
 2. Run (from a node with `sbatch`, e.g. a login node):
 
 ```bash
-conda activate ak_workflow
+conda activate swf_main
 python ~/stofs_ak_workflow/orchestrator.py \
     --run \
     --config /work/noaa/nos-surge/USER/my_project/M01/config
 ```
 
 This renders a SLURM job array (one task per month) and submits it. Each task
-runs on a compute node using the `ak_plots` environment and writes GIFs
+runs on a compute node using the `swf_plot` environment and writes GIFs
 (temperature, salinity, SSH) into `D{ID}_YYYYMM/`. SLURM settings (account,
 partition, walltime, mail) come from the `slurm:` block in `project.yaml`.
 

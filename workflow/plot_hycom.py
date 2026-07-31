@@ -1,7 +1,7 @@
 """
 plot_hycom.py
 =============
-Step 3 worker (runs inside a SLURM array task, in the ak_plots env).
+Step 3 worker (runs inside a SLURM array task, in the swf_plot env).
 
 Generates debug GIF animations from the aggregated monthly HYCOM stack files
 for ONE month:
@@ -162,6 +162,7 @@ def plot_two_layer_var(ds, varname, label, cmap, vlim, out_dir: Path,
     lo, hi = robust_limits(ds[varname].values, *vlim)
     frames = []
     ntime = ds.sizes["time"]
+    print(f"  {varname}: rendering {ntime} frames...")
     for i in range(ntime):
         t = pd.Timestamp(ds.time.values[i]).strftime("%Y-%m-%d")
         block = ds[varname].isel(time=i)
@@ -182,6 +183,7 @@ def plot_two_layer_var(ds, varname, label, cmap, vlim, out_dir: Path,
         fig.savefig(frame, dpi=120)
         plt.close(fig)
         frames.append(str(frame))
+        print(f"    frame {i+1:>3}/{ntime}  ({t})", flush=True)
     make_gif(frames, out_dir / f"HYCOM_{varname}_{ym}.gif")
 
 
@@ -190,6 +192,7 @@ def plot_ssh(ds, cmap, vlim, out_dir: Path, ym,
     lo, hi = robust_limits(ds["surf_el"].values, *vlim)
     frames = []
     ntime = ds.sizes["time"]
+    print(f"  ssh: rendering {ntime} frames...")
     for i in range(ntime):
         t = pd.Timestamp(ds.time.values[i]).strftime("%Y-%m-%d")
         field = ds["surf_el"].isel(time=i)
@@ -202,6 +205,7 @@ def plot_ssh(ds, cmap, vlim, out_dir: Path, ym,
         fig.savefig(frame, dpi=120)
         plt.close(fig)
         frames.append(str(frame))
+        print(f"    frame {i+1:>3}/{ntime}  ({t})", flush=True)
     make_gif(frames, out_dir / f"HYCOM_ssh_{ym}.gif")
 
 

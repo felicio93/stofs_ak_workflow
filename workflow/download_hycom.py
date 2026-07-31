@@ -45,13 +45,17 @@ from pathlib import Path
 
 import yaml
 
-from workflow.config import ProgressTracker
+from workflow.config import ProgressTracker, DebugLog
 
 
 REQUIRED_TOOLS = ["ncks", "ncpdq", "ncap2", "ncrename", "ncatted", "ncwa"]
 DTN_HOSTNAME_HINT = "dtn"
 
 TDS = "https://tds.hycom.org/thredds/dodsC"
+
+# Module-level debug log handle (set at the start of run_download). Command
+# traces and stderr go here to keep the screen clean.
+_DEBUG = None
 
 
 # =============================================================================
@@ -162,11 +166,23 @@ def load_config(config_dir: Path) -> dict:
     return cfg
 
 
+def _dbg(line: str):
+    """Write a line to the debug log if it is open (no-op otherwise)."""
+    if _DEBUG is not None:
+        _DEBUG.write(line)
+
+
 def run(cmd, check=True):
-    print("  CMD:", " ".join(str(c) for c in cmd))
-    result = subprocess.run([str(c) for c in cmd], capture_output=True, text=True)
+    """Run a command; echo it to the debug log (not the screen)."""
+    cmd = [str(c) for c in cmd]
+    _dbg("CMD: " + " ".join(cmd))
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.stderr.strip():
+        _dbg("STDERR: " + result.stderr.strip())
     if check and result.returncode != 0:
-        print(f"  STDERR: {result.stderr.strip()}")
+        # Surface failures on screen too, and point to the debug log.
+        print(f"  COMMAND FAILED (rc={result.returncode}): {' '.join(cmd)}")
+        print(f"    {result.stderr.strip().splitlines()[-1] if result.stderr.strip() else '(no stderr)'}")
         raise RuntimeError(f"Command failed with exit code {result.returncode}")
     return result
 
@@ -256,16 +272,18 @@ def _fetch_subset(date_str, url, variables, lon_min, lon_max,
              "-d", f"lat,{lat_min},{lat_max}",
              "-d", f"time,{date_str}",
              "-v", variables, url, str(out_file)]
+    _dbg("CMD: " + " ".join(cmd_a))
     result = subprocess.run(cmd_a, capture_output=True, text=True)
+    if result.stderr.strip():
+        _dbg("STDERR: " + result.stderr.strip())
     if result.returncode == 0:
-        print(f"       fetched [{variables}] from {url} (direct)")
+        _dbg(f"fetched [{variables}] from {url} (direct)")
         return True
 
     err_a = result.stderr.strip().splitlines()
     err_a = err_a[-1] if err_a else "(no stderr)"
-    print(f"       Attempt A failed for [{variables}] from {url}")
-    print(f"         ncks: {err_a}")
-    print(f"       trying opposite-longitude-convention fallback...")
+    _dbg(f"Attempt A failed for [{variables}] from {url}: {err_a}")
+    _dbg("trying opposite-longitude-convention fallback...")
 
     # Attempt B: fetch without lon subset, shift to target convention, subset
     tmp_global = tmp_dir / f"{prefix}_global_{date_str.replace('-','')}.nc"
@@ -274,11 +292,15 @@ def _fetch_subset(date_str, url, variables, lon_min, lon_max,
              "-d", f"lat,{lat_min},{lat_max}",
              "-d", f"time,{date_str}",
              "-v", variables, url, str(tmp_global)]
+    _dbg("CMD: " + " ".join(cmd_b))
     result = subprocess.run(cmd_b, capture_output=True, text=True)
+    if result.stderr.strip():
+        _dbg("STDERR: " + result.stderr.strip())
     if result.returncode != 0:
         err_b = result.stderr.strip().splitlines()
         err_b = err_b[-1] if err_b else "(no stderr)"
-        print(f"       Attempt B also failed: {err_b}")
+        print(f"       both fetch attempts failed for [{variables}] from {url}")
+        print(f"         {err_b}")
         tmp_global.unlink(missing_ok=True)
         return False
 
@@ -289,7 +311,7 @@ def _fetch_subset(date_str, url, variables, lon_min, lon_max,
          str(tmp_shift), str(out_file)])
     tmp_global.unlink(missing_ok=True)
     tmp_shift.unlink(missing_ok=True)
-    print(f"       fetched [{variables}] from {url} (lon-shifted)")
+    _dbg(f"fetched [{variables}] from {url} (lon-shifted)")
     return True
 
 
@@ -315,7 +337,7 @@ def _fetch_product_raw(product, date_str, epoch, lon_min, lon_max,
             # a date may live in the adjacent year's file; retry there.
             alt_year = year - 1 if int(date_flat[4:6]) == 1 else year + 1
             url_alt, vars_alt = source_urls(epoch, product, alt_year)[idx]
-            print(f"       retrying {product}/{variables} with year {alt_year}")
+            _dbg(f"retrying {product}/{variables} with year {alt_year}")
             ok = _fetch_subset(date_str, url_alt, vars_alt, lon_min, lon_max,
                                lat_min, lat_max, lon_ref, pf, tmp_dir,
                                prefix=f"{product}{idx}")
@@ -451,6 +473,7 @@ def stale_check_month(ym, ssh_dir, ts_dir, uv_dir, tmp_dir):
 # =============================================================================
 
 def run_download(cfg: dict):
+    global _DEBUG
     check_dtn()
     check_active_env(cfg)
     check_required_tools()
@@ -469,11 +492,15 @@ def run_download(cfg: dict):
     for d in [ssh_dir, ts_dir, uv_dir, tmp_dir]:
         d.mkdir(parents=True, exist_ok=True)
 
+    # Full command trace goes to a debug log (keeps the screen clean).
+    _DEBUG = DebugLog(project_dir / f"M{pid}" / "logs", "download_hycom")
+
     print(f"\n{'='*60}")
     print(f"  HYCOM download: {start} -> {end}")
     print(f"  Domain: lon [{lon_min}, {lon_max}]  lat [{lat_min}, {lat_max}]")
     print(f"  Lon reference: {lon_ref}")
     print(f"  Raw output:    {raw_dir}")
+    print(f"  Debug trace:   {_DEBUG.path}")
     print(f"{'='*60}\n")
 
     products = [("ssh", ssh_dir), ("ts", ts_dir), ("uv", uv_dir)]
@@ -537,7 +564,10 @@ def run_download(cfg: dict):
         print("  Re-run to retry (existing valid files are skipped).")
     if stale_warnings:
         print(f"  {len(stale_warnings)} STALE-DATA WARNING(S) above -- investigate!")
+    print(f"  Full command trace: {_DEBUG.path}")
     print(f"{'='*60}\n")
+
+    _DEBUG.close()
 
 
 if __name__ == "__main__":

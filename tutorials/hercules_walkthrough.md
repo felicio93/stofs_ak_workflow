@@ -15,7 +15,7 @@ Shortcuts used below:
 ```bash
 export WF=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/stofs_ak_workflow
 export CFG=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config
-export PROJ=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK
+export SWF_PROJ=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK
 ```
 
 ---
@@ -88,19 +88,19 @@ conda activate swf_main
 python $WF/orchestrator.py --init --config $CFG
 ```
 
-Creates under `$PROJ/M01/`: `fix/ bin/ raw/hycom/{ssh,ts,uv} raw/era5
+Creates under `$SWF_PROJ/M01/`: `fix/ bin/ raw/hycom/{ssh,ts,uv} raw/era5
 I01/I01_YYYYMM R01/... P01/... D01/D01_YYYYMM D01/logs`.
 
 Verify:
 ```bash
-ls $PROJ/M01
-ls $PROJ/M01/I01 | head
+ls $SWF_PROJ/M01
+ls $SWF_PROJ/M01/I01 | head
 ```
 
 Then copy your fixed files and executables:
 ```bash
-# cp /path/to/hgrid.gr3 vgrid.in ... $PROJ/M01/fix/
-# cp /path/to/compiled/gen_*_from_hycom.exe $PROJ/M01/bin/
+# cp /path/to/hgrid.gr3 vgrid.in ... $SWF_PROJ/M01/fix/
+# cp /path/to/compiled/gen_*_from_hycom.exe $SWF_PROJ/M01/bin/
 ```
 
 ---
@@ -123,7 +123,7 @@ export WF=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/stofs_ak_workflow
 export CFG=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config
 conda activate swf_main
 
-python $WF/orchestrator.py --run --config $CFG 2>&1 | tee $PROJ/M01/logs/hycom_download.log
+python $WF/orchestrator.py --run --config $CFG 2>&1 | tee $SWF_PROJ/M01/logs/hycom_download.log
 ```
 
 Expect: DTN check OK, env check OK, `OK` per SSH/TS/UV per day, and a
@@ -132,13 +132,13 @@ identical first/last day, the epoch mapping needs attention).
 
 For the full run, restore the dates and run in the background:
 ```bash
-nohup python $WF/orchestrator.py --run --config $CFG > $PROJ/M01/logs/hycom_full.log 2>&1 &
-tail -f $PROJ/M01/logs/hycom_full.log
+nohup python $WF/orchestrator.py --run --config $CFG > $SWF_PROJ/M01/logs/hycom_full.log 2>&1 &
+tail -f $SWF_PROJ/M01/logs/hycom_full.log
 ```
 
 Verify a file:
 ```bash
-ncdump -h $PROJ/M01/raw/hycom/ts/ts_20240901.nc | grep -E "water_temp|salinity|depth|time ="
+ncdump -h $SWF_PROJ/M01/raw/hycom/ts/ts_20240901.nc | grep -E "water_temp|salinity|depth|time ="
 ```
 
 > HYCOM server note: `expt_93.0` ends **2024-09-04**; dates on/after
@@ -158,7 +158,7 @@ plotting_debug: false
 
 ```bash
 conda activate swf_main
-python $WF/orchestrator.py --run --config $CFG 2>&1 | tee $PROJ/M01/logs/hycom_aggregate.log
+python $WF/orchestrator.py --run --config $CFG 2>&1 | tee $SWF_PROJ/M01/logs/hycom_aggregate.log
 ```
 
 Writes `SSH_1.nc`, `TS_1.nc`, `UV_1.nc` into each `I01_YYYYMM/`. TS is
@@ -167,7 +167,7 @@ converted to potential temperature and its variable renamed to `temperature`.
 **Critical check** — the SCHISM Fortran needs a variable literally named
 `temperature`:
 ```bash
-ncdump -h $PROJ/M01/I01/I01_202409/TS_1.nc | grep -E "temperature|salinity|time ="
+ncdump -h $SWF_PROJ/M01/I01/I01_202409/TS_1.nc | grep -E "temperature|salinity|time ="
 ```
 
 ---
@@ -194,8 +194,8 @@ from the `slurm:` block in `project.yaml` (account `nos-surge`, partition
 Monitor and inspect:
 ```bash
 squeue -u $USER
-cat $PROJ/M01/D01/logs/plot_1.out
-ls -lh $PROJ/M01/D01/D01_202409/
+cat $SWF_PROJ/M01/D01/logs/plot_1.out
+ls -lh $SWF_PROJ/M01/D01/D01_202409/
 # HYCOM_temperature_202409.gif  HYCOM_salinity_202409.gif  HYCOM_ssh_202409.gif
 ```
 
@@ -219,4 +219,4 @@ ssh -1/1.
 - Download and aggregate are resume-safe: valid existing files are skipped,
   incomplete ones re-created. Just re-run the same command.
 - Plotting: re-submit; re-run overwrites GIFs. Re-submit a single month by
-  editing the array range in `$PROJ/M01/D01/plot_hycom.sbatch` if needed.
+  editing the array range in `$SWF_PROJ/M01/D01/plot_hycom.sbatch` if needed.

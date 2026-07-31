@@ -7,7 +7,7 @@ workflow steps.
 
 import sys
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import yaml
@@ -94,3 +94,34 @@ class ProgressTracker:
         print(f"  [{self.done:>4}/{self.total}] {pct:5.1f}%  "
               f"elapsed {_fmt_hms(elapsed)}  ETA {_fmt_hms(remaining)}"
               f"{tag}", flush=True)
+
+
+class DebugLog:
+    """
+    Append-only debug log for the verbose command trace.
+
+    Keeps the screen clean: detailed lines (every shell command run, plus
+    stderr on failures) go to a timestamped file under M{ID}/logs/, while
+    only meaningful summaries are printed to stdout.
+
+    Usage:
+        dbg = DebugLog(model_dir / "logs", "download_hycom")
+        dbg.write("CMD: " + " ".join(cmd))
+        print(f"  debug trace -> {dbg.path}")
+    """
+
+    def __init__(self, logs_dir: Path, name: str):
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.path = logs_dir / f"{name}_debug_{stamp}.log"
+        # Touch the file so it exists even if nothing is written.
+        self._fh = open(self.path, "a", buffering=1)  # line-buffered
+
+    def write(self, line: str):
+        self._fh.write(line.rstrip("\n") + "\n")
+
+    def close(self):
+        try:
+            self._fh.close()
+        except Exception:
+            pass

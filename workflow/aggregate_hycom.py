@@ -28,10 +28,13 @@ from calendar import monthrange
 from datetime import date, timedelta
 from pathlib import Path
 
-from workflow.config import list_months, model_dir, ProgressTracker
+from workflow.config import list_months, model_dir, ProgressTracker, DebugLog
 
 
 REQUIRED_TOOLS = ["ncrcat", "ncrename", "ncap2", "cdo", "ncks"]
+
+# Module-level debug log (set in run_aggregate). Command traces go here.
+_DEBUG = None
 
 
 def check_active_env(cfg: dict):
@@ -61,11 +64,22 @@ def check_required_tools():
         sys.exit(1)
 
 
+def _dbg(line: str):
+    if _DEBUG is not None:
+        _DEBUG.write(line)
+
+
 def run(cmd, check=True):
-    print("  CMD:", " ".join(str(c) for c in cmd))
-    result = subprocess.run([str(c) for c in cmd], capture_output=True, text=True)
+    """Run a command; echo it to the debug log (not the screen)."""
+    cmd = [str(c) for c in cmd]
+    _dbg("CMD: " + " ".join(cmd))
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.stderr.strip():
+        _dbg("STDERR: " + result.stderr.strip())
     if check and result.returncode != 0:
-        print(f"  STDERR: {result.stderr.strip()}")
+        last = result.stderr.strip().splitlines()[-1] if result.stderr.strip() else "(no stderr)"
+        print(f"  COMMAND FAILED (rc={result.returncode}): {cmd[0]}")
+        print(f"    {last}")
         raise RuntimeError(f"Command failed ({result.returncode}): {cmd[0]}")
     return result
 
@@ -188,6 +202,7 @@ def aggregate_ts(present, out_file: Path, tmp_dir: Path) -> bool:
 
 
 def run_aggregate(cfg: dict):
+    global _DEBUG
     check_active_env(cfg)
     check_required_tools()
 
@@ -198,11 +213,14 @@ def run_aggregate(cfg: dict):
     tmp_dir = raw / "tmp"
     tmp_dir.mkdir(parents=True, exist_ok=True)
 
+    _DEBUG = DebugLog(mdir / "logs", "aggregate_hycom")
+
     months = list_months(cfg)
 
     print(f"\n{'='*60}")
     print(f"  HYCOM monthly aggregation for M{pid}")
     print(f"  {len(months)} month(s): {months[0]} -> {months[-1]}")
+    print(f"  Debug trace: {_DEBUG.path}")
     print(f"{'='*60}\n")
 
     failures = []
@@ -262,4 +280,7 @@ def run_aggregate(cfg: dict):
         print(f"  Aggregation complete with {len(failures)} failure(s):")
         for ym, var in failures:
             print(f"    {ym}  {var}")
+    print(f"  Full command trace: {_DEBUG.path}")
     print(f"{'='*60}\n")
+
+    _DEBUG.close()

@@ -5,6 +5,8 @@ targeting the Alaska/Bering Sea domain (STOFS-AK). This tool runs on NOAA
 RDHPC Hercules and handles data downloading on the head/DTN node and
 preprocessing on compute nodes via SLURM.
 
+**Author:** Felicio Cassalho
+
 ---
 
 ## Table of Contents

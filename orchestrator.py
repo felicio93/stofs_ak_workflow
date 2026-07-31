@@ -158,6 +158,27 @@ def run_workflow(cfg: dict, config_dir: Path, only: str = None):
             return step == only
         return bool(cfg.get(step, False))
 
+    # -------------------------------------------------------------------------
+    # Phase-compatibility warning.
+    # The steps run in different execution contexts and cannot all succeed in
+    # one invocation on a single node:
+    #   download_hycom  -> DTN (internet, usually NO sbatch)
+    #   aggregate_hycom -> any node (no internet needed)
+    #   plotting_debug  -> login node (needs sbatch; DTN usually lacks it)
+    # In particular, download_hycom (DTN-only) and plotting_debug (needs sbatch)
+    # generally cannot run on the same node. Warn rather than block.
+    # -------------------------------------------------------------------------
+    if only is None and enabled("download_hycom") and enabled("plotting_debug"):
+        print(f"\n  {'!'*58}")
+        print("  WARNING: download_hycom and plotting_debug are both enabled.")
+        print("  These run in different contexts and usually cannot succeed in")
+        print("  one invocation on a single node:")
+        print("    - download_hycom needs the DTN (internet, no sbatch)")
+        print("    - plotting_debug needs a node with sbatch (login node)")
+        print("  Run them separately: download on the DTN, then plotting from a")
+        print("  login node. Continuing with the enabled steps in order...")
+        print(f"  {'!'*58}")
+
     print(f"\n{'='*60}")
     print(f"  Running workflow for project M{cfg['project_id']}")
     if only:

@@ -157,11 +157,16 @@ For a project with ID `01`, the workflow creates the following tree:
 
 ### 1. Clone the workflow repository
 
-On the Hercules DTN or head node:
+Clone it wherever you keep your project code (it does not have to be `$HOME`).
+Throughout this README, `$WF` refers to the path of your clone.
+
 ```bash
-cd ~
 git clone https://github.com/felicio93/stofs_ak_workflow
+export WF=$(pwd)/stofs_ak_workflow    # adjust to your clone location
 ```
+
+Running the orchestrator never writes anything into `$WF` — the repo is just
+code. All generated data goes under `project_dir` (from `project.yaml`).
 
 ### 2. Create the workflow conda environments
 
@@ -181,7 +186,7 @@ step — you need a python with `pyyaml` to run the orchestrator at all, so crea
 ```bash
 # 1. Create the config directory first (see "Starting a New Project"):
 mkdir -p /work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config
-cp ~/stofs_ak_workflow/templates/config_example/*.yaml \
+cp $WF/templates/config_example/*.yaml \
    /work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config/
 
 # 2. Bootstrap swf_main manually the first time:
@@ -189,7 +194,7 @@ conda create -n swf_main -c conda-forge python=3.11 pyyaml python-dateutil nco c
 conda activate swf_main
 
 # 3. Create/verify all envs referenced by the config (creates swf_plot):
-python ~/stofs_ak_workflow/orchestrator.py --setup-envs \
+python $WF/orchestrator.py --setup-envs \
     --config /work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config
 ```
 
@@ -199,11 +204,11 @@ This ensures both `swf_main` and `swf_plot` exist with the correct packages
 You do not activate `swf_plot` yourself; the SLURM plotting jobs call its
 Python interpreter directly by full path.
 
-### 3. Add the repo to your PATH (optional but convenient)
+### 3. Add the repo path to your shell (optional but convenient)
 
-Add this to your `~/.bashrc`:
+Add this to your `~/.bashrc`, pointing at your actual clone location:
 ```bash
-export SCHISM_WF=$HOME/stofs_ak_workflow
+export WF=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/stofs_ak_workflow
 ```
 
 ---
@@ -214,7 +219,7 @@ export SCHISM_WF=$HOME/stofs_ak_workflow
 
 ```bash
 mkdir -p /work/noaa/nos-surge/USER/my_project/M01/config
-cp ~/stofs_ak_workflow/templates/config_example/* \
+cp $WF/templates/config_example/* \
    /work/noaa/nos-surge/USER/my_project/M01/config/
 ```
 
@@ -231,7 +236,7 @@ cd /work/noaa/nos-surge/USER/my_project/M01/config
 ### 3. Run --init to create the directory tree
 
 ```bash
-python ~/stofs_ak_workflow/orchestrator.py \
+python $WF/orchestrator.py \
     --init \
     --config /work/noaa/nos-surge/USER/my_project/M01/config
 ```
@@ -331,7 +336,7 @@ conda activate swf_main        # env with pyyaml/dateutil/NCO/CDO
 3. Run:
 
 ```bash
-python ~/stofs_ak_workflow/orchestrator.py \
+python $WF/orchestrator.py \
     --run \
     --config /work/noaa/nos-surge/USER/my_project/M01/config
 ```
@@ -380,7 +385,7 @@ is fast (`ncrcat` + `cdo`).
 
 ```bash
 conda activate swf_main
-python ~/stofs_ak_workflow/orchestrator.py \
+python $WF/orchestrator.py \
     --run \
     --config /work/noaa/nos-surge/USER/my_project/M01/config
 ```
@@ -401,7 +406,7 @@ Generate GIF animations to sanity-check the aggregated HYCOM data.
 
 ```bash
 conda activate swf_main
-python ~/stofs_ak_workflow/orchestrator.py \
+python $WF/orchestrator.py \
     --run \
     --config /work/noaa/nos-surge/USER/my_project/M01/config
 ```
@@ -436,7 +441,7 @@ that some daily downloads are missing).
 Currently the orchestrator prints all output to stdout. To save a log:
 
 ```bash
-python ~/stofs_ak_workflow/orchestrator.py --run \
+python $WF/orchestrator.py --run \
     --config /path/to/config \
     2>&1 | tee download_$(date +%Y%m%d_%H%M%S).log
 ```

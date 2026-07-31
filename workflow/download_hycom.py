@@ -258,7 +258,14 @@ def _fetch_subset(date_str, url, variables, lon_min, lon_max,
              "-v", variables, url, str(out_file)]
     result = subprocess.run(cmd_a, capture_output=True, text=True)
     if result.returncode == 0:
+        print(f"       fetched [{variables}] from {url} (direct)")
         return True
+
+    err_a = result.stderr.strip().splitlines()
+    err_a = err_a[-1] if err_a else "(no stderr)"
+    print(f"       Attempt A failed for [{variables}] from {url}")
+    print(f"         ncks: {err_a}")
+    print(f"       trying opposite-longitude-convention fallback...")
 
     # Attempt B: fetch without lon subset, shift to target convention, subset
     tmp_global = tmp_dir / f"{prefix}_global_{date_str.replace('-','')}.nc"
@@ -269,6 +276,9 @@ def _fetch_subset(date_str, url, variables, lon_min, lon_max,
              "-v", variables, url, str(tmp_global)]
     result = subprocess.run(cmd_b, capture_output=True, text=True)
     if result.returncode != 0:
+        err_b = result.stderr.strip().splitlines()
+        err_b = err_b[-1] if err_b else "(no stderr)"
+        print(f"       Attempt B also failed: {err_b}")
         tmp_global.unlink(missing_ok=True)
         return False
 
@@ -279,6 +289,7 @@ def _fetch_subset(date_str, url, variables, lon_min, lon_max,
          str(tmp_shift), str(out_file)])
     tmp_global.unlink(missing_ok=True)
     tmp_shift.unlink(missing_ok=True)
+    print(f"       fetched [{variables}] from {url} (lon-shifted)")
     return True
 
 
@@ -299,16 +310,15 @@ def _fetch_product_raw(product, date_str, epoch, lon_min, lon_max,
         ok = _fetch_subset(date_str, url, variables, lon_min, lon_max,
                            lat_min, lat_max, lon_ref, pf, tmp_dir,
                            prefix=f"{product}{idx}")
-        if not ok:
-            # For ESPC near a year boundary, retry with the adjacent year.
-            if epoch["kind"] == "espc":
-                alt_year = year - 1 if int(date_flat[4:6]) == 1 else year + 1
-                alt_pieces = source_urls(epoch, product, alt_year)
-                url_alt, vars_alt = alt_pieces[idx]
-                print(f"  {product.upper()}: retrying with year {alt_year} ...")
-                ok = _fetch_subset(date_str, url_alt, vars_alt, lon_min, lon_max,
-                                   lat_min, lat_max, lon_ref, pf, tmp_dir,
-                                   prefix=f"{product}{idx}")
+        if not ok and epoch["kind"] == "espc":
+            # ESPC stores data in per-year aggregations. Near a year boundary
+            # a date may live in the adjacent year's file; retry there.
+            alt_year = year - 1 if int(date_flat[4:6]) == 1 else year + 1
+            url_alt, vars_alt = source_urls(epoch, product, alt_year)[idx]
+            print(f"       retrying {product}/{variables} with year {alt_year}")
+            ok = _fetch_subset(date_str, url_alt, vars_alt, lon_min, lon_max,
+                               lat_min, lat_max, lon_ref, pf, tmp_dir,
+                               prefix=f"{product}{idx}")
         if not ok:
             for f in piece_files:
                 cleanup_files(f)
@@ -321,6 +331,9 @@ def _fetch_product_raw(product, date_str, epoch, lon_min, lon_max,
         piece_files[0].replace(merged)
     else:
         # Merge separate variable files (e.g. ESPC t3z + s3z) into one.
+        # ncks -A appends variables; the grid/time coords must match across
+        # pieces (they share the same ESPC grid). We start from the first
+        # piece and append the rest.
         shutil.copyfile(piece_files[0], merged)
         for pf in piece_files[1:]:
             run(["ncks", "-A", str(pf), str(merged)])
@@ -378,21 +391,24 @@ def download_product(product, date_str, epoch, out_file,
 
 def field_signature(nc_file: Path, varname: str, tmp_dir: Path):
     """
-    Return the mean of `varname` over the file as a float, using ncap2/ncwa.
-    Used to compare first vs last day of a month to detect stale/echoed data.
+    Return a scalar signature (mean) of `varname` in the file, used to compare
+    the first vs last day of a month to detect stale/echoed data.
+
+    ncwa with no -a averages over ALL dimensions -> a single scalar. We then
+    dump it and average whatever values are returned (robust to any residual
+    degenerate dims).
     """
-    tmp = tmp_dir / f"sig_{nc_file.stem}.txt"
-    # ncap2 to compute the average into a scalar, then ncks --  simpler: use
-    # ncwa to average over all dims, then dump the value.
     avg = tmp_dir / f"avg_{nc_file.stem}.nc"
     cleanup_files(avg)
     try:
         run(["ncwa", "-O", "-y", "avg", "-v", varname, str(nc_file), str(avg)])
-        out = run(["ncks", "-s", "%f", "-H", "-C", "-v", varname, str(avg)]).stdout
+        out = run(["ncks", "-s", "%f ", "-H", "-C", "-v", varname, str(avg)]).stdout
     finally:
-        cleanup_files(avg, tmp)
+        cleanup_files(avg)
     vals = [float(x) for x in out.split() if x.strip()]
-    return vals[0] if vals else float("nan")
+    if not vals:
+        return float("nan")
+    return sum(vals) / len(vals)
 
 
 def stale_check_month(ym, ssh_dir, ts_dir, uv_dir, tmp_dir):

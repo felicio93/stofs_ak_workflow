@@ -6,7 +6,7 @@
 # then disable it and enable the next.
 #
 # Phase 1 — Head node / DTN (requires internet access):
-download_hycom: true
+download_hycom: false
 
 # Phase 2 — Any node, no internet required:
 # aggregate_hycom runs interactively (fast: ncrcat + cdo).
@@ -15,3 +15,10 @@ aggregate_hycom: false
 # plotting_debug submits a SLURM job array (one task per month) to generate
 # debug GIFs (temperature, salinity, ssh) from the aggregated monthly files.
 plotting_debug: false
+
+# Phase 3 — SCHISM preprocessing (SLURM jobs, no internet required):
+# Run gen_estuary first (once, interactive) before submitting SLURM steps.
+gen_estuary:  false   # Step A: create fix/estuary.gr3 + bin/*.in files (once, interactive)
+gen_hotstart: false   # Step B: create hotstart.nc (once, first month only, SLURM)
+gen_3Dth:     false   # Step C: create *[23D].th.nc files (SLURM array, one job per month)
+gen_nudge:    false   # Step D: create TEM/SAL_nu.nc files (SLURM array, one job per month)

@@ -14,7 +14,8 @@ import yaml
 from dateutil.relativedelta import relativedelta
 
 
-CONFIG_FILES = ("project.yaml", "domain.yaml", "steps.yaml", "envs.yaml")
+CONFIG_FILES = ("project.yaml", "domain.yaml", "steps.yaml",
+                "envs.yaml", "schism.yaml")
 
 
 def load_config(config_dir: Path) -> dict:
@@ -23,6 +24,9 @@ def load_config(config_dir: Path) -> dict:
     for fname in CONFIG_FILES:
         fpath = config_dir / fname
         if not fpath.exists():
+            # schism.yaml is optional until Phase 3 steps are used
+            if fname == "schism.yaml":
+                continue
             print(f"ERROR: Config file not found: {fpath}")
             sys.exit(1)
         with open(fpath) as f:

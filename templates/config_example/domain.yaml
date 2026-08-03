@@ -23,6 +23,11 @@ lat_max:  78.0
 # implemented but not yet validated against real HYCOM data (experimental).
 lon_reference: "360"
 
+# Depth threshold (meters) for estuary.gr3 generation.
+# Nodes with depth <= this value are marked as estuary (value=1).
+# Nodes deeper than this are open ocean (value=0).
+estuary_depth_threshold: 3.0
+
 # -----------------------------------------------------------------------------
 # Debug plotting options (used by the plotting_debug step).
 # -----------------------------------------------------------------------------

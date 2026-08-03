@@ -1,0 +1,32 @@
+# =============================================================================
+# schism.yaml — SCHISM model-specific parameters
+# =============================================================================
+
+# Temperature and salinity assigned to estuary nodes (shallow nodes with
+# depth < estuary_depth_threshold in domain.yaml). These represent the
+# background coastal/estuarine water properties.
+estuary_temp: 10.0   # degrees C  (reasonable for Alaska coastal waters)
+estuary_sal:  0.0    # psu        (freshwater end-member)
+
+# Temperature and salinity assigned to mesh nodes that fall outside the
+# HYCOM data coverage (safety fallback -- should rarely/never be triggered
+# if the HYCOM download domain is generous).
+outside_temp: 10.0
+outside_sal:  0.0
+
+# Open boundary segment IDs that need *[23D].th.nc files.
+# Format: [count, id1, id2, ...] matching the gen_3Dth_from_nc.in convention.
+# For the AK mesh: 2 open boundaries, IDs 1 and 2.
+open_boundaries: [1, 2]
+
+# Time step of the HYCOM input data in seconds (daily data = 86400).
+hycom_dt: 86400.0
+
+# Output stride for the nudging timeseries (1 = output every input timestep).
+nudge_stride: 1
+
+# Parameters for the hotstart .in file (passed to gen_hot_from_nc.in).
+# nbin and mne_bin are internal binning parameters for the Fortran interpolation.
+# The defaults from the SCHISM repository work for most cases.
+nbin:    60000
+mne_bin: 1600

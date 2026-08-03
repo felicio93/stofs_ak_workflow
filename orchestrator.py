@@ -215,6 +215,50 @@ def run_workflow(cfg: dict, config_dir: Path, only: str = None):
     else:
         print("[SKIP] plotting_debug")
 
+    # =========================================================================
+    # Phase 3 — SCHISM preprocessing (HYCOM-based Fortran utilities)
+    # =========================================================================
+
+    # -------------------------------------------------------------------------
+    # Step A: gen_estuary (interactive, once)
+    # -------------------------------------------------------------------------
+    if enabled("gen_estuary"):
+        print("[STEP] gen_estuary")
+        from workflow.gen_estuary import run_gen_estuary
+        run_gen_estuary(cfg)
+    else:
+        print("[SKIP] gen_estuary")
+
+    # -------------------------------------------------------------------------
+    # Step B: gen_hotstart (SLURM single job, first month only)
+    # -------------------------------------------------------------------------
+    if enabled("gen_hotstart"):
+        print("[STEP] gen_hotstart")
+        from workflow.submit_hycom_utils import submit_gen_hotstart
+        submit_gen_hotstart(cfg, config_dir)
+    else:
+        print("[SKIP] gen_hotstart")
+
+    # -------------------------------------------------------------------------
+    # Step C: gen_3Dth (SLURM array, every month)
+    # -------------------------------------------------------------------------
+    if enabled("gen_3Dth"):
+        print("[STEP] gen_3Dth")
+        from workflow.submit_hycom_utils import submit_gen_3Dth
+        submit_gen_3Dth(cfg, config_dir)
+    else:
+        print("[SKIP] gen_3Dth")
+
+    # -------------------------------------------------------------------------
+    # Step D: gen_nudge (SLURM array, every month)
+    # -------------------------------------------------------------------------
+    if enabled("gen_nudge"):
+        print("[STEP] gen_nudge")
+        from workflow.submit_hycom_utils import submit_gen_nudge
+        submit_gen_nudge(cfg, config_dir)
+    else:
+        print("[SKIP] gen_nudge")
+
     print(f"\n{'='*60}")
     print("  Workflow complete.")
     print(f"{'='*60}\n")

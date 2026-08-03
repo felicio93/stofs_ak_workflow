@@ -61,18 +61,19 @@ def submit_plotting_jobs(cfg: dict, config_dir: Path):
 
     slurm = cfg.get("slurm", {})
     subs = {
-        "WORKDIR":     str(mdir),
-        "JOBNAME":     f"plot_M{pid}",
-        "ACCOUNT":     slurm.get("account", "nos-surge"),
-        "PARTITION":   slurm.get("partition", "hercules-2"),
-        "NMONTHS":     str(nmonths),
-        "WALLTIME":    slurm.get("plot_walltime", "00:30:00"),
-        "LOGDIR":      str(logdir),
-        "MAILUSER":    slurm.get("mail_user", "felicio.cassalho@noaa.gov"),
-        "MANIFEST":    str(manifest),
-        "PY":          py,
-        "PLOT_SCRIPT": str(plot_script),
-        "CONFIG_DIR":  str(config_dir),
+        "WORKDIR":       str(mdir),
+        "JOBNAME":       f"plot_M{pid}",
+        "ACCOUNT":       slurm.get("account", "nos-surge"),
+        "PARTITION":     slurm.get("partition", "hercules-2"),
+        "NMONTHS":       str(nmonths),
+        "MEM_PER_TASK":  slurm.get("plot_mem", "16G"),
+        "WALLTIME":      slurm.get("plot_walltime", "00:30:00"),
+        "LOGDIR":        str(logdir),
+        "MAILUSER":      slurm.get("mail_user", "felicio.cassalho@noaa.gov"),
+        "MANIFEST":      str(manifest),
+        "PY":            py,
+        "PLOT_SCRIPT":   str(plot_script),
+        "CONFIG_DIR":    str(config_dir),
     }
 
     template = TEMPLATE.read_text()

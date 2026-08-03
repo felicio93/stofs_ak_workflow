@@ -29,3 +29,4 @@ slurm:
   partition: hercules-2
   mail_user: felicio.cassalho@noaa.gov
   plot_walltime: "00:30:00"
+  plot_mem: "16G"    # memory per plotting task; increase if OOM errors occur

@@ -10,6 +10,7 @@
 #SBATCH -p {{PARTITION}}
 #SBATCH --array=1-{{NMONTHS}}
 #SBATCH -n 1
+#SBATCH --mem={{MEM_PER_TASK}}
 #SBATCH -t {{WALLTIME}}
 #SBATCH -o {{LOGDIR}}/plot_%a.out
 #SBATCH -e {{LOGDIR}}/plot_%a.err

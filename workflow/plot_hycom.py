@@ -27,6 +27,7 @@ Usage (invoked by the SLURM template):
 """
 
 import argparse
+import gc
 import sys
 from calendar import monthrange
 from pathlib import Path
@@ -241,17 +242,26 @@ def plot_month(cfg: dict, ym: str):
     print(f"\n--- Plotting {ym} -> {ddir} ---")
 
     if ts_file.exists():
+        # --- temperature ---
         ds = xr.open_dataset(ts_file, decode_times=True)
         check_missing_days(ds.sizes["time"], ym, "TS")
         if "temperature" in ds:
             plot_two_layer_var(ds, "temperature", "Potential Temp (degC)",
                                cmap, temp_lim, ddir, ym,
                                lon_min, lon_max, lat_min, lat_max, tmp_dir)
+        ds.close()
+        del ds
+        gc.collect()
+
+        # --- salinity (re-open so temperature arrays are freed first) ---
+        ds = xr.open_dataset(ts_file, decode_times=True)
         if "salinity" in ds:
             plot_two_layer_var(ds, "salinity", "Salinity (psu)",
                                cmap, salt_lim, ddir, ym,
                                lon_min, lon_max, lat_min, lat_max, tmp_dir)
         ds.close()
+        del ds
+        gc.collect()
     else:
         print(f"  WARNING: {ts_file} not found, skipping T/S plots.")
 
@@ -261,6 +271,8 @@ def plot_month(cfg: dict, ym: str):
         plot_ssh(ds, cmap, ssh_lim, ddir, ym,
                  lon_min, lon_max, lat_min, lat_max, tmp_dir)
         ds.close()
+        del ds
+        gc.collect()
     else:
         print(f"  WARNING: {ssh_file} not found, skipping SSH plot.")
 

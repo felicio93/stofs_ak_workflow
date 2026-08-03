@@ -103,10 +103,29 @@ HYCOM_EPOCHS = [
     {"last": "20240904", "kind": "combined",
      "base": f"{TDS}/GLBy0.08/expt_93.0", "subpaths": True},
 
-    # ESPC-D-V02 (2024-08-10 .. present): separate files, /YYYY subpath.
-    {"last": None, "kind": "espc",
-     "base": f"{TDS}/ESPC-D-V02"},
+    # ESPC-D-V02 (2024-08-10 .. present).
+    # Uses per-day ARCHIVE files — NOT the annual aggregation (t3z/YYYY).
+    # The annual aggregation is a rolling ~70-day window; requesting dates
+    # outside that window silently returns the last available timestep, giving
+    # stale warm-season data for winter months.
+    #
+    # Correct URL pattern (one file per day per variable, tau=0 analysis):
+    #   {TDS}/datasets/ESPC-D-V02/data/archive/{YYYY}/
+    #     US058GCOM-OPSnce.espc-d-031-hycom_fcst_glby008_{YYYYMMDD}12_t0000_{var}.nc
+    #
+    # Each file contains exactly ONE timestep so no -d time subsetting is used.
+    {"last": None, "kind": "espc_archive",
+     "base": f"{TDS}/datasets/ESPC-D-V02/data/archive"},
 ]
+
+ESPC_ARCHIVE_PREFIX = "US058GCOM-OPSnce.espc-d-031-hycom_fcst_glby008"
+
+# Map product to ESPC archive variable suffix
+ESPC_ARCHIVE_VAR = {
+    "ssh": ("ssh",  "surf_el"),
+    "ts":  [("t3z", "water_temp"), ("s3z", "salinity")],
+    "uv":  [("u3z", "water_u"),    ("v3z", "water_v")],
+}
 
 
 def select_epoch(date_flat: str) -> dict:
@@ -117,22 +136,24 @@ def select_epoch(date_flat: str) -> dict:
     raise ValueError(f"No HYCOM epoch found for date {date_flat}")
 
 
-def source_urls(epoch: dict, product: str, year: int):
+def source_urls(epoch: dict, product: str, year: int, date_flat: str = ""):
     """
-    Return a list of (url, variables) tuples to fetch for a given product
-    ("ssh"|"ts"|"uv") under a given epoch. Multiple tuples mean the variables
-    live in separate source files and must be merged.
+    Return a list of (url, variables) tuples to fetch for a given product.
+    For espc_archive, date_flat (YYYYMMDD) is required to build the filename.
     """
-    if epoch["kind"] == "espc":
+    if epoch["kind"] == "espc_archive":
         base = epoch["base"]
+        prefix = ESPC_ARCHIVE_PREFIX
         if product == "ssh":
-            return [(f"{base}/ssh/{year}", "surf_el")]
-        if product == "ts":
-            return [(f"{base}/t3z/{year}", "water_temp"),
-                    (f"{base}/s3z/{year}", "salinity")]
-        if product == "uv":
-            return [(f"{base}/u3z/{year}", "water_u"),
-                    (f"{base}/v3z/{year}", "water_v")]
+            var_suffix, variables = ESPC_ARCHIVE_VAR["ssh"]
+            fname = f"{prefix}_{date_flat}12_t0000_{var_suffix}.nc"
+            return [(f"{base}/{year}/{fname}", variables)]
+        pieces = ESPC_ARCHIVE_VAR[product]
+        result = []
+        for var_suffix, variables in pieces:
+            fname = f"{prefix}_{date_flat}12_t0000_{var_suffix}.nc"
+            result.append((f"{base}/{year}/{fname}", variables))
+        return result
     else:  # combined
         base = epoch["base"]
         sub = epoch["subpaths"]
@@ -257,21 +278,25 @@ def hours_since_2000(date_str: str) -> int:
 # =============================================================================
 
 def _fetch_subset(date_str, url, variables, lon_min, lon_max,
-                  lat_min, lat_max, lon_ref, out_file, tmp_dir, prefix) -> bool:
+                  lat_min, lat_max, lon_ref, out_file, tmp_dir, prefix,
+                  no_time_subset=False) -> bool:
     """
-    Fetch a lon/lat/time subset of `variables` from `url` into out_file,
-    handling the longitude reference frame. Returns True/False.
+    Fetch a lon/lat subset of `variables` from `url` into out_file.
+    If no_time_subset=True (ESPC archive files which contain exactly one
+    timestep), skip the -d time dimension argument.
     """
     if lon_ref not in ("360", "180"):
         print(f"  ERROR: unsupported lon_reference '{lon_ref}' (use '360' or '180')")
         return False
 
+    time_args = [] if no_time_subset else ["-d", f"time,{date_str}"]
+
     # Attempt A: direct subsetting with target lon bounds
     cmd_a = ["ncks", "-O",
              "-d", f"lon,{lon_min},{lon_max}",
-             "-d", f"lat,{lat_min},{lat_max}",
-             "-d", f"time,{date_str}",
-             "-v", variables, url, str(out_file)]
+             "-d", f"lat,{lat_min},{lat_max}"]
+    cmd_a += time_args
+    cmd_a += ["-v", variables, url, str(out_file)]
     _dbg("CMD: " + " ".join(cmd_a))
     result = subprocess.run(cmd_a, capture_output=True, text=True)
     if result.stderr.strip():
@@ -288,10 +313,9 @@ def _fetch_subset(date_str, url, variables, lon_min, lon_max,
     # Attempt B: fetch without lon subset, shift to target convention, subset
     tmp_global = tmp_dir / f"{prefix}_global_{date_str.replace('-','')}.nc"
     tmp_shift  = tmp_dir / f"{prefix}_shift_{date_str.replace('-','')}.nc"
-    cmd_b = ["ncks", "-O",
-             "-d", f"lat,{lat_min},{lat_max}",
-             "-d", f"time,{date_str}",
-             "-v", variables, url, str(tmp_global)]
+    cmd_b = ["ncks", "-O", "-d", f"lat,{lat_min},{lat_max}"]
+    cmd_b += time_args
+    cmd_b += ["-v", variables, url, str(tmp_global)]
     _dbg("CMD: " + " ".join(cmd_b))
     result = subprocess.run(cmd_b, capture_output=True, text=True)
     if result.stderr.strip():
@@ -318,12 +342,15 @@ def _fetch_subset(date_str, url, variables, lon_min, lon_max,
 def _fetch_product_raw(product, date_str, epoch, lon_min, lon_max,
                        lat_min, lat_max, lon_ref, tmp_dir) -> Path:
     """
-    Fetch all source pieces for a product and merge them into a single raw
-    NetCDF (still packed shorts). Returns the merged raw file path, or raises.
+    Fetch all source pieces for a product and merge into a single raw NetCDF.
+    Returns the merged raw file path, or raises on failure.
     """
     date_flat = date_str.replace("-", "")
     year = int(date_flat[:4])
-    pieces = source_urls(epoch, product, year)
+    is_archive = epoch["kind"] == "espc_archive"
+    pieces = source_urls(epoch, product, year, date_flat)
+    # Archive files contain exactly one timestep -- no time subsetting needed.
+    no_time = is_archive
 
     piece_files = []
     for idx, (url, variables) in enumerate(pieces):
@@ -331,16 +358,17 @@ def _fetch_product_raw(product, date_str, epoch, lon_min, lon_max,
         cleanup_files(pf)
         ok = _fetch_subset(date_str, url, variables, lon_min, lon_max,
                            lat_min, lat_max, lon_ref, pf, tmp_dir,
-                           prefix=f"{product}{idx}")
-        if not ok and epoch["kind"] == "espc":
-            # ESPC stores data in per-year aggregations. Near a year boundary
-            # a date may live in the adjacent year's file; retry there.
+                           prefix=f"{product}{idx}",
+                           no_time_subset=no_time)
+        if not ok and is_archive:
+            # Near a year boundary the file may be in the adjacent year.
             alt_year = year - 1 if int(date_flat[4:6]) == 1 else year + 1
-            url_alt, vars_alt = source_urls(epoch, product, alt_year)[idx]
+            url_alt, vars_alt = source_urls(epoch, product, alt_year, date_flat)[idx]
             _dbg(f"retrying {product}/{variables} with year {alt_year}")
             ok = _fetch_subset(date_str, url_alt, vars_alt, lon_min, lon_max,
                                lat_min, lat_max, lon_ref, pf, tmp_dir,
-                               prefix=f"{product}{idx}")
+                               prefix=f"{product}{idx}",
+                               no_time_subset=no_time)
         if not ok:
             for f in piece_files:
                 cleanup_files(f)
@@ -352,10 +380,7 @@ def _fetch_product_raw(product, date_str, epoch, lon_min, lon_max,
     if len(piece_files) == 1:
         piece_files[0].replace(merged)
     else:
-        # Merge separate variable files (e.g. ESPC t3z + s3z) into one.
-        # ncks -A appends variables; the grid/time coords must match across
-        # pieces (they share the same ESPC grid). We start from the first
-        # piece and append the rest.
+        # Merge separate variable files into one (e.g. t3z + s3z, u3z + v3z).
         shutil.copyfile(piece_files[0], merged)
         for pf in piece_files[1:]:
             run(["ncks", "-A", str(pf), str(merged)])

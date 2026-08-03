@@ -9,14 +9,20 @@
 #SBATCH -A {{ACCOUNT}}
 #SBATCH -p {{PARTITION}}
 #SBATCH -n 1
-#SBATCH --mem={{MEM}}
-#SBATCH -t {{WALLTIME}}
+#SBATCH --mem={{HOTSTART_MEM}}
+#SBATCH -t {{HOTSTART_WALLTIME}}
 #SBATCH -o {{LOGDIR}}/gen_hotstart.out
 #SBATCH -e {{LOGDIR}}/gen_hotstart.err
 #SBATCH --mail-user={{MAILUSER}}
 #SBATCH --mail-type=NONE
 
 set -e
+
+# Load runtime libraries (must match the modules used to compile the executables).
+module load intel-oneapi-compilers/2022.2.1
+module load intel-oneapi-mpi/2021.7.1
+module load netcdf-fortran/4.6.0
+module load netcdf-c/4.9.0
 
 echo "=== gen_hotstart for month {{MONTH}} ==="
 echo "Working dir: $(pwd)"

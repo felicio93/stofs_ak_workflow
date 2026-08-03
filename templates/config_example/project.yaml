@@ -29,9 +29,11 @@ slurm:
   partition: hercules-2
   mail_user: felicio.cassalho@noaa.gov
   plot_walltime: "00:30:00"
-  plot_mem: "16G"          # memory per plotting task; increase if OOM errors occur
+  plot_mem: "16G"            # memory per plotting task; increase if OOM errors occur
   schism_walltime: "02:00:00"
-  schism_mem: "8G"         # memory per SCHISM preprocessing task
+  schism_mem: "8G"           # memory for gen_3Dth and gen_nudge (open boundary only)
+  hotstart_walltime: "04:00:00"
+  hotstart_mem: "64G"        # memory for gen_hotstart (full 3M-node mesh x 50 levels)
 
 # -----------------------------------------------------------------------------
 # SCHISM executable names (must be present in M{id}/bin/).

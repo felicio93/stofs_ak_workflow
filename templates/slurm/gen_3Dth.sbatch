@@ -19,6 +19,12 @@
 
 set -e
 
+# Load runtime libraries (must match the modules used to compile the executables).
+module load intel-oneapi-compilers/2022.2.1
+module load intel-oneapi-mpi/2021.7.1
+module load netcdf-fortran/4.6.0
+module load netcdf-c/4.9.0
+
 # Map array index to month string via manifest.
 MONTH=$(sed -n "${SLURM_ARRAY_TASK_ID}p" {{MANIFEST}})
 echo "=== gen_3Dth: array task ${SLURM_ARRAY_TASK_ID} -> month ${MONTH} ==="

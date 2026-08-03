@@ -7,11 +7,11 @@ settings below are hardcoded to my case:
 - Project dir:  `/work2/noaa/nos-surge/felicioc/STOFS_3D_AK`
 - Model:        `M01`  (so `M01/`, `I01/`, `R01/`, `P01/`, `D01/`)
 - conda base:   `/work2/noaa/nos-surge/felicioc/envs/miniconda3`
-- Envs:         `swf_main` (download + aggregate), `swf_plot` (plotting)
-- Dates:        `2024-09-01` → `2026-06-30` (monthly)
+- Envs:         `swf_main` (download + aggregate + SCHISM preproc), `swf_plot` (plotting)
+- Dates:        `2024-09-07` → `2026-06-30` (monthly; Sep 7 = first full ESPC-D-V02 day)
 - Domain:       lon 150–230, lat 45–78, `lon_reference: "360"`
 
-Shortcuts used below:
+Shortcuts used below (set these in every new shell before running):
 ```bash
 export WF=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/stofs_ak_workflow
 export CFG=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config
@@ -25,7 +25,7 @@ export SWF_PROJ=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK
 ```bash
 cd /work2/noaa/nos-surge/felicioc/STOFS_3D_AK
 git clone https://github.com/felicio93/stofs_ak_workflow
-# later, to update:
+# later, to pull updates:
 cd stofs_ak_workflow && git pull
 ```
 
@@ -33,8 +33,7 @@ cd stofs_ak_workflow && git pull
 
 ## 1. One-time: create the config
 
-The `--setup-envs` and `--init` commands both read the config, so create it
-first.
+The config must exist before any other step (including `--setup-envs`).
 
 ```bash
 export WF=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/stofs_ak_workflow
@@ -44,40 +43,34 @@ mkdir -p $CFG
 cp $WF/templates/config_example/*.yaml $CFG/
 ```
 
-The template `project.yaml`, `domain.yaml`, and `envs.yaml` are already filled
-with my values. Confirm they look right:
+All templates are pre-filled with my values. Confirm they look right:
 ```bash
-cat $CFG/project.yaml    # project_dir=/work2/.../STOFS_3D_AK, dates, slurm block
-cat $CFG/domain.yaml     # lon 150-230, lat 45-78, lon_reference "360", plot ranges
-cat $CFG/envs.yaml       # conda_base, swf_main / swf_plot
+cat $CFG/project.yaml   # project_dir, dates, slurm block, executables block
+cat $CFG/domain.yaml    # lon 150-230, lat 45-78, lon_reference "360",
+                        # estuary_depth_threshold 3.0, plot ranges
+cat $CFG/envs.yaml      # conda_base, swf_main / swf_plot
+cat $CFG/schism.yaml    # T/S constants, open boundaries, dt, nbin/mne_bin
+cat $CFG/steps.yaml     # all flags (set only the ones you want to run)
 ```
 
 ---
 
 ## 2. One-time: create the conda environments (on the DTN)
 
-Env creation needs internet, so do it on the DTN. The `--setup-envs` command
-creates `swf_main` and `swf_plot` if missing, or verifies their libraries if
-they already exist.
-
-Note the bootstrap: you need a python with `pyyaml` just to run the
-orchestrator. So the very first time, create `swf_main` manually, then let
-`--setup-envs` create `swf_plot` and verify `swf_main`.
+Env creation needs internet; run on the DTN.
 
 ```bash
 ssh hercules-dtn.hpc.msstate.edu
 export WF=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/stofs_ak_workflow
 export CFG=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config
 
-# First time only: create swf_main manually so the orchestrator can run.
+# First time only: create swf_main manually (bootstrap).
 conda create -y -n swf_main -c conda-forge python=3.11 pyyaml python-dateutil nco cdo
 conda activate swf_main
 
-# Now create/verify all envs referenced by the config (creates swf_plot).
+# Create/verify all envs in the config (creates swf_plot).
 python $WF/orchestrator.py --setup-envs --config $CFG
 ```
-
-This ensures both envs exist and reports any missing packages.
 
 ---
 
@@ -88,8 +81,12 @@ conda activate swf_main
 python $WF/orchestrator.py --init --config $CFG
 ```
 
-Creates under `$SWF_PROJ/M01/`: `fix/ bin/ raw/hycom/{ssh,ts,uv} raw/era5
-I01/I01_YYYYMM R01/... P01/... D01/D01_YYYYMM D01/logs`.
+Creates under `$SWF_PROJ/M01/`:
+```
+fix/   bin/   logs/
+raw/hycom/{ssh,ts,uv}/   raw/era5/
+I01/I01_YYYYMM/   R01/R01_YYYYMM/   P01/P01_YYYYMM/   D01/D01_YYYYMM/   D01/logs/
+```
 
 Verify:
 ```bash
@@ -97,126 +94,234 @@ ls $SWF_PROJ/M01
 ls $SWF_PROJ/M01/I01 | head
 ```
 
-Then copy your fixed files and executables:
+**Copy fixed mesh files into `fix/`:**
 ```bash
-# cp /path/to/hgrid.gr3 vgrid.in ... $SWF_PROJ/M01/fix/
-# cp /path/to/compiled/gen_*_from_hycom.exe $SWF_PROJ/M01/bin/
+cp /path/to/hgrid.gr3  $SWF_PROJ/M01/fix/
+cp /path/to/hgrid.ll   $SWF_PROJ/M01/fix/
+cp /path/to/vgrid.in   $SWF_PROJ/M01/fix/
+cp /path/to/TEM_nudge.gr3  $SWF_PROJ/M01/fix/
 ```
+
+**Copy compiled _noscaling executables into `bin/`:**
+```bash
+cp /path/to/gen_hot_from_hycom_0_noscaling.exe  $SWF_PROJ/M01/bin/
+cp /path/to/gen_3Dth_from_hycom_noscaling.exe   $SWF_PROJ/M01/bin/
+cp /path/to/gen_nudge_from_hycom_noscaling.exe  $SWF_PROJ/M01/bin/
+```
+
+> **IMPORTANT:** Only use the `_noscaling` executables. They expect unpacked
+> float data (our HYCOM files are unpacked at download with `ncpdq -U`). The
+> stock SCHISM executables apply `scale_factor * 1e-3 + 20` — using them on
+> already-unpacked data gives completely wrong values.
+> The `lon=lon-360` line is also commented out — correct for our 0-360 mesh.
 
 ---
 
-## 4. Step 1 — Download HYCOM (DTN only)
+## 4. Step 1 — Download HYCOM (DTN only, internet required)
 
-Edit `$CFG/steps.yaml`:
-```yaml
-download_hycom: true
-aggregate_hycom: false
-plotting_debug: false
-```
-
-Run on the DTN (internet required). For a quick smoke test, temporarily set
-`end_date: "2024-09-03"` in `project.yaml`.
+Edit `$CFG/steps.yaml` — set only `download_hycom: true`, all others `false`.
 
 ```bash
 ssh hercules-dtn.hpc.msstate.edu
 export WF=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/stofs_ak_workflow
 export CFG=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config
+export SWF_PROJ=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK
 conda activate swf_main
 
-python $WF/orchestrator.py --run --config $CFG 2>&1 | tee $SWF_PROJ/M01/logs/hycom_download.log
+nohup python $WF/orchestrator.py --run --config $CFG \
+    > $SWF_PROJ/M01/logs/hycom_download.log 2>&1 &
+tail -f $SWF_PROJ/M01/logs/hycom_download.log
 ```
 
-Expect: DTN check OK, env check OK, `OK` per SSH/TS/UV per day, and a
-**stale-data check** at the end (must say "passed" — if it warns about
-identical first/last day, the epoch mapping needs attention).
+The script downloads day-by-day and runs a stale-data check after each month
+completes. It stops immediately if a month looks stale (see log for details).
 
-For the full run, restore the dates and run in the background:
+- GOFS 3.1 `expt_93.0` covers up to **2024-09-04**
+- **ESPC-D-V02** covers **2024-09-05 → present** (automatically selected)
+- Download is resume-safe: existing valid files are skipped
+
+Verify a downloaded file:
 ```bash
-nohup python $WF/orchestrator.py --run --config $CFG > $SWF_PROJ/M01/logs/hycom_full.log 2>&1 &
-tail -f $SWF_PROJ/M01/logs/hycom_full.log
-```
-
-Verify a file:
-```bash
-ncdump -h $SWF_PROJ/M01/raw/hycom/ts/ts_20240901.nc | grep -E "water_temp|salinity|depth|time ="
-```
-
-> HYCOM server note: `expt_93.0` ends **2024-09-04**; dates on/after
-> **2024-09-05** come from **ESPC-D-V02** (separate t3z/s3z/u3z/v3z files,
-> merged automatically). The workflow selects the right source per date.
-
----
-
-## 5. Step 2 — Aggregate into monthly stacks (any node, interactive)
-
-Edit `$CFG/steps.yaml`:
-```yaml
-download_hycom: false
-aggregate_hycom: true
-plotting_debug: false
-```
-
-```bash
-conda activate swf_main
-python $WF/orchestrator.py --run --config $CFG 2>&1 | tee $SWF_PROJ/M01/logs/hycom_aggregate.log
-```
-
-Writes `SSH_1.nc`, `TS_1.nc`, `UV_1.nc` into each `I01_YYYYMM/`. TS is
-converted to potential temperature and its variable renamed to `temperature`.
-
-**Critical check** — the SCHISM Fortran needs a variable literally named
-`temperature`:
-```bash
-ncdump -h $SWF_PROJ/M01/I01/I01_202409/TS_1.nc | grep -E "temperature|salinity|time ="
+ncdump -h $SWF_PROJ/M01/raw/hycom/ts/ts_20241001.nc | grep -E "water_temp|salinity|depth|time ="
 ```
 
 ---
 
-## 6. Step 3 — Debug plots (SLURM job array)
+## 5. Step 2 — Aggregate into monthly SCHISM stacks (any node, interactive)
 
-Edit `$CFG/steps.yaml`:
-```yaml
-download_hycom: false
-aggregate_hycom: false
-plotting_debug: true
+Edit `$CFG/steps.yaml` — set only `aggregate_hycom: true`.
+
+```bash
+conda activate swf_main
+python $WF/orchestrator.py --run --config $CFG \
+    2>&1 | tee $SWF_PROJ/M01/logs/hycom_aggregate.log
 ```
 
-Submit from a login node (has `sbatch`):
+Writes `SSH_1.nc`, `TS_1.nc`, `UV_1.nc` into each `I01_YYYYMM/`.
+TS is converted to potential temperature and renamed to `temperature`
+(required by SCHISM Fortran).
+
+**Critical check:**
+```bash
+ncdump -h $SWF_PROJ/M01/I01/I01_202410/TS_1.nc | grep -E "temperature|salinity|time ="
+# Must show 'temperature' (not 'water_temp') and 'salinity'
+```
+
+---
+
+## 6. Step 3 — Debug plots (SLURM job array, optional)
+
+Edit `$CFG/steps.yaml` — set only `plotting_debug: true`.
+
 ```bash
 conda activate swf_main
 python $WF/orchestrator.py --run --config $CFG
 ```
 
-This submits one array task per month using `swf_plot`. SLURM settings come
-from the `slurm:` block in `project.yaml` (account `nos-surge`, partition
-`hercules-2`).
-
-Monitor and inspect:
+Submits one SLURM array task per month (uses `swf_plot` env).
+Monitor:
 ```bash
 squeue -u $USER
 cat $SWF_PROJ/M01/D01/logs/plot_1.out
-ls -lh $SWF_PROJ/M01/D01/D01_202409/
-# HYCOM_temperature_202409.gif  HYCOM_salinity_202409.gif  HYCOM_ssh_202409.gif
+ls -lh $SWF_PROJ/M01/D01/D01_202410/
+# HYCOM_temperature_202410.gif  HYCOM_salinity_202410.gif  HYCOM_ssh_202410.gif
 ```
 
-Plot color ranges (from `domain.yaml`): temp -2/16, salinity 31.5/34,
-ssh -1/1.
+If jobs fail with OOM: increase `plot_mem` in `$CFG/project.yaml` (default 16G).
 
 ---
 
-## Quick reference — which env, which node
+## 7. Phase 3 — SCHISM preprocessing (gen_estuary → gen_hotstart/gen_3Dth/gen_nudge)
 
-| Step | Node | Env | Internet |
-|------|------|-----|----------|
-| `--setup-envs` | DTN | any (bootstrap) | yes |
-| `--init` | any | swf_main | no |
-| `download_hycom` | DTN | swf_main | yes |
-| `aggregate_hycom` | login/any | swf_main | no |
-| `plotting_debug` (submit) | login | swf_main | no |
-| plotting (compute jobs) | compute | swf_plot (auto) | no |
+### Step 7a — gen_estuary (once, interactive)
 
-## Resuming / reruns
-- Download and aggregate are resume-safe: valid existing files are skipped,
-  incomplete ones re-created. Just re-run the same command.
-- Plotting: re-submit; re-run overwrites GIFs. Re-submit a single month by
-  editing the array range in `$SWF_PROJ/M01/D01/plot_hycom.sbatch` if needed.
+Creates `fix/estuary.gr3` (shallow nodes flagged for estuary T/S) and
+generates the three Fortran `.in` control files in `bin/`.
+
+Edit `$CFG/steps.yaml` — set only `gen_estuary: true`.
+
+```bash
+conda activate swf_main
+python $WF/orchestrator.py --run --config $CFG \
+    2>&1 | tee $SWF_PROJ/M01/logs/gen_estuary.log
+```
+
+Verify:
+```bash
+# estuary.gr3 should exist and match hgrid.gr3 node count
+wc -l $SWF_PROJ/M01/fix/estuary.gr3
+wc -l $SWF_PROJ/M01/fix/hgrid.gr3   # should match
+
+# .in files should be in bin/
+ls -lh $SWF_PROJ/M01/bin/*.in
+cat $SWF_PROJ/M01/bin/gen_3Dth_from_nc.in
+cat $SWF_PROJ/M01/bin/gen_hot_from_nc.in
+cat $SWF_PROJ/M01/bin/gen_nudge_from_nc.in
+```
+
+### Step 7b — gen_hotstart (SLURM, once, first month only)
+
+Creates `hotstart.nc` for the first month (`I01_202409/` or whichever
+`start_date` month is in `project.yaml`).
+
+Edit `$CFG/steps.yaml` — set only `gen_hotstart: true`.
+
+```bash
+conda activate swf_main
+python $WF/orchestrator.py --run --config $CFG
+```
+
+Monitor and verify:
+```bash
+squeue -u $USER
+cat $SWF_PROJ/M01/logs/gen_hotstart.out
+ls -lh $SWF_PROJ/M01/I01/I01_202409/hotstart.nc
+cat $SWF_PROJ/M01/I01/I01_202409/gen_hotstart.done   # sentinel file
+```
+
+### Step 7c — gen_3Dth (SLURM array, every month)
+
+Creates boundary forcing files (`elev2D.th.nc`, `uv3D.th.nc`, `TEM_3D.th.nc`,
+`SAL_3D.th.nc`) for every month.
+
+Edit `$CFG/steps.yaml` — set only `gen_3Dth: true`.
+
+```bash
+conda activate swf_main
+python $WF/orchestrator.py --run --config $CFG
+```
+
+Monitor:
+```bash
+squeue -u $USER
+# Once done, check a month:
+ls -lh $SWF_PROJ/M01/I01/I01_202410/
+# expect: elev2D.th.nc  uv3D.th.nc  TEM_3D.th.nc  SAL_3D.th.nc  gen_3Dth.done
+
+# Check for errors in SLURM logs:
+cat $SWF_PROJ/M01/logs/gen_3Dth_1.err   # should be empty
+```
+
+If some months need to be re-run, delete their sentinel file and re-submit:
+```bash
+rm $SWF_PROJ/M01/I01/I01_202410/gen_3Dth.done
+# set gen_3Dth: true in steps.yaml, re-run orchestrator -- only pending months submitted
+```
+
+### Step 7d — gen_nudge (SLURM array, every month)
+
+Creates nudging timeseries (`TEM_nu.nc`, `SAL_nu.nc`) for every month.
+
+Edit `$CFG/steps.yaml` — set only `gen_nudge: true`.
+
+```bash
+conda activate swf_main
+python $WF/orchestrator.py --run --config $CFG
+```
+
+Monitor:
+```bash
+squeue -u $USER
+ls -lh $SWF_PROJ/M01/I01/I01_202410/
+# expect: TEM_nu.nc  SAL_nu.nc  gen_nudge.done
+cat $SWF_PROJ/M01/logs/gen_nudge_1.err   # should be empty
+```
+
+---
+
+## Quick reference — which step, which node, which env
+
+| Step | Flag | Node | Env | Internet |
+|------|------|------|-----|----------|
+| `--setup-envs` | — | DTN | swf_main | yes |
+| `--init` | — | any | swf_main | no |
+| `download_hycom` | Phase 1 | DTN | swf_main | yes |
+| `aggregate_hycom` | Phase 2 | any | swf_main | no |
+| `plotting_debug` (submit) | Phase 2 | login | swf_main | no |
+| plotting jobs | Phase 2 | compute | swf_plot (auto) | no |
+| `gen_estuary` | Phase 3A | any | swf_main | no |
+| `gen_hotstart` (submit) | Phase 3B | login | swf_main | no |
+| `gen_3Dth` (submit) | Phase 3C | login | swf_main | no |
+| `gen_nudge` (submit) | Phase 3D | login | swf_main | no |
+| gen_* SLURM jobs | Phase 3B-D | compute | none (Fortran) | no |
+
+---
+
+## Resuming / re-running steps
+
+| Step | Resume behavior |
+|------|----------------|
+| `download_hycom` | Skips valid existing daily files; stops on stale month |
+| `aggregate_hycom` | Skips months where `SSH_1/TS_1/UV_1.nc` already exist |
+| `plotting_debug` | Re-submit; overwrites GIFs |
+| `gen_estuary` | Skips if `estuary.gr3` and `bin/*.in` already exist |
+| `gen_hotstart` | Skips if `gen_hotstart.done` exists |
+| `gen_3Dth` | Skips months where `gen_3Dth.done` exists |
+| `gen_nudge` | Skips months where `gen_nudge.done` exists |
+
+To re-run a completed step, delete its sentinel/output and re-run:
+```bash
+# e.g. re-run gen_3Dth for October 2024:
+rm $SWF_PROJ/M01/I01/I01_202410/gen_3Dth.done
+# set gen_3Dth: true, run orchestrator
+```

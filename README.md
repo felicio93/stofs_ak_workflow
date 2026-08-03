@@ -77,17 +77,23 @@ stofs_ak_workflow/              <- git repo (clone this to Hercules)
 │   ├── download_hycom.py       <- Phase 1: download raw HYCOM data
 │   ├── aggregate_hycom.py      <- Phase 2a: daily -> monthly SCHISM stacks
 │   ├── plot_hycom.py           <- Phase 2b worker: per-month debug GIFs
-│   └── submit_plots.py         <- Phase 2b launcher: SLURM job array
+│   ├── submit_plots.py         <- Phase 2b launcher: SLURM job array
+│   ├── gen_estuary.py          <- Phase 3A: create estuary.gr3 + .in files
+│   └── submit_hycom_utils.py   <- Phase 3B-D: SLURM jobs for SCHISM Fortran utils
 ├── tutorials/
 │   └── hercules_walkthrough.md <- copy-paste steps for the real Hercules case
 ├── templates/
 │   ├── config_example/         <- copy these to your project's config/ dir
-│   │   ├── project.yaml
-│   │   ├── domain.yaml
-│   │   ├── steps.yaml
-│   │   └── envs.yaml
+│   │   ├── project.yaml        <- project ID, paths, dates, SLURM, executables
+│   │   ├── domain.yaml         <- lon/lat bounds, lon_reference, estuary threshold
+│   │   ├── steps.yaml          <- step enable/disable flags
+│   │   ├── envs.yaml           <- conda env names per step
+│   │   └── schism.yaml         <- SCHISM-specific T/S constants, open boundaries
 │   └── slurm/
-│       └── plot_hycom.sbatch   <- SLURM job-array template for plotting
+│       ├── plot_hycom.sbatch   <- SLURM array template for plotting
+│       ├── gen_hotstart.sbatch <- SLURM single-job template for gen_hotstart
+│       ├── gen_3Dth.sbatch     <- SLURM array template for gen_3Dth
+│       └── gen_nudge.sbatch    <- SLURM array template for gen_nudge
 └── README.md
 ```
 
@@ -428,13 +434,18 @@ that some daily downloads are missing).
 
 | Step | Status | Notes |
 |------|--------|-------|
-| `--init` directory creation | Done | Creates I/R/P/D + fix/raw/bin |
-| `download_hycom` | Done | Phase 1, DTN node |
+| `--init` directory creation | Done | Creates I/R/P/D + fix/raw/bin/logs |
+| `--setup-envs` | Done | Creates/verifies swf_main + swf_plot |
+| `download_hycom` | Done | Phase 1, DTN, GOFS 3.1 + ESPC-D-V02 source map |
 | `aggregate_hycom` | Done | Phase 2a, interactive, daily → monthly stacks |
 | `plotting_debug` | Done | Phase 2b, SLURM array, debug GIFs |
-| `nudging` (SCHISM) | Planned | Phase 2, Fortran + Python |
-| `3D flux boundary` | Planned | Phase 2, Fortran |
-| `2D flux boundary` | Planned | Phase 2, Fortran |
+| `gen_estuary` | Done | Phase 3A, create estuary.gr3 + .in files |
+| `gen_hotstart` | Done | Phase 3B, SLURM single job, first month |
+| `gen_3Dth` | Done | Phase 3C, SLURM array, boundary th.nc files |
+| `gen_nudge` | Done | Phase 3D, SLURM array, nudging nu.nc files |
+| ERA5 atmospheric forcing | Planned | sflux files |
+| TPXO tidal forcing | Planned | bctides.in |
+| Wave boundary forcing | Planned | spectral boundary conditions |
 
 ---
 

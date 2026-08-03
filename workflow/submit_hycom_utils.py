@@ -59,15 +59,17 @@ def _common_subs(cfg: dict, mdir: Path) -> dict:
     slurm = cfg.get("slurm", {})
     pid   = cfg["project_id"]
     return {
-        "ACCOUNT":   slurm.get("account",        "nos-surge"),
-        "PARTITION": slurm.get("partition",       "hercules-2"),
-        "MEM":       slurm.get("schism_mem",      "8G"),
-        "WALLTIME":  slurm.get("schism_walltime", "02:00:00"),
-        "MAILUSER":  slurm.get("mail_user",       "felicio.cassalho@noaa.gov"),
-        "FIXDIR":    str(mdir / "fix"),
-        "BINDIR":    str(mdir / "bin"),
-        "PID":       pid,
-        "IBASEDIR":  str(mdir / f"I{pid}"),
+        "ACCOUNT":           slurm.get("account",           "nos-surge"),
+        "PARTITION":         slurm.get("partition",         "hercules-2"),
+        "MEM":               slurm.get("schism_mem",        "8G"),
+        "WALLTIME":          slurm.get("schism_walltime",   "02:00:00"),
+        "HOTSTART_MEM":      slurm.get("hotstart_mem",      "64G"),
+        "HOTSTART_WALLTIME": slurm.get("hotstart_walltime", "04:00:00"),
+        "MAILUSER":          slurm.get("mail_user",         "felicio.cassalho@noaa.gov"),
+        "FIXDIR":            str(mdir / "fix"),
+        "BINDIR":            str(mdir / "bin"),
+        "PID":               pid,
+        "IBASEDIR":          str(mdir / f"I{pid}"),
     }
 
 

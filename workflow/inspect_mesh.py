@@ -40,7 +40,7 @@ import matplotlib.tri as mtri
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from workflow.config import load_config, model_dir
 
-DPI = 150
+DPI = 300
 PADDING_LON = 5.0   # degrees longitude padding around mesh bounds
 PADDING_LAT = 2.0   # degrees latitude padding around mesh bounds
 

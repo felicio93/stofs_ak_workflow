@@ -7,7 +7,7 @@ settings below are hardcoded to my case:
 - Project dir:  `/work2/noaa/nos-surge/felicioc/STOFS_3D_AK`
 - Model:        `M01`  (so `M01/`, `I01/`, `R01/`, `P01/`, `D01/`)
 - conda base:   `/work2/noaa/nos-surge/felicioc/envs/miniconda3`
-- Envs:         `swf_main` (download + aggregate + SCHISM preproc), `swf_plot` (plotting)
+- Envs:         `swf_main` (download + aggregate + SCHISM preproc), `swf_plot` (plotting + mesh diagnostics)
 - Dates:        `2024-09-07` → `2026-06-30` (monthly; Sep 7 = first full ESPC-D-V02 day)
 - Domain:       lon 150–230, lat 45–78, `lon_reference: "360"`
 
@@ -85,21 +85,31 @@ Creates under `$SWF_PROJ/M01/`:
 ```
 fix/   bin/   logs/
 raw/hycom/{ssh,ts,uv}/   raw/era5/
-I01/I01_YYYYMM/   R01/R01_YYYYMM/   P01/P01_YYYYMM/   D01/D01_YYYYMM/   D01/logs/
+I01/I01_YYYYMM/   R01/R01_YYYYMM/   P01/P01_YYYYMM/
+D01/D01_YYYYMM/   D01/D01_fix/   D01/logs/
 ```
 
 Verify:
 ```bash
 ls $SWF_PROJ/M01
 ls $SWF_PROJ/M01/I01 | head
+ls $SWF_PROJ/M01/D01
 ```
 
 **Copy fixed mesh files into `fix/`:**
 ```bash
-cp /path/to/hgrid.gr3  $SWF_PROJ/M01/fix/
-cp /path/to/hgrid.ll   $SWF_PROJ/M01/fix/
-cp /path/to/vgrid.in   $SWF_PROJ/M01/fix/
-cp /path/to/TEM_nudge.gr3  $SWF_PROJ/M01/fix/
+cp /path/to/hgrid.gr3          $SWF_PROJ/M01/fix/
+cp /path/to/hgrid.ll           $SWF_PROJ/M01/fix/
+cp /path/to/vgrid.in           $SWF_PROJ/M01/fix/
+cp /path/to/TEM_nudge.gr3      $SWF_PROJ/M01/fix/
+cp /path/to/SAL_nudge.gr3      $SWF_PROJ/M01/fix/
+cp /path/to/albedo.gr3         $SWF_PROJ/M01/fix/
+cp /path/to/diffmin.gr3        $SWF_PROJ/M01/fix/
+cp /path/to/diffmax.gr3        $SWF_PROJ/M01/fix/
+cp /path/to/watertype.gr3      $SWF_PROJ/M01/fix/
+cp /path/to/shapiro.gr3        $SWF_PROJ/M01/fix/
+cp /path/to/windrot_geo2proj.gr3  $SWF_PROJ/M01/fix/
+cp /path/to/rough.gr3          $SWF_PROJ/M01/fix/   # or drag.gr3 / manning.gr3
 ```
 
 **Copy compiled _noscaling executables into `bin/`:**
@@ -117,9 +127,42 @@ cp /path/to/gen_nudge_from_hycom_noscaling.exe  $SWF_PROJ/M01/bin/
 
 ---
 
-## 4. Step 1 — Download HYCOM (DTN only, internet required)
+## 4. Step 0 — Mesh diagnostics (SLURM, run before anything else)
 
-Edit `$CFG/steps.yaml` — set only `download_hycom: true`, all others `false`.
+Generates diagnostic TIFF plots of all `fix/` input files, mesh resolution,
+and vertical layer distribution. Output → `D01/D01_fix/`.
+
+Edit `$CFG/steps.yaml` — set only `inspect_mesh: true`.
+
+```bash
+conda activate swf_main
+python $WF/orchestrator.py --run --config $CFG
+```
+
+Monitor and verify:
+```bash
+squeue -u $USER
+cat $SWF_PROJ/M01/logs/inspect_mesh.out
+ls -lh $SWF_PROJ/M01/D01/D01_fix/
+# expect: bathymetry.tiff  albedo.tiff  diffmin.tiff  diffmax.tiff
+#         watertype.tiff   shapiro.tiff  windrot_geo2proj.tiff
+#         bottom_friction.tiff  TEM_nudge.tiff  SAL_nudge.tiff
+#         mesh_resolution.tiff  vertical_layers.tiff
+#         (estuary.tiff once gen_estuary has run)
+```
+
+If OOM: increase `inspect_mem` in `$CFG/project.yaml` (default 16G).
+
+Re-run: delete the sentinel and re-submit:
+```bash
+rm $SWF_PROJ/M01/D01/D01_fix/inspect_mesh.done
+```
+
+---
+
+## 5. Step 1 — Download HYCOM (DTN only, internet required)
+
+Edit `$CFG/steps.yaml` — set only `download_hycom: true`.
 
 ```bash
 ssh hercules-dtn.hpc.msstate.edu
@@ -128,26 +171,25 @@ export CFG=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config
 export SWF_PROJ=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK
 conda activate swf_main
 
-nohup python $WF/orchestrator.py --run --config $CFG \
-    > $SWF_PROJ/M01/logs/hycom_download.log 2>&1 &
-tail -f $SWF_PROJ/M01/logs/hycom_download.log
+python $WF/orchestrator.py --run --config $CFG \
+    2>&1 | tee $SWF_PROJ/M01/logs/hycom_download.log
 ```
 
-The script downloads day-by-day and runs a stale-data check after each month
-completes. It stops immediately if a month looks stale (see log for details).
+The script downloads day-by-day and runs a stale-data check after each month.
+It stops immediately if a month looks stale.
 
 - GOFS 3.1 `expt_93.0` covers up to **2024-09-04**
-- **ESPC-D-V02** covers **2024-09-05 → present** (automatically selected)
+- **ESPC-D-V02** covers **2024-09-05 → present** using per-day archive files
 - Download is resume-safe: existing valid files are skipped
 
-Verify a downloaded file:
+Verify:
 ```bash
 ncdump -h $SWF_PROJ/M01/raw/hycom/ts/ts_20241001.nc | grep -E "water_temp|salinity|depth|time ="
 ```
 
 ---
 
-## 5. Step 2 — Aggregate into monthly SCHISM stacks (any node, interactive)
+## 6. Step 2 — Aggregate into monthly SCHISM stacks (any node, interactive)
 
 Edit `$CFG/steps.yaml` — set only `aggregate_hycom: true`.
 
@@ -158,8 +200,7 @@ python $WF/orchestrator.py --run --config $CFG \
 ```
 
 Writes `SSH_1.nc`, `TS_1.nc`, `UV_1.nc` into each `I01_YYYYMM/`.
-TS is converted to potential temperature and renamed to `temperature`
-(required by SCHISM Fortran).
+TS is converted to potential temperature and renamed to `temperature`.
 
 **Critical check:**
 ```bash
@@ -169,7 +210,7 @@ ncdump -h $SWF_PROJ/M01/I01/I01_202410/TS_1.nc | grep -E "temperature|salinity|t
 
 ---
 
-## 6. Step 3 — Debug plots (SLURM job array, optional)
+## 7. Step 3 — Debug plots (SLURM job array, optional)
 
 Edit `$CFG/steps.yaml` — set only `plotting_debug: true`.
 
@@ -191,12 +232,11 @@ If jobs fail with OOM: increase `plot_mem` in `$CFG/project.yaml` (default 16G).
 
 ---
 
-## 7. Phase 3 — SCHISM preprocessing (gen_estuary → gen_hotstart/gen_3Dth/gen_nudge)
+## 8. Phase 3 — SCHISM preprocessing
 
-### Step 7a — gen_estuary (once, interactive)
+### Step 8a — gen_estuary (once, interactive)
 
-Creates `fix/estuary.gr3` (shallow nodes flagged for estuary T/S) and
-generates the three Fortran `.in` control files in `bin/`.
+Creates `fix/estuary.gr3` and the three Fortran `.in` control files in `bin/`.
 
 Edit `$CFG/steps.yaml` — set only `gen_estuary: true`.
 
@@ -208,21 +248,18 @@ python $WF/orchestrator.py --run --config $CFG \
 
 Verify:
 ```bash
-# estuary.gr3 should exist and match hgrid.gr3 node count
 wc -l $SWF_PROJ/M01/fix/estuary.gr3
-wc -l $SWF_PROJ/M01/fix/hgrid.gr3   # should match
-
-# .in files should be in bin/
+wc -l $SWF_PROJ/M01/fix/hgrid.gr3   # node counts should match
 ls -lh $SWF_PROJ/M01/bin/*.in
-cat $SWF_PROJ/M01/bin/gen_3Dth_from_nc.in
-cat $SWF_PROJ/M01/bin/gen_hot_from_nc.in
-cat $SWF_PROJ/M01/bin/gen_nudge_from_nc.in
 ```
 
-### Step 7b — gen_hotstart (SLURM, once, first month only)
+After `gen_estuary` completes, re-run `inspect_mesh` to get the estuary plot:
+```bash
+rm $SWF_PROJ/M01/D01/D01_fix/inspect_mesh.done
+# set inspect_mesh: true in steps.yaml, run orchestrator
+```
 
-Creates `hotstart.nc` for the first month (`I01_202409/` or whichever
-`start_date` month is in `project.yaml`).
+### Step 8b — gen_hotstart (SLURM, once, first month only)
 
 Edit `$CFG/steps.yaml` — set only `gen_hotstart: true`.
 
@@ -231,18 +268,14 @@ conda activate swf_main
 python $WF/orchestrator.py --run --config $CFG
 ```
 
-Monitor and verify:
+Monitor:
 ```bash
 squeue -u $USER
 cat $SWF_PROJ/M01/logs/gen_hotstart.out
 ls -lh $SWF_PROJ/M01/I01/I01_202409/hotstart.nc
-cat $SWF_PROJ/M01/I01/I01_202409/gen_hotstart.done   # sentinel file
 ```
 
-### Step 7c — gen_3Dth (SLURM array, every month)
-
-Creates boundary forcing files (`elev2D.th.nc`, `uv3D.th.nc`, `TEM_3D.th.nc`,
-`SAL_3D.th.nc`) for every month.
+### Step 8c — gen_3Dth (SLURM array, every month)
 
 Edit `$CFG/steps.yaml` — set only `gen_3Dth: true`.
 
@@ -254,23 +287,18 @@ python $WF/orchestrator.py --run --config $CFG
 Monitor:
 ```bash
 squeue -u $USER
-# Once done, check a month:
 ls -lh $SWF_PROJ/M01/I01/I01_202410/
 # expect: elev2D.th.nc  uv3D.th.nc  TEM_3D.th.nc  SAL_3D.th.nc  gen_3Dth.done
-
-# Check for errors in SLURM logs:
 cat $SWF_PROJ/M01/logs/gen_3Dth_1.err   # should be empty
 ```
 
-If some months need to be re-run, delete their sentinel file and re-submit:
+Re-run a specific month:
 ```bash
 rm $SWF_PROJ/M01/I01/I01_202410/gen_3Dth.done
-# set gen_3Dth: true in steps.yaml, re-run orchestrator -- only pending months submitted
+# set gen_3Dth: true, run orchestrator
 ```
 
-### Step 7d — gen_nudge (SLURM array, every month)
-
-Creates nudging timeseries (`TEM_nu.nc`, `SAL_nu.nc`) for every month.
+### Step 8d — gen_nudge (SLURM array, every month)
 
 Edit `$CFG/steps.yaml` — set only `gen_nudge: true`.
 
@@ -289,12 +317,14 @@ cat $SWF_PROJ/M01/logs/gen_nudge_1.err   # should be empty
 
 ---
 
-## Quick reference — which step, which node, which env
+## Quick reference — step, node, env, internet
 
 | Step | Flag | Node | Env | Internet |
 |------|------|------|-----|----------|
 | `--setup-envs` | — | DTN | swf_main | yes |
 | `--init` | — | any | swf_main | no |
+| `inspect_mesh` (submit) | Phase 0 | login | swf_main | no |
+| inspect_mesh job | Phase 0 | compute | swf_plot (auto) | no |
 | `download_hycom` | Phase 1 | DTN | swf_main | yes |
 | `aggregate_hycom` | Phase 2 | any | swf_main | no |
 | `plotting_debug` (submit) | Phase 2 | login | swf_main | no |
@@ -311,17 +341,24 @@ cat $SWF_PROJ/M01/logs/gen_nudge_1.err   # should be empty
 
 | Step | Resume behavior |
 |------|----------------|
+| `inspect_mesh` | Skips if `D01_fix/inspect_mesh.done` exists |
 | `download_hycom` | Skips valid existing daily files; stops on stale month |
-| `aggregate_hycom` | Skips months where `SSH_1/TS_1/UV_1.nc` already exist |
+| `aggregate_hycom` | Skips months where `SSH_1/TS_1/UV_1.nc` exist |
 | `plotting_debug` | Re-submit; overwrites GIFs |
 | `gen_estuary` | Skips if `estuary.gr3` and `bin/*.in` already exist |
 | `gen_hotstart` | Skips if `gen_hotstart.done` exists |
 | `gen_3Dth` | Skips months where `gen_3Dth.done` exists |
 | `gen_nudge` | Skips months where `gen_nudge.done` exists |
 
-To re-run a completed step, delete its sentinel/output and re-run:
-```bash
-# e.g. re-run gen_3Dth for October 2024:
-rm $SWF_PROJ/M01/I01/I01_202410/gen_3Dth.done
-# set gen_3Dth: true, run orchestrator
-```
+---
+
+## HYCOM data notes
+
+- **GOFS 3.1** (`expt_93.0`) covers up to **2024-09-04** — daily data, combined ts3z/uv3z.
+- **ESPC-D-V02** covers **2024-09-05 → present** — per-day archive files
+  (`US058GCOM-OPSnce.espc-d-031-hycom_fcst_glby008_{YYYYMMDD}12_t0000_{var}.nc`).
+  The annual `t3z/YYYY` aggregations are **rolling ~70-day windows** — they
+  silently return stale data for dates older than ~70 days. Always use the
+  archive files for historical ESPC data.
+- The stale-data check (first vs last day of each month) catches this
+  automatically and halts the download with a clear warning.

@@ -5,20 +5,20 @@
 # Run the workflow one step at a time: enable one step, test it,
 # then disable it and enable the next.
 #
+# Phase 0 — Mesh diagnostics (SLURM job, run first before any other step):
+inspect_mesh: false   # Plot all fix/ input files + mesh resolution + vertical layers
+
 # Phase 1 — Head node / DTN (requires internet access):
 download_hycom: false
 
 # Phase 2 — Any node, no internet required:
-# aggregate_hycom runs interactively (fast: ncrcat + cdo).
 aggregate_hycom: false
 
-# plotting_debug submits a SLURM job array (one task per month) to generate
-# debug GIFs (temperature, salinity, ssh) from the aggregated monthly files.
+# plotting_debug submits a SLURM job array (one task per month).
 plotting_debug: false
 
 # Phase 3 — SCHISM preprocessing (SLURM jobs, no internet required):
-# Run gen_estuary first (once, interactive) before submitting SLURM steps.
-gen_estuary:  true    # Step A: create fix/estuary.gr3 + bin/*.in files (once, interactive)
-gen_hotstart: true    # Step B: create hotstart.nc (once, first month only, SLURM)
-gen_3Dth:     true    # Step C: create *[23D].th.nc files (SLURM array, one job per month)
-gen_nudge:    true    # Step D: create TEM/SAL_nu.nc files (SLURM array, one job per month)
+gen_estuary:  false
+gen_hotstart: false
+gen_3Dth:     false
+gen_nudge:    false

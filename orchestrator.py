@@ -139,6 +139,9 @@ def init_project(cfg: dict):
     # --- SLURM log directory for debug plotting jobs ---
     (model_dir / f"D{pid}" / "logs").mkdir(parents=True, exist_ok=True)
 
+    # --- Fixed-file diagnostics directory ---
+    (model_dir / f"D{pid}" / f"D{pid}_fix").mkdir(parents=True, exist_ok=True)
+
     print(f"\n  Init complete. Next steps:")
     print(f"    1. Copy your mesh and fixed files into:  {model_dir}/fix/")
     print(f"    2. Copy compiled Fortran executables into: {model_dir}/bin/")
@@ -184,6 +187,24 @@ def run_workflow(cfg: dict, config_dir: Path, only: str = None):
     if only:
         print(f"  (restricted to step: {only})")
     print(f"{'='*60}\n")
+
+    # =========================================================================
+    # Phase 0 — Mesh diagnostics
+    # =========================================================================
+
+    # -------------------------------------------------------------------------
+    # Step 0: inspect_mesh (SLURM single job, run once before any other step)
+    # -------------------------------------------------------------------------
+    if enabled("inspect_mesh"):
+        print("[STEP] inspect_mesh")
+        from workflow.submit_inspect_mesh import submit_inspect_mesh
+        submit_inspect_mesh(cfg, config_dir)
+    else:
+        print("[SKIP] inspect_mesh")
+
+    # =========================================================================
+    # Phase 1 — HYCOM download
+    # =========================================================================
 
     # -------------------------------------------------------------------------
     # Step: download_hycom

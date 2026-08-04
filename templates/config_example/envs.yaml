@@ -23,6 +23,7 @@ conda_base: /work2/noaa/nos-surge/felicioc/envs/miniconda3
 #        base env:  {conda_base}/bin/python
 #        named env: {conda_base}/envs/{env_name}/bin/python
 conda_envs:
+  inspect_mesh:   swf_plot
   download_hycom: swf_main
   aggregate_hycom: swf_main
   plotting_debug: swf_plot

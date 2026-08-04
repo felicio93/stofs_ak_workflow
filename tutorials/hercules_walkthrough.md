@@ -201,6 +201,45 @@ ncdump -h $SWF_PROJ/M01/raw/hycom/ts/ts_20241001.nc | grep -E "water_temp|salini
 
 ---
 
+## 5b. Step 1b — Download ERA5 (DTN only, internet required)
+
+ERA5 is downloaded monthly (one CDS API call per month). Each raw file covers
+the full month at hourly resolution.
+
+**Prerequisites (one-time):**
+```bash
+# Verify CDS API credentials on the DTN
+cat ~/.cdsapirc
+# Must show:
+# url: https://cds.climate.copernicus.eu/api
+# key: <uid>:<api-key>
+# Register at https://cds.climate.copernicus.eu if needed.
+```
+
+Edit `$CFG/steps.yaml` — set only `download_era5: true`.
+
+```bash
+ssh hercules-dtn.hpc.msstate.edu
+export WF=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/stofs_ak_workflow
+export CFG=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config
+export SWF_PROJ=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK
+conda activate swf_main
+
+python $WF/orchestrator.py --run --config $CFG \
+    2>&1 | tee $SWF_PROJ/M01/logs/era5_download.log
+```
+
+Downloads one file per month into `raw/era5/YYYY/era5_YYYYMM.nc`.
+Resume-safe: existing files are skipped. Stale-data check runs after each
+month and stops immediately if all timesteps are identical.
+
+Verify a downloaded file:
+```bash
+ncdump -h $SWF_PROJ/M01/raw/era5/2024/era5_202409.nc | grep -E "u10|t2m|time ="
+```
+
+---
+
 ## 6. Step 2 — Aggregate into monthly SCHISM stacks (any node, interactive)
 
 Edit `$CFG/steps.yaml` — set only `aggregate_hycom: true`.
@@ -218,6 +257,42 @@ TS is converted to potential temperature and renamed to `temperature`.
 ```bash
 ncdump -h $SWF_PROJ/M01/I01/I01_202410/TS_1.nc | grep -E "temperature|salinity|time ="
 # Must show 'temperature' (not 'water_temp') and 'salinity'
+```
+
+---
+
+## 6b. Step 2b — Generate sflux files (SLURM array)
+
+Converts raw ERA5 monthly files into SCHISM sflux files (one per day per
+variable type: air, prc, rad). Uses unpadded stack numbers matching current
+SCHISM: `sflux_air_1.1.nc`, `sflux_air_1.2.nc`, etc.
+
+Edit `$CFG/steps.yaml` — set only `gen_sflux: true`.
+
+```bash
+conda activate swf_main
+python $WF/orchestrator.py --run --config $CFG
+```
+
+Monitor:
+```bash
+squeue -u $USER
+cat $SWF_PROJ/M01/logs/gen_sflux_1.out
+ls $SWF_PROJ/M01/I01/I01_202409/sflux/
+# expect: sflux_air_1.1.nc ... sflux_air_1.30.nc
+#         sflux_prc_1.1.nc ... sflux_rad_1.1.nc ...
+#         sflux_inputs.txt  gen_sflux.done
+```
+
+Verify a sflux file:
+```bash
+ncdump -h $SWF_PROJ/M01/I01/I01_202409/sflux/sflux_air_1.1.nc | grep -E "uwind|vwind|prmsl|time ="
+```
+
+Re-run a specific month:
+```bash
+rm -rf $SWF_PROJ/M01/I01/I01_202410/sflux/gen_sflux.done
+# set gen_sflux: true, run orchestrator
 ```
 
 ---
@@ -338,9 +413,13 @@ cat $SWF_PROJ/M01/logs/gen_nudge_1.err   # should be empty
 | `inspect_mesh` (submit) | Phase 0 | login | swf_main | no |
 | inspect_mesh job | Phase 0 | compute | swf_plot (auto) | no |
 | `download_hycom` | Phase 1 | DTN | swf_main | yes |
+| `download_era5` | Phase 1b | DTN | swf_main | yes |
 | `aggregate_hycom` | Phase 2 | any | swf_main | no |
+| `gen_sflux` (submit) | Phase 2b | login | swf_main | no |
+| gen_sflux jobs | Phase 2b | compute | swf_main (auto) | no |
 | `plotting_debug` (submit) | Phase 2 | login | swf_main | no |
-| plotting jobs | Phase 2 | compute | swf_plot (auto) | no |
+| `plot_sflux` (submit) | Phase 2c | login | swf_main | no |
+| plotting/plot_sflux jobs | Phase 2 | compute | swf_plot (auto) | no |
 | `gen_estuary` | Phase 3A | any | swf_main | no |
 | `gen_hotstart` (submit) | Phase 3B | login | swf_main | no |
 | `gen_3Dth` (submit) | Phase 3C | login | swf_main | no |
@@ -355,8 +434,11 @@ cat $SWF_PROJ/M01/logs/gen_nudge_1.err   # should be empty
 |------|----------------|
 | `inspect_mesh` | Skips if `D01_fix/inspect_mesh.done` exists |
 | `download_hycom` | Skips valid existing daily files; stops on stale month |
+| `download_era5` | Skips existing monthly files; stops on stale month |
 | `aggregate_hycom` | Skips months where `SSH_1/TS_1/UV_1.nc` exist |
+| `gen_sflux` | Skips months where `I01_YYYYMM/sflux/gen_sflux.done` exists |
 | `plotting_debug` | Re-submit; overwrites GIFs |
+| `plot_sflux` | Skips months where `D01_YYYYMM/plot_sflux.done` exists |
 | `gen_estuary` | Skips if `estuary.gr3` and `bin/*.in` already exist |
 | `gen_hotstart` | Skips if `gen_hotstart.done` exists |
 | `gen_3Dth` | Skips months where `gen_3Dth.done` exists |

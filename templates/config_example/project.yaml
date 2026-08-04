@@ -30,7 +30,7 @@ slurm:
   mail_user: felicio.cassalho@noaa.gov
   plot_walltime: "00:30:00"
   plot_mem: "16G"            # memory per plotting task; increase if OOM errors occur
-  inspect_walltime: "00:15:00"
+  inspect_walltime: "00:10:00"
   inspect_mem: "16G"         # memory for inspect_mesh job
   schism_walltime: "02:00:00"
   schism_mem: "8G"           # memory for gen_3Dth and gen_nudge (open boundary only)

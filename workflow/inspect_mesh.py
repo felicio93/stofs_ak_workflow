@@ -40,9 +40,9 @@ import matplotlib.tri as mtri
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from workflow.config import load_config, model_dir
 
-DPI = 150
-PADDING_LON = 5.0   # degrees longitude padding around mesh
-PADDING_LAT = 2.0   # degrees latitude padding around mesh
+DPI = 100
+PADDING_LON = 5.0   # degrees longitude padding around mesh bounds
+PADDING_LAT = 2.0   # degrees latitude padding around mesh bounds
 
 
 # =============================================================================
@@ -206,12 +206,18 @@ def make_plot(triangulation, values, title, out_path,
               lon_min, lon_max, lat_min, lat_max,
               cmap="viridis", vmin=None, vmax=None,
               cbar_label=None, is_elem=False,
-              cbar_ticks=None):
+              cbar_ticks=None, cbar_extend_minmax=False):
     """
-    Create and save one tripcolor plot as a TIFF using plain matplotlib.
-    No Cartopy — avoids all projection/extent/CRS issues with 0-360 domains
-    crossing the antimeridian.
+    Create and save one plot as a JPEG (smaller file size than TIFF).
+    No Cartopy — avoids all projection/extent/CRS issues with 0-360 domains.
+    Axes limits are set to mesh bounds ± padding constants.
     """
+    # Compute the actual extent of mesh data from the triangulation
+    mesh_lon_min = triangulation.x.min()
+    mesh_lon_max = triangulation.x.max()
+    mesh_lat_min = triangulation.y.min()
+    mesh_lat_max = triangulation.y.max()
+
     fig, ax = plt.subplots(figsize=(10, 7), constrained_layout=True)
 
     kw = {"cmap": cmap, "rasterized": True}
@@ -231,19 +237,32 @@ def make_plot(triangulation, values, title, out_path,
         cbar.set_label(cbar_label, fontsize=9)
     if cbar_ticks is not None:
         cbar.set_ticks(cbar_ticks)
+    if cbar_extend_minmax:
+        # Add min/max values as text on the colorbar ends
+        clim = pcm.get_clim()
+        cbar.ax.text(0.0, -0.5, f"{clim[0]:.1f}",
+                     ha="left", va="top", fontsize=7,
+                     transform=cbar.ax.transAxes)
+        cbar.ax.text(1.0, -0.5, f"{clim[1]:.1f}",
+                     ha="right", va="top", fontsize=7,
+                     transform=cbar.ax.transAxes)
     cbar.ax.tick_params(labelsize=8)
 
-    ax.set_xlim(lon_min - PADDING_LON, lon_max + PADDING_LON)
-    ax.set_ylim(lat_min - PADDING_LAT, lat_max + PADDING_LAT)
+    # Use actual mesh bounds + padding (not domain.yaml bounds which may differ)
+    ax.set_xlim(mesh_lon_min - PADDING_LON, mesh_lon_max + PADDING_LON)
+    ax.set_ylim(mesh_lat_min - PADDING_LAT, mesh_lat_max + PADDING_LAT)
     ax.set_xlabel("Longitude (°E)", fontsize=9)
     ax.set_ylabel("Latitude (°N)", fontsize=9)
     ax.tick_params(labelsize=8)
     ax.set_title(title, fontsize=12, fontweight="bold", pad=8)
     ax.set_aspect("equal")
 
-    fig.savefig(out_path, dpi=DPI, format="tiff", bbox_inches="tight")
+    # Save as JPEG — significantly smaller than TIFF for rasterized mesh plots
+    jpeg_path = out_path.with_suffix(".jpg")
+    fig.savefig(jpeg_path, dpi=DPI, format="jpeg",
+                bbox_inches="tight", quality=85)
     plt.close(fig)
-    print(f"  -> Saved {out_path.name}")
+    print(f"  -> Saved {jpeg_path.name}")
 
 
 # =============================================================================
@@ -282,7 +301,8 @@ def inspect_mesh(cfg: dict):
     # --- Bathymetry ---
     make_plot(triang, depth, "Bathymetry (m)", out / "bathymetry.tiff",
               lon_min, lon_max, lat_min, lat_max,
-              cmap="viridis", cbar_label="Depth (m)")
+              cmap="viridis", cbar_label="Depth (m)",
+              cbar_extend_minmax=True)
 
     # --- Standard .gr3 scalar files ---
     gr3_specs = [

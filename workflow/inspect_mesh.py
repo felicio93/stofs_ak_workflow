@@ -174,8 +174,9 @@ def compute_resolution_m(lon, lat, triangles):
 # Plotting helpers
 # =============================================================================
 
-def _base_map(ax, extent):
-    ax.set_extent(extent, crs=DATA_PROJ)
+def _base_map(ax, extent, proj):
+    """Set map extent and add features. extent must be in the projection's CRS."""
+    ax.set_extent(extent, crs=proj)
     ax.add_feature(cfeature.LAND, facecolor="lightgray", zorder=2, edgecolor="k", linewidth=0.3)
     ax.add_feature(cfeature.COASTLINE, zorder=3, linewidth=0.3)
     gl = ax.gridlines(draw_labels=True, linewidth=0.4, color="gray",
@@ -229,7 +230,7 @@ def make_plot(triangulation, values, title, out_path,
     fig, ax = plt.subplots(figsize=(10, 7),
                            subplot_kw={"projection": proj},
                            constrained_layout=True)
-    _base_map(ax, [ext_left, ext_right, lat_min, lat_max])
+    _base_map(ax, [ext_left, ext_right, lat_min, lat_max], proj)
 
     kw = {"cmap": cmap, "zorder": 1, "rasterized": True}
     if vmin is not None:

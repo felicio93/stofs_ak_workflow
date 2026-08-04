@@ -40,7 +40,7 @@ import matplotlib.tri as mtri
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from workflow.config import load_config, model_dir
 
-DPI = 100
+DPI = 150
 PADDING_LON = 5.0   # degrees longitude padding around mesh bounds
 PADDING_LAT = 2.0   # degrees latitude padding around mesh bounds
 
@@ -260,7 +260,7 @@ def make_plot(triangulation, values, title, out_path,
     # Save as JPEG — significantly smaller than TIFF for rasterized mesh plots
     jpeg_path = out_path.with_suffix(".jpg")
     fig.savefig(jpeg_path, dpi=DPI, format="jpeg",
-                bbox_inches="tight", pil_kwargs={"quality": 85})
+                bbox_inches="tight", pil_kwargs={"quality": 92})
     plt.close(fig)
     print(f"  -> Saved {jpeg_path.name}")
 

@@ -36,14 +36,11 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.tri as mtri
-import cartopy.crs as ccrs
-import cartopy.feature as cfeature
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from workflow.config import load_config, model_dir
 
 DPI = 300
-DATA_PROJ = ccrs.PlateCarree()
 
 
 # =============================================================================
@@ -188,24 +185,20 @@ def _base_map(ax, extent, proj):
 
 
 def _shift_lons(lon):
-    """
-    Convert 0-360 longitudes to -180..180 for Cartopy compatibility.
-    Cartopy normalises set_extent() to -180..180 internally, so a mesh
-    with lons 150-230 (crossing the antimeridian) must be shifted:
-      lons > 180 -> lon - 360  (e.g. 230 -> -130)
-    """
+    """Convert 0-360 longitudes to -180..180 for Cartopy compatibility."""
     return np.where(lon > 180, lon - 360, lon)
 
 
 def _plot_extent(lon_min, lon_max, lat_min, lat_max):
-    """
-    Return the extent [left, right, bottom, top] in -180..180 space.
-    Handles domains that cross the antimeridian (e.g. 150 -> 230).
-    """
+    """Return extent in -180..180 space."""
     lmin = lon_min if lon_min <= 180 else lon_min - 360
     lmax = lon_max if lon_max <= 180 else lon_max - 360
     return [lmin, lmax, lat_min, lat_max]
 
+
+# =============================================================================
+# Plotting helpers (pure matplotlib, no cartopy)
+# =============================================================================
 
 def make_plot(triangulation, values, title, out_path,
               lon_min, lon_max, lat_min, lat_max,
@@ -213,26 +206,13 @@ def make_plot(triangulation, values, title, out_path,
               cbar_label=None, is_elem=False,
               cbar_ticks=None):
     """
-    Create and save one tripcolor plot as a TIFF.
-
-    For domains crossing the antimeridian (e.g. 150-230°E), we use
-    PlateCarree(central_longitude=180) which maps the 0-360 longitude space
-    symmetrically. The triangulation coordinates must be shifted to match:
-        lon_plot = lon - 180    (so 150 -> -30, 180 -> 0, 230 -> 50)
-    and the extent is similarly expressed relative to central_longitude=180.
+    Create and save one tripcolor plot as a TIFF using plain matplotlib.
+    No Cartopy — avoids all projection/extent/CRS issues with 0-360 domains
+    crossing the antimeridian.
     """
-    central = 180.0
-    # Shift extent to projection-relative coordinates
-    ext_left  = lon_min - central
-    ext_right = lon_max - central
+    fig, ax = plt.subplots(figsize=(10, 7), constrained_layout=True)
 
-    proj = ccrs.PlateCarree(central_longitude=central)
-    fig, ax = plt.subplots(figsize=(10, 7),
-                           subplot_kw={"projection": proj},
-                           constrained_layout=True)
-    _base_map(ax, [ext_left, ext_right, lat_min, lat_max], proj)
-
-    kw = {"cmap": cmap, "zorder": 1, "rasterized": True}
+    kw = {"cmap": cmap, "rasterized": True}
     if vmin is not None:
         kw["vmin"] = vmin
     if vmax is not None:
@@ -251,9 +231,15 @@ def make_plot(triangulation, values, title, out_path,
         cbar.set_ticks(cbar_ticks)
     cbar.ax.tick_params(labelsize=8)
 
+    ax.set_xlim(lon_min, lon_max)
+    ax.set_ylim(lat_min, lat_max)
+    ax.set_xlabel("Longitude (°E)", fontsize=9)
+    ax.set_ylabel("Latitude (°N)", fontsize=9)
+    ax.tick_params(labelsize=8)
     ax.set_title(title, fontsize=12, fontweight="bold", pad=8)
-    fig.savefig(out_path, dpi=DPI, format="tiff",
-                bbox_inches="tight")
+    ax.set_aspect("equal")
+
+    fig.savefig(out_path, dpi=DPI, format="tiff", bbox_inches="tight")
     plt.close(fig)
     print(f"  -> Saved {out_path.name}")
 
@@ -287,14 +273,9 @@ def inspect_mesh(cfg: dict):
     np_nodes = len(lon)
     ne_tri   = len(tri_arr)
 
-    # Shift lons to PlateCarree(central_longitude=180) coordinate space.
-    # In this projection, lon_plot = lon - 180, so:
-    #   150 -> -30,  180 -> 0,  230 -> 50
-    # The extent is also expressed in this shifted space in make_plot().
-    lon_plot = lon - 180.0
-
-    # Build triangulation using projection-relative coordinates.
-    triang = mtri.Triangulation(lon_plot, lat, tri_arr)
+    # Build triangulation directly in geographic lon/lat (0-360).
+    # No projection needed — pure matplotlib handles this correctly.
+    triang = mtri.Triangulation(lon, lat, tri_arr)
 
     # --- Bathymetry ---
     make_plot(triang, depth, "Bathymetry (m)", out / "bathymetry.tiff",

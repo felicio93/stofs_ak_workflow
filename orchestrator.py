@@ -115,6 +115,14 @@ def init_project(cfg: dict):
         d.mkdir(parents=True, exist_ok=True)
         print(f"  Created: {d}")
 
+    # Pre-create yearly ERA5 raw subdirectories for the date range
+    start_year = date.fromisoformat(cfg["start_date"]).year
+    end_year   = date.fromisoformat(cfg["end_date"]).year
+    for yr in range(start_year, end_year + 1):
+        d = model_dir / "raw" / "era5" / str(yr)
+        d.mkdir(parents=True, exist_ok=True)
+        print(f"  Created: {d}")
+
     # --- Generate monthly time groups ---
     months = []
     current = date(start.year, start.month, 1)
@@ -203,12 +211,10 @@ def run_workflow(cfg: dict, config_dir: Path, only: str = None):
         print("[SKIP] inspect_mesh")
 
     # =========================================================================
-    # Phase 1 — HYCOM download
+    # =========================================================================
+    # Phase 1 — Downloads (DTN, internet required)
     # =========================================================================
 
-    # -------------------------------------------------------------------------
-    # Step: download_hycom
-    # -------------------------------------------------------------------------
     if enabled("download_hycom"):
         print("[STEP] download_hycom")
         from workflow.download_hycom import run_download
@@ -216,9 +222,17 @@ def run_workflow(cfg: dict, config_dir: Path, only: str = None):
     else:
         print("[SKIP] download_hycom")
 
-    # -------------------------------------------------------------------------
-    # Step: aggregate_hycom  (interactive: ncrcat daily -> monthly SCHISM stacks)
-    # -------------------------------------------------------------------------
+    if enabled("download_era5"):
+        print("[STEP] download_era5")
+        from workflow.download_era5 import run_download_era5
+        run_download_era5(cfg)
+    else:
+        print("[SKIP] download_era5")
+
+    # =========================================================================
+    # Phase 2 — Processing (any node, no internet required)
+    # =========================================================================
+
     if enabled("aggregate_hycom"):
         print("[STEP] aggregate_hycom")
         from workflow.aggregate_hycom import run_aggregate
@@ -226,9 +240,6 @@ def run_workflow(cfg: dict, config_dir: Path, only: str = None):
     else:
         print("[SKIP] aggregate_hycom")
 
-    # -------------------------------------------------------------------------
-    # Step: plotting_debug  (submits a SLURM job array, one task per month)
-    # -------------------------------------------------------------------------
     if enabled("plotting_debug"):
         print("[STEP] plotting_debug")
         from workflow.submit_plots import submit_plotting_jobs
@@ -236,13 +247,24 @@ def run_workflow(cfg: dict, config_dir: Path, only: str = None):
     else:
         print("[SKIP] plotting_debug")
 
+    if enabled("gen_sflux"):
+        print("[STEP] gen_sflux")
+        from workflow.submit_era5 import submit_gen_sflux
+        submit_gen_sflux(cfg, config_dir)
+    else:
+        print("[SKIP] gen_sflux")
+
+    if enabled("plot_sflux"):
+        print("[STEP] plot_sflux")
+        from workflow.submit_era5 import submit_plot_sflux
+        submit_plot_sflux(cfg, config_dir)
+    else:
+        print("[SKIP] plot_sflux")
+
     # =========================================================================
     # Phase 3 — SCHISM preprocessing (HYCOM-based Fortran utilities)
     # =========================================================================
 
-    # -------------------------------------------------------------------------
-    # Step A: gen_estuary (interactive, once)
-    # -------------------------------------------------------------------------
     if enabled("gen_estuary"):
         print("[STEP] gen_estuary")
         from workflow.gen_estuary import run_gen_estuary
@@ -250,9 +272,6 @@ def run_workflow(cfg: dict, config_dir: Path, only: str = None):
     else:
         print("[SKIP] gen_estuary")
 
-    # -------------------------------------------------------------------------
-    # Step B: gen_hotstart (SLURM single job, first month only)
-    # -------------------------------------------------------------------------
     if enabled("gen_hotstart"):
         print("[STEP] gen_hotstart")
         from workflow.submit_hycom_utils import submit_gen_hotstart
@@ -260,9 +279,6 @@ def run_workflow(cfg: dict, config_dir: Path, only: str = None):
     else:
         print("[SKIP] gen_hotstart")
 
-    # -------------------------------------------------------------------------
-    # Step C: gen_3Dth (SLURM array, every month)
-    # -------------------------------------------------------------------------
     if enabled("gen_3Dth"):
         print("[STEP] gen_3Dth")
         from workflow.submit_hycom_utils import submit_gen_3Dth
@@ -270,9 +286,6 @@ def run_workflow(cfg: dict, config_dir: Path, only: str = None):
     else:
         print("[SKIP] gen_3Dth")
 
-    # -------------------------------------------------------------------------
-    # Step D: gen_nudge (SLURM array, every month)
-    # -------------------------------------------------------------------------
     if enabled("gen_nudge"):
         print("[STEP] gen_nudge")
         from workflow.submit_hycom_utils import submit_gen_nudge

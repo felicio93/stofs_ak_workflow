@@ -65,12 +65,24 @@ export WF=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/stofs_ak_workflow
 export CFG=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config
 
 # First time only: create swf_main manually (bootstrap).
-conda create -y -n swf_main -c conda-forge python=3.11 pyyaml python-dateutil nco cdo
+# Note: now includes cdsapi and netcdf4 for ERA5 support.
+conda create -y -n swf_main -c conda-forge python=3.11 pyyaml python-dateutil nco cdo cdsapi netcdf4
 conda activate swf_main
 
 # Create/verify all envs in the config (creates swf_plot).
 python $WF/orchestrator.py --setup-envs --config $CFG
 ```
+
+**ERA5 prerequisite:** before running `download_era5`, verify your CDS API
+credentials are in place on the DTN:
+```bash
+cat ~/.cdsapirc
+# Should show:
+# url: https://cds.climate.copernicus.eu/api
+# key: <your-uid>:<your-api-key>
+```
+If the file is missing, register at https://cds.climate.copernicus.eu and
+create the file with your UID and API key.
 
 ---
 

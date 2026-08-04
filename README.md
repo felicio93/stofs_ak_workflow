@@ -179,12 +179,21 @@ code. All generated data goes under `project_dir` (from `project.yaml`).
 ### 2. Create the workflow conda environments
 
 The workflow uses two conda environments:
-- `swf_main` — orchestrator + NCO/CDO (download + aggregate)
-- `swf_plot` — matplotlib/cartopy/xarray (plotting_debug, runs on compute nodes)
+- `swf_main` — orchestrator + NCO/CDO + ERA5 download (`cdsapi`, `netcdf4`)
+- `swf_plot` — matplotlib/cartopy/xarray (plotting and mesh diagnostics)
 
 The easiest way is the built-in `--setup-envs` command, which creates any
 missing environments and verifies the libraries of existing ones. It needs
 internet, so run it on the DTN.
+
+> **ERA5 prerequisite:** `swf_main` includes `cdsapi` for ERA5 download.
+> Before running `download_era5`, you need a free Copernicus CDS account
+> and a `~/.cdsapirc` file on the DTN with your API key:
+> ```
+> url: https://cds.climate.copernicus.eu/api
+> key: <your-uid>:<your-api-key>
+> ```
+> Register at https://cds.climate.copernicus.eu
 
 Note: `--setup-envs` reads the config, so you must **create the config first**
 (see "Starting a New Project" below), then run this. There is also a bootstrap

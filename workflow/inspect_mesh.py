@@ -40,7 +40,9 @@ import matplotlib.tri as mtri
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from workflow.config import load_config, model_dir
 
-DPI = 300
+DPI = 150
+PADDING_LON = 5.0   # degrees longitude padding around mesh
+PADDING_LAT = 2.0   # degrees latitude padding around mesh
 
 
 # =============================================================================
@@ -231,8 +233,8 @@ def make_plot(triangulation, values, title, out_path,
         cbar.set_ticks(cbar_ticks)
     cbar.ax.tick_params(labelsize=8)
 
-    ax.set_xlim(lon_min, lon_max)
-    ax.set_ylim(lat_min, lat_max)
+    ax.set_xlim(lon_min - PADDING_LON, lon_max + PADDING_LON)
+    ax.set_ylim(lat_min - PADDING_LAT, lat_max + PADDING_LAT)
     ax.set_xlabel("Longitude (°E)", fontsize=9)
     ax.set_ylabel("Latitude (°N)", fontsize=9)
     ax.tick_params(labelsize=8)
@@ -280,7 +282,7 @@ def inspect_mesh(cfg: dict):
     # --- Bathymetry ---
     make_plot(triang, depth, "Bathymetry (m)", out / "bathymetry.tiff",
               lon_min, lon_max, lat_min, lat_max,
-              cmap="Blues", cbar_label="Depth (m)")
+              cmap="viridis", cbar_label="Depth (m)")
 
     # --- Standard .gr3 scalar files ---
     gr3_specs = [
@@ -291,8 +293,8 @@ def inspect_mesh(cfg: dict):
             list(range(1, 11))),
         ("shapiro.gr3",           "Shapiro Filter",       "viridis",  None, None, None),
         ("windrot_geo2proj.gr3",  "Wind Rotation (deg)",  "RdBu_r",   None, None, None),
-        ("TEM_nudge.gr3",         "Temperature Nudging Mask", "binary", None, None, None),
-        ("SAL_nudge.gr3",         "Salinity Nudging Mask",    "binary", None, None, None),
+        ("TEM_nudge.gr3",         "Temperature Nudging Mask", "YlOrRd", None, None, None),
+        ("SAL_nudge.gr3",         "Salinity Nudging Mask",    "YlOrRd", None, None, None),
     ]
     for fname, title, cmap, vmin, vmax, ticks in gr3_specs:
         fpath = fix / fname
@@ -314,7 +316,7 @@ def inspect_mesh(cfg: dict):
         vals = read_gr3_values(estuary, np_nodes)
         make_plot(triang, vals, "Estuary Mask", out / "estuary.tiff",
                   lon_min, lon_max, lat_min, lat_max,
-                  cmap="binary", vmin=0, vmax=1)
+                  cmap="YlOrRd", vmin=0, vmax=1)
     else:
         print("  estuary.gr3 not found in fix/, skipping (run gen_estuary first).")
 

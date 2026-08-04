@@ -260,7 +260,7 @@ def make_plot(triangulation, values, title, out_path,
     # Save as JPEG — significantly smaller than TIFF for rasterized mesh plots
     jpeg_path = out_path.with_suffix(".jpg")
     fig.savefig(jpeg_path, dpi=DPI, format="jpeg",
-                bbox_inches="tight", quality=85)
+                bbox_inches="tight", pil_kwargs={"quality": 85})
     plt.close(fig)
     print(f"  -> Saved {jpeg_path.name}")
 

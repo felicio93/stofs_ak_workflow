@@ -340,6 +340,21 @@ def inspect_mesh(cfg: dict):
     else:
         print("  estuary.gr3 not found in fix/, skipping (run gen_estuary first).")
 
+    # --- tvd.prop (element-based: 0=no TVD, 1=TVD) ---
+    tvd_path = fix / "tvd.prop"
+    if tvd_path.exists():
+        print("  Processing tvd.prop ...")
+        # tvd.prop has NE rows, format: id val (0 or 1 per element)
+        tvd_raw = np.loadtxt(tvd_path, usecols=1)
+        # Map from original elements to split triangles via elem_map
+        tvd_tri = tvd_raw[elem_map]
+        make_plot(triang, tvd_tri, "TVD Property (1=TVD, 0=no TVD)",
+                  out / "tvd.tiff",
+                  lon_min, lon_max, lat_min, lat_max,
+                  cmap="cividis", vmin=0, vmax=1, is_elem=True)
+    else:
+        print("  tvd.prop not found in fix/, skipping.")
+
     # --- Bottom friction (auto-detect) ---
     friction_found = None
     for fname in ("rough.gr3", "drag.gr3", "manning.gr3"):

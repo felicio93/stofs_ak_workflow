@@ -186,21 +186,50 @@ def _base_map(ax, extent):
     gl.ylabel_style = {"size": 8}
 
 
+def _shift_lons(lon):
+    """
+    Convert 0-360 longitudes to -180..180 for Cartopy compatibility.
+    Cartopy normalises set_extent() to -180..180 internally, so a mesh
+    with lons 150-230 (crossing the antimeridian) must be shifted:
+      lons > 180 -> lon - 360  (e.g. 230 -> -130)
+    """
+    return np.where(lon > 180, lon - 360, lon)
+
+
+def _plot_extent(lon_min, lon_max, lat_min, lat_max):
+    """
+    Return the extent [left, right, bottom, top] in -180..180 space.
+    Handles domains that cross the antimeridian (e.g. 150 -> 230).
+    """
+    lmin = lon_min if lon_min <= 180 else lon_min - 360
+    lmax = lon_max if lon_max <= 180 else lon_max - 360
+    return [lmin, lmax, lat_min, lat_max]
+
+
 def make_plot(triangulation, values, title, out_path,
               lon_min, lon_max, lat_min, lat_max,
               cmap="viridis", vmin=None, vmax=None,
               cbar_label=None, is_elem=False,
               cbar_ticks=None):
-    """Create and save one tripcolor plot as a TIFF."""
-    # Always use plain PlateCarree with no central_longitude shift.
-    # tripcolor does not support the transform= keyword, so the triangulation
-    # coordinates must be in the same space as the projection. Using
-    # central_longitude=0 means the lon/lat triangulation matches directly.
-    proj = ccrs.PlateCarree()
+    """
+    Create and save one tripcolor plot as a TIFF.
+
+    For domains crossing the antimeridian (e.g. 150-230°E), we use
+    PlateCarree(central_longitude=180) which maps the 0-360 longitude space
+    symmetrically. The triangulation coordinates must be shifted to match:
+        lon_plot = lon - 180    (so 150 -> -30, 180 -> 0, 230 -> 50)
+    and the extent is similarly expressed relative to central_longitude=180.
+    """
+    central = 180.0
+    # Shift extent to projection-relative coordinates
+    ext_left  = lon_min - central
+    ext_right = lon_max - central
+
+    proj = ccrs.PlateCarree(central_longitude=central)
     fig, ax = plt.subplots(figsize=(10, 7),
                            subplot_kw={"projection": proj},
                            constrained_layout=True)
-    _base_map(ax, [lon_min, lon_max, lat_min, lat_max])
+    _base_map(ax, [ext_left, ext_right, lat_min, lat_max])
 
     kw = {"cmap": cmap, "zorder": 1, "rasterized": True}
     if vmin is not None:
@@ -257,8 +286,14 @@ def inspect_mesh(cfg: dict):
     np_nodes = len(lon)
     ne_tri   = len(tri_arr)
 
-    # Build triangulation (in PlateCarree space — sufficient for plotting)
-    triang = mtri.Triangulation(lon, lat, tri_arr)
+    # Shift lons to PlateCarree(central_longitude=180) coordinate space.
+    # In this projection, lon_plot = lon - 180, so:
+    #   150 -> -30,  180 -> 0,  230 -> 50
+    # The extent is also expressed in this shifted space in make_plot().
+    lon_plot = lon - 180.0
+
+    # Build triangulation using projection-relative coordinates.
+    triang = mtri.Triangulation(lon_plot, lat, tri_arr)
 
     # --- Bathymetry ---
     make_plot(triang, depth, "Bathymetry (m)", out / "bathymetry.tiff",

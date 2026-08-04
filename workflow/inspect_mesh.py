@@ -192,7 +192,11 @@ def make_plot(triangulation, values, title, out_path,
               cbar_label=None, is_elem=False,
               cbar_ticks=None):
     """Create and save one tripcolor plot as a TIFF."""
-    proj = ccrs.PlateCarree(central_longitude=0.5*(lon_min+lon_max))
+    # Always use plain PlateCarree with no central_longitude shift.
+    # tripcolor does not support the transform= keyword, so the triangulation
+    # coordinates must be in the same space as the projection. Using
+    # central_longitude=0 means the lon/lat triangulation matches directly.
+    proj = ccrs.PlateCarree()
     fig, ax = plt.subplots(figsize=(10, 7),
                            subplot_kw={"projection": proj},
                            constrained_layout=True)

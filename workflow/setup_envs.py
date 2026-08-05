@@ -30,10 +30,10 @@ ENV_SPECS = {
     "swf_main": {
         "conda_packages": [
             "python=3.11", "pyyaml", "python-dateutil", "nco", "cdo",
-            "cdsapi", "netcdf4",
+            "cdsapi", "netcdf4", "xarray",
         ],
         # (python import name, pip/conda name) for verification
-        "verify_imports": ["yaml", "dateutil", "cdsapi", "netCDF4"],
+        "verify_imports": ["yaml", "dateutil", "cdsapi", "netCDF4", "xarray"],
         "verify_tools": ["ncks", "ncpdq", "ncap2", "ncrename", "ncatted",
                          "ncrcat", "ncwa", "cdo"],
     },

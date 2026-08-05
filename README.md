@@ -207,7 +207,7 @@ cp $WF/templates/config_example/*.yaml \
    /work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config/
 
 # 2. Bootstrap swf_main manually the first time:
-conda create -n swf_main -c conda-forge python=3.11 pyyaml python-dateutil nco cdo
+conda create -n swf_main -c conda-forge python=3.11 pyyaml python-dateutil nco cdo cdsapi netcdf4 xarray
 conda activate swf_main
 
 # 3. Create/verify all envs referenced by the config (creates swf_plot):

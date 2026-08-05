@@ -66,7 +66,7 @@ export CFG=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config
 
 # First time only: create swf_main manually (bootstrap).
 # Note: now includes cdsapi and netcdf4 for ERA5 support.
-conda create -y -n swf_main -c conda-forge python=3.11 pyyaml python-dateutil nco cdo cdsapi netcdf4
+conda create -y -n swf_main -c conda-forge python=3.11 pyyaml python-dateutil nco cdo cdsapi netcdf4 xarray
 conda activate swf_main
 
 # Create/verify all envs in the config (creates swf_plot).

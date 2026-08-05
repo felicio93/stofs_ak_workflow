@@ -22,7 +22,8 @@ plot_sflux:     false   # ERA5/sflux debug GIFs (6-hourly, all variables)
 # Phase 3 — SCHISM preprocessing (SLURM jobs, no internet required):
 # Run gen_estuary first (once, interactive) before submitting SLURM steps.
 gen_estuary:  false   # Step A: create fix/estuary.gr3 + bin/*.in files (once, interactive)
-gen_sflux:    false   # Step B: ERA5 raw -> sflux_air/prc/rad per month (SLURM array)
-gen_hotstart: false   # Step C: create hotstart.nc (once, first month only, SLURM)
-gen_3Dth:     false   # Step D: create *[23D].th.nc files (SLURM array, one job per month)
-gen_nudge:    false   # Step E: create TEM/SAL_nu.nc files (SLURM array, one job per month)
+gen_bctides:  false   # Step B: create bctides.in per month from TPXO9 (interactive)
+gen_sflux:    false   # Step C: ERA5 raw -> sflux_air/prc/rad per month (SLURM array)
+gen_hotstart: false   # Step D: create hotstart.nc (once, first month only, SLURM)
+gen_3Dth:     false   # Step E: create *[23D].th.nc files (SLURM array, one job per month)
+gen_nudge:    false   # Step F: create TEM/SAL_nu.nc files (SLURM array, one job per month)

@@ -272,6 +272,13 @@ def run_workflow(cfg: dict, config_dir: Path, only: str = None):
     else:
         print("[SKIP] gen_estuary")
 
+    if enabled("gen_bctides"):
+        print("[STEP] gen_bctides")
+        from workflow.gen_bctides import run_gen_bctides
+        run_gen_bctides(cfg)
+    else:
+        print("[SKIP] gen_bctides")
+
     if enabled("gen_hotstart"):
         print("[STEP] gen_hotstart")
         from workflow.submit_hycom_utils import submit_gen_hotstart

@@ -179,7 +179,7 @@ code. All generated data goes under `project_dir` (from `project.yaml`).
 ### 2. Create the workflow conda environments
 
 The workflow uses two conda environments:
-- `swf_main` — orchestrator + NCO/CDO + ERA5 download (`cdsapi`, `netcdf4`)
+- `swf_main` — orchestrator + NCO/CDO + ERA5 download (`cdsapi`, `netcdf4`, `xarray`) + TPXO bctides (`scipy`)
 - `swf_plot` — matplotlib/cartopy/xarray (plotting and mesh diagnostics)
 
 The easiest way is the built-in `--setup-envs` command, which creates any
@@ -207,7 +207,7 @@ cp $WF/templates/config_example/*.yaml \
    /work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config/
 
 # 2. Bootstrap swf_main manually the first time:
-conda create -n swf_main -c conda-forge python=3.11 pyyaml python-dateutil nco cdo cdsapi netcdf4 xarray
+conda create -n swf_main -c conda-forge python=3.11 pyyaml python-dateutil nco cdo cdsapi netcdf4 xarray scipy
 conda activate swf_main
 
 # 3. Create/verify all envs referenced by the config (creates swf_plot):
@@ -444,16 +444,21 @@ that some daily downloads are missing).
 | Step | Status | Notes |
 |------|--------|-------|
 | `--init` directory creation | Done | Creates I/R/P/D + fix/raw/bin/logs |
-| `--setup-envs` | Done | Creates/verifies swf_main + swf_plot |
+| `--setup-envs` | Done | Creates/verifies swf_main (scipy added) + swf_plot |
+| `inspect_mesh` | Done | Phase 0, SLURM, fix/ diagnostic plots |
 | `download_hycom` | Done | Phase 1, DTN, GOFS 3.1 + ESPC-D-V02 source map |
+| `download_era5` | Done | Phase 1b, DTN, CDS API monthly download |
 | `aggregate_hycom` | Done | Phase 2a, interactive, daily → monthly stacks |
-| `plotting_debug` | Done | Phase 2b, SLURM array, debug GIFs |
+| `gen_sflux` | Done | Phase 2b, SLURM array, ERA5 → sflux files |
+| `plotting_debug` | Done | Phase 2, SLURM array, HYCOM debug GIFs |
+| `plot_sflux` | Done | Phase 2, SLURM array, ERA5/sflux debug GIFs |
 | `gen_estuary` | Done | Phase 3A, create estuary.gr3 + .in files |
-| `gen_hotstart` | Done | Phase 3B, SLURM single job, first month |
-| `gen_3Dth` | Done | Phase 3C, SLURM array, boundary th.nc files |
-| `gen_nudge` | Done | Phase 3D, SLURM array, nudging nu.nc files |
-| ERA5 atmospheric forcing | Planned | sflux files |
-| TPXO tidal forcing | Planned | bctides.in |
+| `gen_bctides` | Done | Phase 3B, interactive, TPXO9 → bctides.in per month |
+| `gen_hotstart` | Done | Phase 3C, SLURM single job, first month |
+| `gen_3Dth` | Done | Phase 3D, SLURM array, boundary th.nc files |
+| `gen_nudge` | Done | Phase 3E, SLURM array, nudging nu.nc files |
+| TPXO tidal forcing | Done | bctides.in via TPXO9 (gen_bctides) |
+| ERA5 atmospheric forcing | Done | sflux files (gen_sflux) |
 | Wave boundary forcing | Planned | spectral boundary conditions |
 
 ---

@@ -65,8 +65,8 @@ export WF=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/stofs_ak_workflow
 export CFG=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config
 
 # First time only: create swf_main manually (bootstrap).
-# Note: now includes cdsapi and netcdf4 for ERA5 support.
-conda create -y -n swf_main -c conda-forge python=3.11 pyyaml python-dateutil nco cdo cdsapi netcdf4 xarray
+# Note: includes cdsapi+netcdf4+xarray (ERA5) and scipy (TPXO/bctides).
+conda create -y -n swf_main -c conda-forge python=3.11 pyyaml python-dateutil nco cdo cdsapi netcdf4 xarray scipy
 conda activate swf_main
 
 # Create/verify all envs in the config (creates swf_plot).
@@ -346,7 +346,53 @@ rm $SWF_PROJ/M01/D01/D01_fix/inspect_mesh.done
 # set inspect_mesh: true in steps.yaml, run orchestrator
 ```
 
-### Step 8b — gen_hotstart (SLURM, once, first month only)
+### Step 8b — gen_bctides (interactive, once per month)
+
+Generates `bctides.in` for every month using TPXO9 tidal data.
+Uses the open boundaries defined in `schism.yaml` (`open_boundary_flags`,
+`tidal_constituents`, `tobc`, `sobc`).
+
+**Prerequisites:**
+- `fix/hgrid.ll` must be in place (should already be there from Step 3)
+- TPXO9 files at `~/.local/share/tpxo/` (already there from previous pyschism use):
+  ```bash
+  ls ~/.local/share/tpxo/
+  # expect: h_tpxo9.v1.nc  u_tpxo9.v1.nc
+  ```
+- `scipy` must be in `swf_main`:
+  ```bash
+  conda activate swf_main
+  python -c "import scipy; print('scipy OK')"
+  # if missing: conda install -c conda-forge scipy
+  ```
+
+Edit `$CFG/steps.yaml` — set only `gen_bctides: true`.
+Also update `$CFG/schism.yaml` to confirm `open_boundary_flags`, `tobc`,
+`sobc`, and `tidal_constituents` are correct for your mesh.
+
+```bash
+conda activate swf_main
+python $WF/orchestrator.py --run --config $CFG \
+    2>&1 | tee $SWF_PROJ/M01/logs/gen_bctides.log
+```
+
+Verify:
+```bash
+# Check a bctides.in was created for each month
+ls $SWF_PROJ/M01/I01/I01_202409/bctides.in
+head -20 $SWF_PROJ/M01/I01/I01_202409/bctides.in
+
+# Check all months have sentinels
+ls $SWF_PROJ/M01/I01/I01_*/bctides.done | wc -l  # should equal number of months
+```
+
+Re-run a specific month:
+```bash
+rm $SWF_PROJ/M01/I01/I01_202410/bctides.done
+# set gen_bctides: true, run orchestrator
+```
+
+### Step 8c — gen_hotstart (SLURM, once, first month only)
 
 Edit `$CFG/steps.yaml` — set only `gen_hotstart: true`.
 
@@ -362,7 +408,7 @@ cat $SWF_PROJ/M01/logs/gen_hotstart.out
 ls -lh $SWF_PROJ/M01/I01/I01_202409/hotstart.nc
 ```
 
-### Step 8c — gen_3Dth (SLURM array, every month)
+### Step 8d — gen_3Dth (SLURM array, every month)
 
 Edit `$CFG/steps.yaml` — set only `gen_3Dth: true`.
 
@@ -385,7 +431,7 @@ rm $SWF_PROJ/M01/I01/I01_202410/gen_3Dth.done
 # set gen_3Dth: true, run orchestrator
 ```
 
-### Step 8d — gen_nudge (SLURM array, every month)
+### Step 8e — gen_nudge (SLURM array, every month)
 
 Edit `$CFG/steps.yaml` — set only `gen_nudge: true`.
 
@@ -421,10 +467,11 @@ cat $SWF_PROJ/M01/logs/gen_nudge_1.err   # should be empty
 | `plot_sflux` (submit) | Phase 2c | login | swf_main | no |
 | plotting/plot_sflux jobs | Phase 2 | compute | swf_plot (auto) | no |
 | `gen_estuary` | Phase 3A | any | swf_main | no |
-| `gen_hotstart` (submit) | Phase 3B | login | swf_main | no |
-| `gen_3Dth` (submit) | Phase 3C | login | swf_main | no |
-| `gen_nudge` (submit) | Phase 3D | login | swf_main | no |
-| gen_* SLURM jobs | Phase 3B-D | compute | none (Fortran) | no |
+| `gen_bctides` | Phase 3B | any | swf_main | no |
+| `gen_hotstart` (submit) | Phase 3C | login | swf_main | no |
+| `gen_3Dth` (submit) | Phase 3D | login | swf_main | no |
+| `gen_nudge` (submit) | Phase 3E | login | swf_main | no |
+| gen_* SLURM jobs | Phase 3C-E | compute | none (Fortran) | no |
 
 ---
 
@@ -440,6 +487,7 @@ cat $SWF_PROJ/M01/logs/gen_nudge_1.err   # should be empty
 | `plotting_debug` | Re-submit; overwrites GIFs |
 | `plot_sflux` | Skips months where `D01_YYYYMM/plot_sflux.done` exists |
 | `gen_estuary` | Skips if `estuary.gr3` and `bin/*.in` already exist |
+| `gen_bctides` | Skips months where `I01_YYYYMM/bctides.done` exists |
 | `gen_hotstart` | Skips if `gen_hotstart.done` exists |
 | `gen_3Dth` | Skips months where `gen_3Dth.done` exists |
 | `gen_nudge` | Skips months where `gen_nudge.done` exists |

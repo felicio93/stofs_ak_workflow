@@ -71,14 +71,22 @@ def plot_sflux_month(cfg: dict, ym: str):
     month = int(ym[4:])
     ndays = monthrange(year, month)[1]
 
-    sflux_dir = mdir / f"I{pid}" / f"I{pid}_{ym}" / "sflux"
-    out_dir   = mdir / f"D{pid}" / f"D{pid}_{ym}"
-    tmp_dir   = out_dir / "sflux_frames_tmp"
-    sentinel  = out_dir / "plot_sflux.done"
+    sflux_dir   = mdir / f"I{pid}" / f"I{pid}_{ym}" / "sflux"
+    out_dir     = mdir / f"D{pid}" / f"D{pid}_{ym}"
+    tmp_dir     = out_dir / "sflux_frames_tmp"
+    sentinel    = out_dir / "plot_sflux.done"
+    sflux_ready = sflux_dir / "gen_sflux.done"
 
     if sentinel.exists():
         print(f"  plot_sflux: {ym} already complete. Skipping.")
         return
+
+    # Wait for gen_sflux to finish — exit cleanly if not ready yet
+    if not sflux_ready.exists():
+        print(f"  plot_sflux: gen_sflux not yet complete for {ym} "
+              f"(gen_sflux.done missing). Exiting without writing sentinel.")
+        print(f"  Re-submit plot_sflux after gen_sflux finishes.")
+        sys.exit(0)  # Exit 0 so SLURM marks the job as succeeded, not failed
 
     out_dir.mkdir(parents=True, exist_ok=True)
     tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -152,8 +160,13 @@ def plot_sflux_month(cfg: dict, ym: str):
     except OSError:
         pass
 
-    sentinel.touch()
-    print(f"  Sentinel: {sentinel}")
+    # Only write sentinel if at least one GIF was produced
+    gif_count = len(list(out_dir.glob("sflux_*.gif")))
+    if gif_count > 0:
+        sentinel.touch()
+        print(f"  {gif_count} GIF(s) written. Sentinel: {sentinel}")
+    else:
+        print(f"  WARNING: no GIFs were produced for {ym}. Sentinel NOT written.")
 
 
 if __name__ == "__main__":

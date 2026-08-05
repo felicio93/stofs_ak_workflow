@@ -165,9 +165,10 @@ def _unzip_and_merge(zip_path: Path, out_nc: Path):
         if not nc_files:
             raise RuntimeError("ZIP contained no .nc files")
 
-        # Open and merge all variable files
+        # Open and merge all variable files; use compat='override' to silence
+        # xarray FutureWarning and adopt the correct future default behavior.
         datasets = [xr.open_dataset(f) for f in nc_files]
-        merged   = xr.merge(datasets)
+        merged   = xr.merge(datasets, compat="override")
 
         # New CDS Beta API renames some variables — normalise to old names
         rename_map = {

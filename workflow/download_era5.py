@@ -36,9 +36,11 @@ Requires:
 import os
 import sys
 import socket
+import tempfile
 from calendar import monthrange
 from datetime import date
 from pathlib import Path
+from zipfile import ZipFile, BadZipFile
 
 import numpy as np
 
@@ -135,6 +137,56 @@ def stale_check_era5(nc_path: Path, var: str = "u10") -> bool:
 # Download
 # =============================================================================
 
+def _is_zip(path: Path) -> bool:
+    """Return True if path is a zip archive (CDS API sometimes returns zips)."""
+    try:
+        with open(path, "rb") as f:
+            return f.read(4) == b"PK\x03\x04"
+    except Exception:
+        return False
+
+
+def _unzip_and_merge(zip_path: Path, out_nc: Path):
+    """
+    The new CDS API can return a zip of separate per-variable NetCDF files.
+    Unzip into a temp directory, merge all NetCDF files with xarray, and
+    write the merged result to out_nc. Handles variable renaming for the
+    new CDS Beta API (same as pyschism).
+    """
+    import xarray as xr
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir = Path(tmpdir)
+        print(f"  ZIP detected — extracting and merging variables...")
+        with ZipFile(zip_path, "r") as zf:
+            zf.extractall(tmpdir)
+            nc_files = list(tmpdir.glob("*.nc"))
+
+        if not nc_files:
+            raise RuntimeError("ZIP contained no .nc files")
+
+        # Open and merge all variable files
+        datasets = [xr.open_dataset(f) for f in nc_files]
+        merged   = xr.merge(datasets)
+
+        # New CDS Beta API renames some variables — normalise to old names
+        rename_map = {
+            "avg_tprate":   "mtpr",
+            "avg_sdlwrf":   "msdwlwrf",
+            "avg_sdswrf":   "msdwswrf",
+        }
+        actual_renames = {k: v for k, v in rename_map.items()
+                          if k in merged.data_vars}
+        if actual_renames:
+            merged = merged.rename(actual_renames)
+
+        merged.to_netcdf(str(out_nc))
+        for ds in datasets:
+            ds.close()
+
+    print(f"  Merged {len(nc_files)} variable file(s) -> {out_nc.name}")
+
+
 def download_month(client, ym: str, out_path: Path, cfg: dict):
     """Download one month of ERA5 data via the CDS API."""
     year  = int(ym[:4])
@@ -164,14 +216,27 @@ def download_month(client, ym: str, out_path: Path, cfg: dict):
         "download_format": "unarchived",
     }
 
-    tmp_path = out_path.parent / f"{out_path.stem}.tmp.nc"
-    tmp_path.unlink(missing_ok=True)
+    # Download to a temporary file first so we can inspect the format
+    raw_tmp = out_path.parent / f"{out_path.stem}.raw.tmp"
+    raw_tmp.unlink(missing_ok=True)
 
-    client.retrieve("reanalysis-era5-single-levels", request, str(tmp_path))
+    client.retrieve("reanalysis-era5-single-levels", request, str(raw_tmp))
 
-    if not (tmp_path.exists() and tmp_path.stat().st_size > 0):
+    if not (raw_tmp.exists() and raw_tmp.stat().st_size > 0):
         raise RuntimeError(f"CDS returned empty file for {ym}")
-    tmp_path.replace(out_path)
+
+    # Handle zip vs plain NetCDF (new CDS API sometimes returns a zip even
+    # when download_format='unarchived')
+    if _is_zip(raw_tmp):
+        try:
+            _unzip_and_merge(raw_tmp, out_path)
+            raw_tmp.unlink(missing_ok=True)
+        except (BadZipFile, Exception) as exc:
+            raw_tmp.unlink(missing_ok=True)
+            raise RuntimeError(f"Failed to unzip/merge CDS response: {exc}")
+    else:
+        raw_tmp.replace(out_path)
+
     print(f"  Downloaded: {out_path.name}  ({out_path.stat().st_size // 1024 // 1024} MB)")
 
 

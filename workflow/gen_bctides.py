@@ -127,10 +127,10 @@ def write_bctides(out_path: Path, start_date: datetime, rnday: int,
                      f"applying tidal potential")
         for c in etp_constituents:
             species  = tides.get_tidal_species_type(c)
-            amp      = tides.get_amplitude(c, 'elevation')
-            freq     = tides.get_frequency(c)
+            amp      = tides.get_tidal_potential_amplitude(c)
+            freq     = tides.get_orbital_frequency(c)
             nodal    = tides.get_nodal_factor(start_date, rnday, c)
-            ear      = tides.get_earth_equilibrium_argument(start_date, rnday, c)
+            ear      = tides.get_greenwich_factor(start_date, rnday, c)
             lines.append(c)
             lines.append(f" {species} {amp:.6f} {freq:.9e} {nodal:7.5f}  {ear:.2f}")
     else:
@@ -139,9 +139,9 @@ def write_bctides(out_path: Path, start_date: datetime, rnday: int,
     # --- nbfr (number of tidal boundary forcing frequencies) ---
     lines.append(f"{len(constituents)} !nbfr")
     for c in constituents:
-        freq  = tides.get_frequency(c)
+        freq  = tides.get_orbital_frequency(c)
         nodal = tides.get_nodal_factor(start_date, rnday, c)
-        ear   = tides.get_earth_equilibrium_argument(start_date, rnday, c)
+        ear   = tides.get_greenwich_factor(start_date, rnday, c)
         lines.append(c)
         lines.append(f"  {freq:.9e}  {nodal:7.5f}  {ear:.2f}")
 

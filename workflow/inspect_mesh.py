@@ -335,15 +335,17 @@ def inspect_mesh(cfg: dict):
     else:
         print("  WARNING: no friction file (rough.gr3/drag.gr3/manning.gr3) found.")
 
-    # --- Mesh resolution (log-scale colorbar via shared helper) ---
+    # --- Mesh resolution (linear scale, meters, percentile-clipped) ---
     print("  Computing mesh resolution ...")
     resolution = compute_resolution_m(lon, lat, tri_arr)
+    res_pos = resolution[resolution > 0]
+    res_vmax = float(np.percentile(res_pos, 98))  # clip extreme outliers
     make_frame_tripcolor(
         triang, resolution,
-        "Mesh Resolution  R = √(Area/π)  (log scale)",
+        "Mesh Resolution  R = √(Area/π)  (m)",
         out / "mesh_resolution.tiff",
-        cbar_label="Resolution (km)", cmap="turbo_r",
-        is_elem=True, is_log=True, cbar_km=True,
+        cbar_label="Resolution (m)", cmap="turbo_r",
+        is_elem=True, vmax=res_vmax,
         padding_lon=PADDING_LON, padding_lat=PADDING_LAT,
         dpi=DPI, quality=QUALITY, boundaries=boundaries,
     )

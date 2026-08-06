@@ -63,7 +63,10 @@ def read_mesh_boundaries(hgrid_path: Path) -> dict:
           node_id ...
           ...
 
-    Closes each polygon by repeating the first node at the end.
+        Closes each polygon by repeating the first node at the end.
+
+    Also returns mesh_extent: [lon_min, lon_max, lat_min, lat_max] derived
+    from all boundary node coordinates (tightest bounding box of the mesh).
     """
     with open(hgrid_path) as f:
         f.readline()                          # title
@@ -81,7 +84,7 @@ def read_mesh_boundaries(hgrid_path: Path) -> dict:
         for _ in range(ne):
             f.readline()
 
-        # --- Open boundaries ---
+        # --- Open boundaries (polylines, NOT closed) ---
         nope = int(f.readline().split()[0])
         f.readline()  # total open bnd nodes
         open_bnds = []
@@ -89,10 +92,7 @@ def read_mesh_boundaries(hgrid_path: Path) -> dict:
             nond = int(f.readline().split()[0])
             ids  = [int(f.readline().strip()) - 1 for _ in range(nond)]
             ids_arr = np.array(ids)
-            # Close the polygon
-            lo = np.append(lons[ids_arr], lons[ids_arr[0]])
-            la = np.append(lats[ids_arr], lats[ids_arr[0]])
-            open_bnds.append((lo, la))
+            open_bnds.append((lons[ids_arr], lats[ids_arr]))
 
         # --- Land / island boundaries ---
         nland = int(f.readline().split()[0])
@@ -105,14 +105,23 @@ def read_mesh_boundaries(hgrid_path: Path) -> dict:
             type_flag = int(header[1])
             ids = [int(f.readline().strip()) - 1 for _ in range(nond)]
             ids_arr = np.array(ids)
-            lo = np.append(lons[ids_arr], lons[ids_arr[0]])
-            la = np.append(lats[ids_arr], lats[ids_arr[0]])
             if type_flag == 0:
-                land_bnds.append((lo, la))
+                # Mainland coast: polyline (NOT closed — open ends connect to
+                # open boundaries or other land segments)
+                land_bnds.append((lons[ids_arr], lats[ids_arr]))
             else:
+                # Island: genuine closed loop — close it
+                lo = np.append(lons[ids_arr], lons[ids_arr[0]])
+                la = np.append(lats[ids_arr], lats[ids_arr[0]])
                 island_bnds.append((lo, la))
 
-    return {"open": open_bnds, "land": land_bnds, "island": island_bnds}
+    # Mesh extent from all node coordinates
+    mesh_extent = [float(lons.min()), float(lons.max()),
+                   float(lats.min()), float(lats.max())]
+
+    result = {"open": open_bnds, "land": land_bnds, "island": island_bnds}
+    result["mesh_extent"] = mesh_extent
+    return result
 
 
 def _draw_boundaries(ax, boundaries: dict):
@@ -149,10 +158,18 @@ def make_frame(lon2d, lat2d, values, title, date_str, cmap, vmin, vmax,
       - vertical colorbar on the right
       - axis labels Longitude/Latitude
       - aspect-driven figure size
+      - extent from mesh boundaries ± padding (if boundaries provided),
+        otherwise from the data grid bounds
       - optional mesh boundary overlay
     """
-    lon_min, lon_max = float(lon2d.min()), float(lon2d.max())
-    lat_min, lat_max = float(lat2d.min()), float(lat2d.max())
+    # Use mesh extent + padding when available, else fall back to data bounds
+    if boundaries is not None and "mesh_extent" in boundaries:
+        ext = boundaries["mesh_extent"]
+        lon_min = ext[0] - PADDING_LON; lon_max = ext[1] + PADDING_LON
+        lat_min = ext[2] - PADDING_LAT; lat_max = ext[3] + PADDING_LAT
+    else:
+        lon_min, lon_max = float(lon2d.min()), float(lon2d.max())
+        lat_min, lat_max = float(lat2d.min()), float(lat2d.max())
     fw, fh = _aspect_figsize(lon_min, lon_max, lat_min, lat_max)
 
     fig, ax = plt.subplots(figsize=(fw, fh), constrained_layout=True)
@@ -197,7 +214,7 @@ def make_frame(lon2d, lat2d, values, title, date_str, cmap, vmin, vmax,
     ax.tick_params(labelsize=TICK_FS)
     ax.set_aspect("equal")
 
-    full_title = f"{title}\n{date_str}" if date_str else title
+    full_title = f"{date_str} — {title}" if date_str else title
     ax.set_title(full_title, fontsize=TITLE_FS, fontweight="bold", pad=10)
 
     fig.savefig(out_path, dpi=dpi, format="jpeg",
@@ -215,6 +232,7 @@ def make_frame_tripcolor(triangulation, values, title, out_path,
     """
     Save one JPEG frame using tripcolor (for mesh/unstructured grids).
     Same style as make_frame: vertical colorbar on the right.
+    Extent uses mesh node bounds + padding (consistent with make_frame).
     Optional mesh boundary overlay.
     """
     mesh_lon_min = float(triangulation.x.min())

@@ -9,8 +9,9 @@
 inspect_mesh: false   # Plot all fix/ input files + mesh resolution + vertical layers
 
 # Phase 1 — DTN only (requires internet access):
-download_hycom: false
-download_era5:  false   # Download ERA5 monthly raw files (one file per month)
+download_hycom:  false
+download_era5:   false   # Download ERA5 monthly raw files (one file per month)
+download_glofas: false   # Download GloFAS v4 reanalysis discharge (one file per year)
 
 # Phase 2 — Any node, no internet required:
 aggregate_hycom: false  # Concatenate HYCOM daily -> monthly SCHISM stacks

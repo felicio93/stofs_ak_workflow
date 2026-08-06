@@ -12,8 +12,8 @@
 #SBATCH -n 1
 #SBATCH --mem={{MEM_PER_TASK}}
 #SBATCH -t {{WALLTIME}}
-#SBATCH -o {{LOGDIR}}/plot_%a.out
-#SBATCH -e {{LOGDIR}}/plot_%a.err
+#SBATCH -o {{LOGDIR}}/plot_hycom_%a.out
+#SBATCH -e {{LOGDIR}}/plot_hycom_%a.err
 #SBATCH --mail-user={{MAILUSER}}
 #SBATCH --mail-type=NONE
 

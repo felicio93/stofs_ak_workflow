@@ -110,7 +110,7 @@ def init_project(cfg: dict):
 
     # --- Raw data directories ---
     for subdir in ["raw/hycom/ssh", "raw/hycom/ts", "raw/hycom/uv",
-                   "raw/era5"]:
+                   "raw/era5", "raw/glofas"]:
         d = model_dir / subdir
         d.mkdir(parents=True, exist_ok=True)
         print(f"  Created: {d}")
@@ -120,6 +120,12 @@ def init_project(cfg: dict):
     end_year   = date.fromisoformat(cfg["end_date"]).year
     for yr in range(start_year, end_year + 1):
         d = model_dir / "raw" / "era5" / str(yr)
+        d.mkdir(parents=True, exist_ok=True)
+        print(f"  Created: {d}")
+
+    # Pre-create yearly GloFAS raw subdirectories for the date range
+    for yr in range(start_year, end_year + 1):
+        d = model_dir / "raw" / "glofas" / str(yr)
         d.mkdir(parents=True, exist_ok=True)
         print(f"  Created: {d}")
 
@@ -228,6 +234,13 @@ def run_workflow(cfg: dict, config_dir: Path, only: str = None):
         run_download_era5(cfg)
     else:
         print("[SKIP] download_era5")
+
+    if enabled("download_glofas"):
+        print("[STEP] download_glofas")
+        from workflow.download_glofas import run_download_glofas
+        run_download_glofas(cfg)
+    else:
+        print("[SKIP] download_glofas")
 
     # =========================================================================
     # Phase 2 — Processing (any node, no internet required)

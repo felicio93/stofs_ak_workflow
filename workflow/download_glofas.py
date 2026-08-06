@@ -100,14 +100,14 @@ def stale_check_glofas(nc_path: Path) -> bool:
     """
     Return True if the GloFAS file looks stale (all daily fields identical).
     Compares the spatial mean of the first vs last time record.
-    The variable name in the downloaded NetCDF is 'dis24'.
+    The variable is 'avg_dis' in GloFAS v4.0+ NetCDF output.
     """
     try:
         import numpy as np
         import netCDF4 as nc4
         with nc4.Dataset(nc_path) as ds:
-            # The GRIB->NetCDF conversion stores discharge as 'dis24'
-            v = ds.variables.get("dis24")
+            # GloFAS v4.0+ uses 'avg_dis'; older versions used 'dis24'
+            v = ds.variables.get("avg_dis") or ds.variables.get("dis24")
             if v is None:
                 return False
             ntime = v.shape[0]

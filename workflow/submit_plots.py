@@ -43,10 +43,10 @@ def submit_plotting_jobs(cfg: dict, config_dir: Path):
         print("ERROR: sbatch not found. Submit plotting jobs from a node with SLURM.")
         sys.exit(1)
 
-    pid = cfg["project_id"]
-    mdir = model_dir(cfg)
-    ddir = mdir / f"D{pid}"
-    logdir = ddir / "logs"
+    pid     = cfg["project_id"]
+    mdir    = model_dir(cfg)
+    ddir    = mdir / f"D{pid}"
+    logdir  = mdir / "logs"
     logdir.mkdir(parents=True, exist_ok=True)
 
     months = list_months(cfg)

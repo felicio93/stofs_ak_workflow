@@ -34,6 +34,10 @@ LABEL_FS  = 10
 TICK_FS   = 9
 CBAR_FS   = 9
 
+# Padding around mesh bounds used by all plot scripts
+PADDING_LON = 5.0   # degrees longitude
+PADDING_LAT = 2.0   # degrees latitude
+
 
 # =============================================================================
 # Mesh boundary reader

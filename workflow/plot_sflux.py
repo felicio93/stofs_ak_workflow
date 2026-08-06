@@ -1,19 +1,6 @@
 """
-plot_sflux.py
-=============
-SLURM worker — generates debug GIFs from sflux files for one month.
-
-Plots every 6 hours (4 frames/day x ~30 days = ~120 frames per GIF).
-
-Variables plotted:
-    sflux_air: uwind, vwind, wind speed (sqrt(u²+v²)), prmsl, stmp, spfh
-    sflux_prc: prate
-    sflux_rad: dlwrf, dswrf
-
-Output: D{ID}_YYYYMM/sflux_*.gif
-
-Usage (called by SLURM via submit_era5.py):
-    python plot_sflux.py --config <config_dir> --month YYYYMM
+plot_sflux.py — debug GIFs from sflux files, one month per SLURM task.
+Plots every 6 hours.  Uses shared plot_style for visual consistency.
 """
 
 import argparse
@@ -24,34 +11,26 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import numpy as np
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import imageio.v2 as imageio
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from workflow.config import load_config, model_dir
+from workflow.plot_style import make_frame, read_mesh_boundaries
 
-DPI = 150
+DPI     = 150
+QUALITY = 85
 
-
-def _plot_frame(lon2d, lat2d, values, title, date_str, cmap, vmin, vmax,
-                cbar_label, out_path):
-    lon_min, lon_max = lon2d.min(), lon2d.max()
-    lat_min, lat_max = lat2d.min(), lat2d.max()
-    asp = (lon_max - lon_min) / max(lat_max - lat_min, 1e-6)
-    w   = float(np.clip(asp * 5.0, 4.0, 10.0))
-    fig, ax = plt.subplots(figsize=(w + 1.2, 5.0), constrained_layout=True)
-    pcm = ax.pcolormesh(lon2d, lat2d, values, cmap=cmap,
-                        vmin=vmin, vmax=vmax, shading="auto")
-    fig.colorbar(pcm, ax=ax, label=cbar_label, shrink=0.8)
-    ax.set_xlim(lon_min, lon_max); ax.set_ylim(lat_min, lat_max)
-    ax.set_xlabel("Longitude (°E)"); ax.set_ylabel("Latitude (°N)")
-    ax.set_title(f"{title}\n{date_str}", fontsize=11, fontweight="bold")
-    ax.set_aspect("equal")
-    fig.savefig(out_path, dpi=DPI, format="jpeg",
-                bbox_inches="tight", pil_kwargs={"quality": 85})
-    plt.close(fig)
+VAR_SPECS = [
+    # (ftype, varname, title,              cmap,       label)
+    ("air", "uwind",  "U Wind (10m)",      "RdBu_r",   "m/s"),
+    ("air", "vwind",  "V Wind (10m)",      "RdBu_r",   "m/s"),
+    ("air", "prmsl",  "Sea Level Pressure","viridis",   "Pa"),
+    ("air", "stmp",   "2m Temperature",    "RdYlBu_r", "K"),
+    ("air", "spfh",   "Specific Humidity", "YlGnBu",   "kg/kg"),
+    ("prc", "prate",  "Precipitation Rate","YlGnBu",   "kg/m²/s"),
+    ("rad", "dlwrf",  "Downward LW Radiation", "YlOrRd", "W/m²"),
+    ("rad", "dswrf",  "Downward SW Radiation", "YlOrRd", "W/m²"),
+]
 
 
 def make_gif(frames, gif_path):
@@ -81,12 +60,9 @@ def plot_sflux_month(cfg: dict, ym: str):
         print(f"  plot_sflux: {ym} already complete. Skipping.")
         return
 
-    # Wait for gen_sflux to finish — exit cleanly if not ready yet
     if not sflux_ready.exists():
-        print(f"  plot_sflux: gen_sflux not yet complete for {ym} "
-              f"(gen_sflux.done missing). Exiting without writing sentinel.")
-        print(f"  Re-submit plot_sflux after gen_sflux finishes.")
-        sys.exit(0)  # Exit 0 so SLURM marks the job as succeeded, not failed
+        print(f"  plot_sflux: gen_sflux not yet complete for {ym}. Exiting.")
+        sys.exit(0)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -94,35 +70,34 @@ def plot_sflux_month(cfg: dict, ym: str):
 
     import netCDF4 as nc4
 
-    # Collect variables to plot: (file_type, varname, title, cmap, vmin, vmax, label)
-    var_specs = [
-        ("air", "uwind",  "U Wind (10m)",        "RdBu_r", None, None, "m/s"),
-        ("air", "vwind",  "V Wind (10m)",         "RdBu_r", None, None, "m/s"),
-        ("air", "prmsl",  "Sea Level Pressure",   "viridis", None, None, "Pa"),
-        ("air", "stmp",   "2m Temperature",       "RdYlBu_r", None, None, "K"),
-        ("air", "spfh",   "Specific Humidity",    "Blues",   None, None, "kg/kg"),
-        ("prc", "prate",  "Precipitation Rate",   "Blues",   None, None, "kg/m²/s"),
-        ("rad", "dlwrf",  "Downward LW Radiation","inferno", None, None, "W/m²"),
-        ("rad", "dswrf",  "Downward SW Radiation","inferno", None, None, "W/m²"),
-    ]
-
-    # Read lon/lat once from day 1
-    air_file1 = sflux_dir / f"sflux_air_1.1.nc"
+    air_file1 = sflux_dir / "sflux_air_1.1.nc"
     if not air_file1.exists():
         print(f"  WARNING: {air_file1} not found, skipping.")
         return
     with nc4.Dataset(air_file1) as ds:
-        lon2d = ds.variables["lon"][:].astype(np.float32)
-        lat2d = ds.variables["lat"][:].astype(np.float32)
+        lon2d = ds.variables["lon"][:].astype("float32")
+        lat2d = ds.variables["lat"][:].astype("float32")
 
-    for ftype, varname, title, cmap, vmin, vmax, label in var_specs:
+    # Load mesh boundaries once (optional)
+    hgrid_ll  = mdir / "fix" / "hgrid.ll"
+    hgrid_gr3 = mdir / "fix" / "hgrid.gr3"
+    boundaries = None
+    for hpath in (hgrid_ll, hgrid_gr3):
+        if hpath.exists():
+            try:
+                boundaries = read_mesh_boundaries(hpath)
+                print(f"  Loaded mesh boundaries from {hpath.name}")
+            except Exception as exc:
+                print(f"  WARNING: could not read boundaries: {exc}")
+            break
+
+    for ftype, varname, title, cmap, label in VAR_SPECS:
         frames = []
         frame_idx = 0
+        vmin = vmax = None
 
-        # Collect all 6-hourly frames across the month
         for iday in range(1, ndays + 1):
-            stack    = str(iday)
-            nc_path  = sflux_dir / f"sflux_{ftype}_1.{stack}.nc"
+            nc_path = sflux_dir / f"sflux_{ftype}_1.{iday}.nc"
             if not nc_path.exists():
                 continue
             day_date = date(year, month, iday)
@@ -131,12 +106,11 @@ def plot_sflux_month(cfg: dict, ym: str):
                 if varname not in ds.variables:
                     break
                 ntime = ds.variables["time"].shape[0]
-                # Every 6 hours = timestep 0, 6, 12, 18 (and 24 only if present)
                 for t_idx in range(0, ntime, 6):
-                    dt_str = (day_date + timedelta(hours=t_idx)).strftime("%Y-%m-%d %HZ")
-                    vals   = ds.variables[varname][t_idx, :, :].astype(np.float32)
+                    dt_str = (day_date + timedelta(hours=t_idx)
+                              ).strftime("%Y-%m-%d %HZ")
+                    vals = ds.variables[varname][t_idx, :, :].astype("float32")
 
-                    # Auto-scale vmin/vmax from first frame
                     if vmin is None and frame_idx == 0:
                         finite = vals[np.isfinite(vals)]
                         if finite.size > 0:
@@ -144,15 +118,16 @@ def plot_sflux_month(cfg: dict, ym: str):
                             vmax = float(np.percentile(finite, 98))
 
                     frame_path = tmp_dir / f"{varname}_{ym}_{frame_idx:04d}.jpg"
-                    _plot_frame(lon2d, lat2d, vals, title, dt_str,
-                                cmap, vmin, vmax, label, frame_path)
+                    make_frame(lon2d, lat2d, vals, title, dt_str,
+                               cmap, vmin, vmax, label, frame_path,
+                               dpi=DPI, quality=QUALITY,
+                               boundaries=boundaries)
                     frames.append(str(frame_path))
                     frame_idx += 1
 
         if frames:
             make_gif(frames, out_dir / f"sflux_{varname}_{ym}.gif")
-        # Reset auto-scale for next variable
-        vmin = None; vmax = None
+        vmin = vmax = None
         gc.collect()
 
     try:
@@ -160,20 +135,18 @@ def plot_sflux_month(cfg: dict, ym: str):
     except OSError:
         pass
 
-    # Only write sentinel if at least one GIF was produced
     gif_count = len(list(out_dir.glob("sflux_*.gif")))
     if gif_count > 0:
         sentinel.touch()
         print(f"  {gif_count} GIF(s) written. Sentinel: {sentinel}")
     else:
-        print(f"  WARNING: no GIFs were produced for {ym}. Sentinel NOT written.")
+        print(f"  WARNING: no GIFs produced for {ym}. Sentinel NOT written.")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Plot sflux debug GIFs for one month")
+    parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
-    parser.add_argument("--month",  required=True, help="YYYYMM")
+    parser.add_argument("--month",  required=True)
     args = parser.parse_args()
     cfg = load_config(Path(args.config))
     plot_sflux_month(cfg, args.month)

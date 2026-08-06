@@ -32,19 +32,16 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import matplotlib.ticker
-from matplotlib.colors import LogNorm
 import matplotlib.tri as mtri
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from workflow.config import load_config, model_dir
+from workflow.plot_style import make_frame_tripcolor, read_mesh_boundaries
 
-DPI = 300
-PADDING_LON = 5.0   # degrees longitude padding around mesh bounds
-PADDING_LAT = 2.0   # degrees latitude padding around mesh bounds
+DPI         = 300
+QUALITY     = 92
+PADDING_LON = 5.0
+PADDING_LAT = 2.0
 
 
 # =============================================================================
@@ -208,63 +205,17 @@ def make_plot(triangulation, values, title, out_path,
               lon_min, lon_max, lat_min, lat_max,
               cmap="viridis", vmin=None, vmax=None,
               cbar_label=None, is_elem=False,
-              cbar_ticks=None, cbar_extend_minmax=False):
-    """
-    Create and save one plot as a JPEG (smaller file size than TIFF).
-    No Cartopy — avoids all projection/extent/CRS issues with 0-360 domains.
-    Axes limits are set to mesh bounds ± padding constants.
-    """
-    # Compute the actual extent of mesh data from the triangulation
-    mesh_lon_min = triangulation.x.min()
-    mesh_lon_max = triangulation.x.max()
-    mesh_lat_min = triangulation.y.min()
-    mesh_lat_max = triangulation.y.max()
-
-    fig, ax = plt.subplots(figsize=(10, 7), constrained_layout=True)
-
-    kw = {"cmap": cmap, "rasterized": True}
-    if vmin is not None:
-        kw["vmin"] = vmin
-    if vmax is not None:
-        kw["vmax"] = vmax
-
-    if is_elem:
-        pcm = ax.tripcolor(triangulation, facecolors=values, **kw)
-    else:
-        pcm = ax.tripcolor(triangulation, values, shading="flat", **kw)
-
-    cbar = fig.colorbar(pcm, ax=ax, orientation="horizontal",
-                        pad=0.04, shrink=0.8, aspect=30)
-    if cbar_label:
-        cbar.set_label(cbar_label, fontsize=9)
-    if cbar_ticks is not None:
-        cbar.set_ticks(cbar_ticks)
-    if cbar_extend_minmax:
-        # Add min/max values as text on the colorbar ends
-        clim = pcm.get_clim()
-        cbar.ax.text(0.0, -0.5, f"{clim[0]:.1f}",
-                     ha="left", va="top", fontsize=7,
-                     transform=cbar.ax.transAxes)
-        cbar.ax.text(1.0, -0.5, f"{clim[1]:.1f}",
-                     ha="right", va="top", fontsize=7,
-                     transform=cbar.ax.transAxes)
-    cbar.ax.tick_params(labelsize=8)
-
-    # Use actual mesh bounds + padding (not domain.yaml bounds which may differ)
-    ax.set_xlim(mesh_lon_min - PADDING_LON, mesh_lon_max + PADDING_LON)
-    ax.set_ylim(mesh_lat_min - PADDING_LAT, mesh_lat_max + PADDING_LAT)
-    ax.set_xlabel("Longitude (°E)", fontsize=9)
-    ax.set_ylabel("Latitude (°N)", fontsize=9)
-    ax.tick_params(labelsize=8)
-    ax.set_title(title, fontsize=12, fontweight="bold", pad=8)
-    ax.set_aspect("equal")
-
-    # Save as JPEG — significantly smaller than TIFF for rasterized mesh plots
-    jpeg_path = out_path.with_suffix(".jpg")
-    fig.savefig(jpeg_path, dpi=DPI, format="jpeg",
-                bbox_inches="tight", pil_kwargs={"quality": 92})
-    plt.close(fig)
-    print(f"  -> Saved {jpeg_path.name}")
+              cbar_ticks=None, cbar_extend_minmax=False,
+              boundaries=None):
+    """Delegate to the shared plot_style helper."""
+    return make_frame_tripcolor(
+        triangulation, values, title, out_path,
+        cbar_label=cbar_label, cmap=cmap, vmin=vmin, vmax=vmax,
+        is_elem=is_elem, cbar_ticks=cbar_ticks,
+        cbar_extend_minmax=cbar_extend_minmax,
+        padding_lon=PADDING_LON, padding_lat=PADDING_LAT,
+        dpi=DPI, quality=QUALITY, boundaries=boundaries,
+    )
 
 
 # =============================================================================
@@ -297,14 +248,26 @@ def inspect_mesh(cfg: dict):
     ne_tri   = len(tri_arr)
 
     # Build triangulation directly in geographic lon/lat (0-360).
-    # No projection needed — pure matplotlib handles this correctly.
     triang = mtri.Triangulation(lon, lat, tri_arr)
+
+    # Read mesh boundaries for overlay on all plots
+    hgrid_ll = fix / "hgrid.ll"
+    boundaries = None
+    for hpath in (hgrid_ll, hgrid):
+        try:
+            boundaries = read_mesh_boundaries(hpath)
+            print(f"  Loaded mesh boundaries: {len(boundaries['open'])} open, "
+                  f"{len(boundaries['land'])} land, "
+                  f"{len(boundaries['island'])} island")
+            break
+        except Exception as exc:
+            print(f"  WARNING: could not read boundaries from {hpath.name}: {exc}")
 
     # --- Bathymetry ---
     make_plot(triang, depth, "Bathymetry (m)", out / "bathymetry.tiff",
               lon_min, lon_max, lat_min, lat_max,
               cmap="viridis", cbar_label="Depth (m)",
-              cbar_extend_minmax=True)
+              cbar_extend_minmax=True, boundaries=boundaries)
 
     # --- Standard .gr3 scalar files ---
     gr3_specs = [
@@ -329,7 +292,7 @@ def inspect_mesh(cfg: dict):
         make_plot(triang, vals, title, out / f"{stem}.tiff",
                   lon_min, lon_max, lat_min, lat_max,
                   cmap=cmap, vmin=vmin, vmax=vmax,
-                  cbar_ticks=ticks)
+                  cbar_ticks=ticks, boundaries=boundaries)
 
     # --- Estuary (optional) ---
     estuary = fix / "estuary.gr3"
@@ -338,7 +301,7 @@ def inspect_mesh(cfg: dict):
         vals = read_gr3_values(estuary, np_nodes)
         make_plot(triang, vals, "Estuary Mask", out / "estuary.tiff",
                   lon_min, lon_max, lat_min, lat_max,
-                  cmap="YlOrRd", vmin=0, vmax=1)
+                  cmap="YlOrRd", vmin=0, vmax=1, boundaries=boundaries)
     else:
         print("  estuary.gr3 not found in fix/, skipping (run gen_estuary first).")
 
@@ -346,14 +309,13 @@ def inspect_mesh(cfg: dict):
     tvd_path = fix / "tvd.prop"
     if tvd_path.exists():
         print("  Processing tvd.prop ...")
-        # tvd.prop has NE rows, format: id val (0 or 1 per element)
         tvd_raw = np.loadtxt(tvd_path, usecols=1)
-        # Map from original elements to split triangles via elem_map
         tvd_tri = tvd_raw[elem_map]
         make_plot(triang, tvd_tri, "TVD Property (1=TVD, 0=no TVD)",
                   out / "tvd.tiff",
                   lon_min, lon_max, lat_min, lat_max,
-                  cmap="cividis", vmin=0, vmax=1, is_elem=True)
+                  cmap="cividis", vmin=0, vmax=1, is_elem=True,
+                  boundaries=boundaries)
     else:
         print("  tvd.prop not found in fix/, skipping.")
 
@@ -369,45 +331,23 @@ def inspect_mesh(cfg: dict):
         make_plot(triang, vals, f"Bottom Friction ({friction_found})",
                   out / "bottom_friction.tiff",
                   lon_min, lon_max, lat_min, lat_max,
-                  cmap="turbo")
+                  cmap="turbo", boundaries=boundaries)
     else:
         print("  WARNING: no friction file (rough.gr3/drag.gr3/manning.gr3) found.")
 
-    # --- Mesh resolution (log-scale colorbar) ---
+    # --- Mesh resolution (log-scale colorbar via shared helper) ---
     print("  Computing mesh resolution ...")
     resolution = compute_resolution_m(lon, lat, tri_arr)
-    res_pos = resolution[resolution > 0]
-
-    fig, ax = plt.subplots(figsize=(10, 7), constrained_layout=True)
-    norm = LogNorm(vmin=float(np.percentile(res_pos, 2)),
-                   vmax=float(np.percentile(res_pos, 98)))
-    pcm = ax.tripcolor(triang, facecolors=resolution,
-                       cmap="turbo_r", norm=norm, rasterized=True)
-    cbar = fig.colorbar(pcm, ax=ax, orientation="horizontal",
-                        pad=0.04, shrink=0.8, aspect=30)
-    cbar.set_label("Resolution (km)", fontsize=9)
-    # Format ticks as km
-    cbar.formatter = matplotlib.ticker.FuncFormatter(
-        lambda x, _: f"{x/1000:.1f}")
-    cbar.update_ticks()
-    cbar.ax.tick_params(labelsize=8)
-
-    mesh_lon_min = triang.x.min(); mesh_lon_max = triang.x.max()
-    mesh_lat_min = triang.y.min(); mesh_lat_max = triang.y.max()
-    ax.set_xlim(mesh_lon_min - PADDING_LON, mesh_lon_max + PADDING_LON)
-    ax.set_ylim(mesh_lat_min - PADDING_LAT, mesh_lat_max + PADDING_LAT)
-    ax.set_xlabel("Longitude (°E)", fontsize=9)
-    ax.set_ylabel("Latitude (°N)", fontsize=9)
-    ax.tick_params(labelsize=8)
-    ax.set_title("Mesh Resolution  R = √(Area/π)  (log scale)",
-                 fontsize=12, fontweight="bold", pad=8)
-    ax.set_aspect("equal")
-
-    jpeg_path = (out / "mesh_resolution.tiff").with_suffix(".jpg")
-    fig.savefig(jpeg_path, dpi=DPI, format="jpeg",
-                bbox_inches="tight", pil_kwargs={"quality": 92})
-    plt.close(fig)
-    print(f"  -> Saved {jpeg_path.name}")
+    make_frame_tripcolor(
+        triang, resolution,
+        "Mesh Resolution  R = √(Area/π)  (log scale)",
+        out / "mesh_resolution.tiff",
+        cbar_label="Resolution (km)", cmap="turbo_r",
+        is_elem=True, is_log=True, cbar_km=True,
+        padding_lon=PADDING_LON, padding_lat=PADDING_LAT,
+        dpi=DPI, quality=QUALITY, boundaries=boundaries,
+    )
+    print(f"  -> Saved mesh_resolution.jpg")
 
     # --- Vertical layers ---
     vgrid = fix / "vgrid.in"
@@ -419,7 +359,8 @@ def inspect_mesh(cfg: dict):
                   out / "vertical_layers.tiff",
                   lon_min, lon_max, lat_min, lat_max,
                   cmap="viridis",
-                  cbar_label="Number of active layers")
+                  cbar_label="Number of active layers",
+                  boundaries=boundaries)
     else:
         print("  WARNING: vgrid.in not found in fix/, skipping vertical layers plot.")
 

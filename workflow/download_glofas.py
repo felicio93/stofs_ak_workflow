@@ -57,6 +57,9 @@ def check_dtn():
     sys.exit(1)
 
 
+EWDS_URL = "https://ewds.climate.copernicus.eu/api"
+
+
 def check_cdsapi():
     try:
         import cdsapi  # noqa: F401
@@ -66,11 +69,13 @@ def check_cdsapi():
     cdsapirc = Path.home() / ".cdsapirc"
     if not cdsapirc.exists():
         print(f"ERROR: {cdsapirc} not found.")
-        print("  Create it with your EWDS credentials:")
+        print("  The EWDS API key is read from ~/.cdsapirc.")
+        print("  Create it with your Copernicus account key:")
         print("  url: https://ewds.climate.copernicus.eu/api")
         print("  key: <your-api-key>")
         sys.exit(1)
     print("  EWDS API check: ~/.cdsapirc found. OK.")
+    print(f"  Note: GloFAS uses {EWDS_URL} (overrides url in ~/.cdsapirc)")
 
 
 def check_active_env(cfg: dict):
@@ -196,7 +201,7 @@ def run_download_glofas(cfg: dict):
     print(f"  Dataset:    {EWDS_DATASET}  (version_4_0, consolidated)")
     print(f"{'='*60}\n")
 
-    client = cdsapi.Client()
+    client = cdsapi.Client(url=EWDS_URL)
     prog   = ProgressTracker(total=len(years), label="GloFAS download")
     failed = []
 

@@ -35,6 +35,8 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.ticker
+from matplotlib.colors import LogNorm
 import matplotlib.tri as mtri
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -371,16 +373,41 @@ def inspect_mesh(cfg: dict):
     else:
         print("  WARNING: no friction file (rough.gr3/drag.gr3/manning.gr3) found.")
 
-    # --- Mesh resolution ---
+    # --- Mesh resolution (log-scale colorbar) ---
     print("  Computing mesh resolution ...")
     resolution = compute_resolution_m(lon, lat, tri_arr)
-    # resolution is per-triangle; map back to elem_map for quad-split consistency
-    # (elem_map maps each triangle back to original element index)
-    make_plot(triang, resolution, "Mesh Resolution  R = √(Area/π)  (m)",
-              out / "mesh_resolution.tiff",
-              lon_min, lon_max, lat_min, lat_max,
-              cmap="turbo_r", is_elem=True,
-              cbar_label="Resolution (m)")
+    res_pos = resolution[resolution > 0]
+
+    fig, ax = plt.subplots(figsize=(10, 7), constrained_layout=True)
+    norm = LogNorm(vmin=float(np.percentile(res_pos, 2)),
+                   vmax=float(np.percentile(res_pos, 98)))
+    pcm = ax.tripcolor(triang, facecolors=resolution,
+                       cmap="turbo_r", norm=norm, rasterized=True)
+    cbar = fig.colorbar(pcm, ax=ax, orientation="horizontal",
+                        pad=0.04, shrink=0.8, aspect=30)
+    cbar.set_label("Resolution (km)", fontsize=9)
+    # Format ticks as km
+    cbar.formatter = matplotlib.ticker.FuncFormatter(
+        lambda x, _: f"{x/1000:.1f}")
+    cbar.update_ticks()
+    cbar.ax.tick_params(labelsize=8)
+
+    mesh_lon_min = triang.x.min(); mesh_lon_max = triang.x.max()
+    mesh_lat_min = triang.y.min(); mesh_lat_max = triang.y.max()
+    ax.set_xlim(mesh_lon_min - PADDING_LON, mesh_lon_max + PADDING_LON)
+    ax.set_ylim(mesh_lat_min - PADDING_LAT, mesh_lat_max + PADDING_LAT)
+    ax.set_xlabel("Longitude (°E)", fontsize=9)
+    ax.set_ylabel("Latitude (°N)", fontsize=9)
+    ax.tick_params(labelsize=8)
+    ax.set_title("Mesh Resolution  R = √(Area/π)  (log scale)",
+                 fontsize=12, fontweight="bold", pad=8)
+    ax.set_aspect("equal")
+
+    jpeg_path = (out / "mesh_resolution.tiff").with_suffix(".jpg")
+    fig.savefig(jpeg_path, dpi=DPI, format="jpeg",
+                bbox_inches="tight", pil_kwargs={"quality": 92})
+    plt.close(fig)
+    print(f"  -> Saved {jpeg_path.name}")
 
     # --- Vertical layers ---
     vgrid = fix / "vgrid.in"

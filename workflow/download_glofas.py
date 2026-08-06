@@ -154,6 +154,7 @@ def download_year(client, year: int, out_path: Path, cfg: dict):
         "hydrological_model": "lisflood",
         "product_type":       "consolidated",
         "variable":           GLOFAS_VARIABLE,
+        "timespan":           "time_mean",
         "year":               str(year),
         "month":              months,
         "day":                days,

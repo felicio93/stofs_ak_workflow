@@ -32,8 +32,9 @@ The workflow is split into two phases:
 
 | Phase | Where it runs | Internet required | Description |
 |-------|--------------|-------------------|-------------|
-| 1 | Head node / DTN | Yes | Download raw forcing data (HYCOM, ERA5) |
+| 1 | Head node / DTN | Yes | Download raw forcing data (HYCOM, ERA5, GloFAS) |
 | 2 | Compute nodes (SLURM) | No | Preprocess inputs, one job per month |
+| 3 | Login / any node | No | SCHISM preprocessing (bctides, source, hotstart, etc.) |
 
 The orchestrator (`orchestrator.py`) reads your configuration, builds the
 project directory tree, and dispatches each enabled step.
@@ -73,13 +74,20 @@ stofs_ak_workflow/              <- git repo (clone this to Hercules)
 ├── orchestrator.py             <- main entry point
 ├── workflow/
 │   ├── config.py               <- shared config loading + month enumeration
+│   ├── mesh_parser.py          <- shared .gr3 parser (nodes, elements, boundaries)
 │   ├── setup_envs.py           <- create/verify conda envs (--setup-envs)
 │   ├── download_hycom.py       <- Phase 1: download raw HYCOM data
+│   ├── download_era5.py        <- Phase 1b: download ERA5 monthly raw files
+│   ├── download_glofas.py      <- Phase 1c: download GloFAS annual raw files
 │   ├── aggregate_hycom.py      <- Phase 2a: daily -> monthly SCHISM stacks
 │   ├── plot_hycom.py           <- Phase 2b worker: per-month debug GIFs
 │   ├── submit_plots.py         <- Phase 2b launcher: SLURM job array
+│   ├── gen_sflux.py            <- Phase 2c: ERA5 -> sflux files
+│   ├── submit_era5.py          <- Phase 2c/d launchers: SLURM job arrays
 │   ├── gen_estuary.py          <- Phase 3A: create estuary.gr3 + .in files
-│   └── submit_hycom_utils.py   <- Phase 3B-D: SLURM jobs for SCHISM Fortran utils
+│   ├── gen_bctides.py          <- Phase 3B: TPXO9 -> bctides.in per month
+│   ├── gen_source.py           <- Phase 3C: GloFAS -> source.nc per month
+│   └── submit_hycom_utils.py   <- Phase 3D-F: SLURM jobs for SCHISM Fortran utils
 ├── tutorials/
 │   └── hercules_walkthrough.md <- copy-paste steps for the real Hercules case
 ├── templates/
@@ -90,7 +98,9 @@ stofs_ak_workflow/              <- git repo (clone this to Hercules)
 │   │   ├── envs.yaml           <- conda env names per step
 │   │   └── schism.yaml         <- SCHISM-specific T/S constants, open boundaries
 │   └── slurm/
-│       ├── plot_hycom.sbatch   <- SLURM array template for plotting
+│       ├── plot_hycom.sbatch   <- SLURM array template for HYCOM plotting
+│       ├── plot_sflux.sbatch   <- SLURM array template for sflux plotting
+│       ├── gen_sflux.sbatch    <- SLURM array template for gen_sflux
 │       ├── gen_hotstart.sbatch <- SLURM single-job template for gen_hotstart
 │       ├── gen_3Dth.sbatch     <- SLURM array template for gen_3Dth
 │       └── gen_nudge.sbatch    <- SLURM array template for gen_nudge
@@ -111,42 +121,35 @@ For a project with ID `01`, the workflow creates the following tree:
     │   ├── domain.yaml
     │   ├── steps.yaml
     │   └── envs.yaml
-    ├── fix/                        <- fixed mesh files, same for every month
+    ├── fix/                        <- fixed mesh + static river files
     │   ├── hgrid.gr3
     │   ├── vgrid.in
     │   ├── drag.gr3
+    │   ├── source_glofas.csv       <- GloFAS extraction points (id,lon,lat)
+    │   ├── source_schism.csv       <- SCHISM injection points  (id,lon,lat)
     │   └── (other fixed SCHISM inputs)
     ├── bin/                        <- compiled Fortran executables for this project
     ├── raw/                        <- raw downloaded data (never modified after download)
     │   ├── hycom/
     │   │   ├── ssh/
-    │   │   │   ├── ssh_20240901.nc
-    │   │   │   └── ...
     │   │   ├── ts/
-    │   │   │   └── ts_20240901.nc
     │   │   └── uv/
-    │   │       └── uv_20240901.nc
-    │   └── era5/
+    │   ├── era5/
+    │   │   └── {YYYY}/era5_YYYYMM.nc
+    │   └── glofas/
+    │       └── {YYYY}/glofas_YYYY.nc
     ├── I01/                        <- processed inputs (one directory per month)
-    │   ├── I01_202409/             <- September 2024
-    │   │   ├── SSH_1.nc            <- monthly stack (var surf_el)
-    │   │   ├── TS_1.nc             <- monthly stack (potential temp + salinity)
-    │   │   └── UV_1.nc             <- monthly stack (water_u, water_v)
-    │   ├── I01_202410/             <- October 2024
+    │   ├── I01_202409/
+    │   │   ├── SSH_1.nc
+    │   │   ├── TS_1.nc
+    │   │   ├── UV_1.nc
+    │   │   ├── bctides.in
+    │   │   ├── source.nc           <- river discharge (from gen_source)
+    │   │   └── sflux/
     │   └── ...
     ├── R01/                        <- SCHISM run directories (one per month)
-    │   ├── R01_202409/
-    │   └── ...
     ├── P01/                        <- postprocessing output (one per month)
-    │   ├── P01_202409/
-    │   └── ...
     └── D01/                        <- debug plots (one directory per month)
-        ├── logs/                   <- SLURM logs for plotting jobs
-        ├── D01_202409/
-        │   ├── HYCOM_temperature_202409.gif
-        │   ├── HYCOM_salinity_202409.gif
-        │   └── HYCOM_ssh_202409.gif
-        └── ...
 ```
 
 **Key rules:**
@@ -311,8 +314,20 @@ currently testing. Disable it and enable the next step once it is verified.
 
 | Field | Phase | Description |
 |-------|-------|-------------|
-| `download_hycom` | 1 (head node) | Download daily HYCOM SSH, TS, UV into `raw/hycom/` |
-| `aggregate_hycom` | 2 (compute) | Concatenate daily files into monthly NetCDF in `I{id}_YYYYMM/` *(not yet implemented)* |
+| `inspect_mesh` | 0 (SLURM) | Plot all fix/ input files + mesh resolution + vertical layers |
+| `download_hycom` | 1 — DTN | Download daily HYCOM SSH, TS, UV into `raw/hycom/` |
+| `download_era5` | 1 — DTN | Download ERA5 monthly raw files into `raw/era5/` |
+| `download_glofas` | 1 — DTN | Download GloFAS annual discharge files into `raw/glofas/` |
+| `aggregate_hycom` | 2 | Concatenate daily files into monthly NetCDF stacks |
+| `plotting_debug` | 2 (SLURM) | HYCOM debug GIFs (temperature, salinity, ssh) |
+| `gen_sflux` | 2 (SLURM) | ERA5 raw → sflux_air/prc/rad per month |
+| `plot_sflux` | 2 (SLURM) | ERA5/sflux debug GIFs |
+| `gen_estuary` | 3 — interactive | Create fix/estuary.gr3 + bin/*.in files (run once) |
+| `gen_bctides` | 3 — interactive | TPXO9 → bctides.in per month |
+| `gen_source` | 3 — interactive | GloFAS discharge → source.nc per month |
+| `gen_hotstart` | 3 (SLURM) | Create hotstart.nc (first month only) |
+| `gen_3Dth` | 3 (SLURM) | Create boundary th.nc files per month |
+| `gen_nudge` | 3 (SLURM) | Create nudging nu.nc files per month |
 
 ### envs.yaml
 
@@ -443,23 +458,24 @@ that some daily downloads are missing).
 
 | Step | Status | Notes |
 |------|--------|-------|
-| `--init` directory creation | Done | Creates I/R/P/D + fix/raw/bin/logs |
-| `--setup-envs` | Done | Creates/verifies swf_main (scipy added) + swf_plot |
-| `inspect_mesh` | Done | Phase 0, SLURM, fix/ diagnostic plots |
-| `download_hycom` | Done | Phase 1, DTN, GOFS 3.1 + ESPC-D-V02 source map |
-| `download_era5` | Done | Phase 1b, DTN, CDS API monthly download |
-| `aggregate_hycom` | Done | Phase 2a, interactive, daily → monthly stacks |
-| `gen_sflux` | Done | Phase 2b, SLURM array, ERA5 → sflux files |
-| `plotting_debug` | Done | Phase 2, SLURM array, HYCOM debug GIFs |
-| `plot_sflux` | Done | Phase 2, SLURM array, ERA5/sflux debug GIFs |
-| `gen_estuary` | Done | Phase 3A, create estuary.gr3 + .in files |
-| `gen_bctides` | Done | Phase 3B, interactive, TPXO9 → bctides.in per month |
-| `gen_hotstart` | Done | Phase 3C, SLURM single job, first month |
-| `gen_3Dth` | Done | Phase 3D, SLURM array, boundary th.nc files |
-| `gen_nudge` | Done | Phase 3E, SLURM array, nudging nu.nc files |
-| TPXO tidal forcing | Done | bctides.in via TPXO9 (gen_bctides) |
-| ERA5 atmospheric forcing | Done | sflux files (gen_sflux) |
-| Wave boundary forcing | Planned | spectral boundary conditions |
+| `--init` directory creation | ✅ Done | Creates I/R/P/D + fix/raw/bin/logs + raw/glofas/ |
+| `--setup-envs` | ✅ Done | Creates/verifies swf_main + swf_plot |
+| `inspect_mesh` | ✅ Done | Phase 0, SLURM, fix/ diagnostic plots |
+| `download_hycom` | ✅ Done | Phase 1, DTN, GOFS 3.1 + ESPC-D-V02 |
+| `download_era5` | ✅ Done | Phase 1b, DTN, CDS API monthly download |
+| `download_glofas` | ✅ Done | Phase 1c, DTN, EWDS API annual download |
+| `aggregate_hycom` | ✅ Done | Phase 2a, interactive, daily → monthly stacks |
+| `plotting_debug` | ✅ Done | Phase 2b, SLURM array, HYCOM debug GIFs |
+| `gen_sflux` | ✅ Done | Phase 2c, SLURM array, ERA5 → sflux files |
+| `plot_sflux` | ✅ Done | Phase 2d, SLURM array, ERA5/sflux debug GIFs |
+| `gen_estuary` | ✅ Done | Phase 3A, interactive, estuary.gr3 + .in files |
+| `gen_bctides` | ✅ Done | Phase 3B, interactive, TPXO9 → bctides.in |
+| `gen_source` | ✅ Done | Phase 3C, interactive, GloFAS → source.nc |
+| `gen_hotstart` | ✅ Done | Phase 3D, SLURM single job, first month |
+| `gen_3Dth` | ✅ Done | Phase 3E, SLURM array, boundary th.nc files |
+| `gen_nudge` | ✅ Done | Phase 3F, SLURM array, nudging nu.nc files |
+| `mesh_parser.py` | ✅ Done | Shared .gr3 parser used by all relevant steps |
+| Wave boundary forcing | Planned | Spectral boundary conditions |
 
 ---
 

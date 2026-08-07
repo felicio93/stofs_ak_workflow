@@ -8,6 +8,546 @@ settings below are hardcoded to my case:
 - Model:        `M01`  (so `M01/`, `I01/`, `R01/`, `P01/`, `D01/`)
 - conda base:   `/work2/noaa/nos-surge/felicioc/envs/miniconda3`
 - Envs:         `swf_main` (download + aggregate + SCHISM preproc), `swf_plot` (plotting + mesh diagnostics)
+- Dates:        `2024-09-07` → `2026-06-30` (monthly)
+- Domain:       lon 150–230, lat 45–78, `lon_reference: "360"`
+
+Shortcuts used below (set these in every new shell before running):
+```bash
+export WF=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/stofs_ak_workflow
+export CFG=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config
+export SWF_PROJ=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK
+```
+
+---
+
+## 0. One-time: clone the repo
+
+```bash
+cd /work2/noaa/nos-surge/felicioc/STOFS_3D_AK
+git clone https://github.com/felicio93/stofs_ak_workflow
+# later, to pull updates:
+cd stofs_ak_workflow && git pull
+```
+
+---
+
+## 1. One-time: create the config
+
+The config must exist before any other step (including `--setup-envs`).
+
+```bash
+export WF=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/stofs_ak_workflow
+export CFG=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config
+
+mkdir -p $CFG
+cp $WF/templates/config_example/*.yaml $CFG/
+```
+
+All templates are pre-filled with my values. Confirm they look right:
+```bash
+cat $CFG/project.yaml   # project_dir, dates, slurm block, executables block
+cat $CFG/domain.yaml    # lon 150-230, lat 45-78, lon_reference "360"
+cat $CFG/envs.yaml      # conda_base, swf_main / swf_plot
+cat $CFG/schism.yaml    # T/S constants, open boundaries, dt, nbin/mne_bin
+cat $CFG/steps.yaml     # all flags (set only the ones you want to run)
+```
+
+---
+
+## 2. One-time: create the conda environments (on the DTN)
+
+Env creation needs internet; run on the DTN.
+
+```bash
+ssh hercules-dtn.hpc.msstate.edu
+export WF=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/stofs_ak_workflow
+export CFG=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config
+
+# First time only: create swf_main manually (bootstrap).
+conda create -y -n swf_main -c conda-forge python=3.11 pyyaml python-dateutil nco cdo cdsapi netcdf4 xarray scipy pandas
+conda activate swf_main
+
+# Create/verify all envs in the config (creates swf_plot).
+python $WF/orchestrator.py --setup-envs --config $CFG
+```
+
+**CDS/EWDS API credentials (one-time):**
+
+ERA5 uses the standard CDS endpoint; GloFAS uses the EWDS endpoint. The
+`cdsapi` library reads credentials from `~/.cdsapirc`. Since the two services
+share the same API key but use different URLs, the workflow hard-codes the EWDS
+URL for GloFAS so your `.cdsapirc` only needs the CDS URL:
+
+```bash
+cat ~/.cdsapirc
+# Should show:
+# url: https://cds.climate.copernicus.eu/api
+# key: <your-api-key>
+```
+
+If the file is missing, register at https://cds.climate.copernicus.eu and
+create it. The same key works for both CDS and EWDS.
+
+**GloFAS licence (one-time):** before the first GloFAS download, accept the
+CEMS-FLOODS licence in your browser (while logged in to Copernicus):
+https://ewds.climate.copernicus.eu/datasets/cems-glofas-historical?tab=download#manage-licences
+
+---
+
+## 3. One-time: initialize the directory tree
+
+```bash
+conda activate swf_main
+python $WF/orchestrator.py --init --config $CFG
+```
+
+Creates under `$SWF_PROJ/M01/`:
+```
+fix/   bin/   logs/
+raw/hycom/{ssh,ts,uv}/   raw/era5/   raw/glofas/
+I01/I01_YYYYMM/   R01/R01_YYYYMM/   P01/P01_YYYYMM/
+D01/D01_YYYYMM/   D01/D01_fix/   D01/logs/
+```
+
+Verify:
+```bash
+ls $SWF_PROJ/M01
+ls $SWF_PROJ/M01/raw
+ls $SWF_PROJ/M01/I01 | head
+```
+
+**Copy fixed mesh files into `fix/`:**
+```bash
+cp /path/to/hgrid.gr3              $SWF_PROJ/M01/fix/
+cp /path/to/hgrid.ll               $SWF_PROJ/M01/fix/
+cp /path/to/vgrid.in               $SWF_PROJ/M01/fix/
+cp /path/to/TEM_nudge.gr3          $SWF_PROJ/M01/fix/
+cp /path/to/SAL_nudge.gr3          $SWF_PROJ/M01/fix/
+cp /path/to/albedo.gr3             $SWF_PROJ/M01/fix/
+cp /path/to/diffmin.gr3            $SWF_PROJ/M01/fix/
+cp /path/to/diffmax.gr3            $SWF_PROJ/M01/fix/
+cp /path/to/watertype.gr3          $SWF_PROJ/M01/fix/
+cp /path/to/shapiro.gr3            $SWF_PROJ/M01/fix/
+cp /path/to/windrot_geo2proj.gr3   $SWF_PROJ/M01/fix/
+cp /path/to/rough.gr3              $SWF_PROJ/M01/fix/   # or drag.gr3 / manning.gr3
+```
+
+**Copy compiled _noscaling executables into `bin/`:**
+```bash
+cp /path/to/gen_hot_from_hycom_0_noscaling.exe  $SWF_PROJ/M01/bin/
+cp /path/to/gen_3Dth_from_hycom_noscaling.exe   $SWF_PROJ/M01/bin/
+cp /path/to/gen_nudge_from_hycom_noscaling.exe  $SWF_PROJ/M01/bin/
+```
+
+> **IMPORTANT:** Only use the `_noscaling` executables. They expect unpacked
+> float data (our HYCOM files are unpacked at download with `ncpdq -U`). The
+> stock SCHISM executables apply `scale_factor * 1e-3 + 20` — using them on
+> already-unpacked data gives completely wrong values.
+> The `lon=lon-360` line is also commented out — correct for our 0-360 mesh.
+
+---
+
+## 4. Step 0 — Mesh diagnostics (SLURM, run before anything else)
+
+Generates diagnostic TIFF plots of all `fix/` input files, mesh resolution,
+and vertical layer distribution. Output → `D01/D01_fix/`.
+
+Edit `$CFG/steps.yaml` — set only `inspect_mesh: true`.
+
+```bash
+conda activate swf_main
+python $WF/orchestrator.py --run --config $CFG
+```
+
+Monitor and verify:
+```bash
+squeue -u $USER
+cat $SWF_PROJ/M01/logs/inspect_mesh.out
+ls -lh $SWF_PROJ/M01/D01/D01_fix/
+# expect: bathymetry.tiff  albedo.tiff  diffmin.tiff  diffmax.tiff
+#         watertype.tiff   shapiro.tiff  windrot_geo2proj.tiff
+#         bottom_friction.tiff  TEM_nudge.tiff  SAL_nudge.tiff
+#         mesh_resolution.tiff  vertical_layers.tiff
+```
+
+Re-run: delete the sentinel and re-submit:
+```bash
+rm $SWF_PROJ/M01/D01/D01_fix/inspect_mesh.done
+```
+
+---
+
+## 5. Step 1 — Download HYCOM (DTN only, internet required)
+
+Edit `$CFG/steps.yaml` — set only `download_hycom: true`.
+
+```bash
+ssh hercules-dtn.hpc.msstate.edu
+export WF=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/stofs_ak_workflow
+export CFG=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config
+export SWF_PROJ=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK
+conda activate swf_main
+
+python $WF/orchestrator.py --run --config $CFG \
+    2>&1 | tee $SWF_PROJ/M01/logs/hycom_download.log
+```
+
+Downloads into `raw/hycom/{ssh,ts,uv}/`. Resume-safe; stops on stale data.
+
+Verify:
+```bash
+ncdump -h $SWF_PROJ/M01/raw/hycom/ts/ts_20241001.nc | grep -E "water_temp|salinity|time ="
+```
+
+---
+
+## 5b. Step 1b — Download ERA5 (DTN only, internet required)
+
+Edit `$CFG/steps.yaml` — set only `download_era5: true`.
+
+```bash
+ssh hercules-dtn.hpc.msstate.edu
+export WF=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/stofs_ak_workflow
+export CFG=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config
+export SWF_PROJ=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK
+conda activate swf_main
+
+python $WF/orchestrator.py --run --config $CFG \
+    2>&1 | tee $SWF_PROJ/M01/logs/era5_download.log
+```
+
+Downloads one file per month into `raw/era5/YYYY/era5_YYYYMM.nc`.
+
+Verify:
+```bash
+ncdump -h $SWF_PROJ/M01/raw/era5/2024/era5_202409.nc | grep -E "u10|t2m|time ="
+```
+
+---
+
+## 5c. Step 1c — Download GloFAS (DTN only, internet required)
+
+GloFAS data is downloaded annually (one file per year). The EWDS endpoint
+is used regardless of what URL is in your `~/.cdsapirc`.
+
+**Prerequisite:** accept the CEMS-FLOODS licence (one-time, in browser):
+https://ewds.climate.copernicus.eu/datasets/cems-glofas-historical?tab=download#manage-licences
+
+Edit `$CFG/steps.yaml` — set only `download_glofas: true`.
+
+```bash
+ssh hercules-dtn.hpc.msstate.edu
+export WF=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/stofs_ak_workflow
+export CFG=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config
+export SWF_PROJ=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK
+conda activate swf_main
+
+python $WF/orchestrator.py --run --config $CFG \
+    2>&1 | tee $SWF_PROJ/M01/logs/glofas_download.log
+```
+
+Downloads one file per year into `raw/glofas/YYYY/glofas_YYYY.nc`.
+Variable: `avg_dis` (m³/s), 0.05° grid, clipped to the Alaska domain.
+
+Verify:
+```bash
+ncdump -h $SWF_PROJ/M01/raw/glofas/2025/glofas_2025.nc
+# expect: avg_dis(valid_time, latitude, longitude)
+# valid_time = 365 (or 366 for leap year; partial for current year)
+```
+
+Resume-safe: existing files are skipped. Re-download a year:
+```bash
+rm $SWF_PROJ/M01/raw/glofas/2025/glofas_2025.nc
+# set download_glofas: true, run orchestrator
+```
+
+---
+
+## 6. Step 2 — Aggregate into monthly SCHISM stacks (any node, interactive)
+
+Edit `$CFG/steps.yaml` — set only `aggregate_hycom: true`.
+
+```bash
+conda activate swf_main
+python $WF/orchestrator.py --run --config $CFG \
+    2>&1 | tee $SWF_PROJ/M01/logs/hycom_aggregate.log
+```
+
+Writes `SSH_1.nc`, `TS_1.nc`, `UV_1.nc` into each `I01_YYYYMM/`.
+
+**Critical check:**
+```bash
+ncdump -h $SWF_PROJ/M01/I01/I01_202410/TS_1.nc | grep -E "temperature|salinity|time ="
+# Must show 'temperature' (not 'water_temp') and 'salinity'
+```
+
+---
+
+## 6b. Step 2b — Generate sflux files (SLURM array)
+
+Edit `$CFG/steps.yaml` — set only `gen_sflux: true`.
+
+```bash
+conda activate swf_main
+python $WF/orchestrator.py --run --config $CFG
+```
+
+Monitor:
+```bash
+squeue -u $USER
+ls $SWF_PROJ/M01/I01/I01_202409/sflux/
+# expect: sflux_air_1.1.nc ... sflux_prc_1.1.nc ... sflux_rad_1.1.nc ...
+```
+
+---
+
+## 7. Step 2c — Debug plots (SLURM job array, optional)
+
+Edit `$CFG/steps.yaml` — set only `plotting_debug: true`.
+
+```bash
+conda activate swf_main
+python $WF/orchestrator.py --run --config $CFG
+```
+
+Monitor:
+```bash
+squeue -u $USER
+ls -lh $SWF_PROJ/M01/D01/D01_202410/
+# HYCOM_temperature_202410.gif  HYCOM_salinity_202410.gif  HYCOM_ssh_202410.gif
+```
+
+---
+
+## 8. Phase 3 — SCHISM preprocessing
+
+### Step 3A — gen_estuary (once, interactive)
+
+Creates `fix/estuary.gr3` and the three Fortran `.in` control files in `bin/`.
+
+Edit `$CFG/steps.yaml` — set only `gen_estuary: true`.
+
+```bash
+conda activate swf_main
+python $WF/orchestrator.py --run --config $CFG \
+    2>&1 | tee $SWF_PROJ/M01/logs/gen_estuary.log
+```
+
+Verify:
+```bash
+wc -l $SWF_PROJ/M01/fix/estuary.gr3
+wc -l $SWF_PROJ/M01/fix/hgrid.gr3   # line counts should match
+ls -lh $SWF_PROJ/M01/bin/*.in
+```
+
+### Step 3B — gen_bctides (interactive, once per month)
+
+Generates `bctides.in` for every month using TPXO9 tidal data.
+
+**Prerequisites:**
+```bash
+ls ~/.local/share/tpxo/
+# expect: h_tpxo9.v1.nc  u_tpxo9.v1.nc
+python -c "import scipy; print('scipy OK')"
+```
+
+Edit `$CFG/steps.yaml` — set only `gen_bctides: true`.
+
+```bash
+conda activate swf_main
+python $WF/orchestrator.py --run --config $CFG \
+    2>&1 | tee $SWF_PROJ/M01/logs/gen_bctides.log
+```
+
+Verify:
+```bash
+ls $SWF_PROJ/M01/I01/I01_*/bctides.in | wc -l   # should equal number of months
+head -5 $SWF_PROJ/M01/I01/I01_202409/bctides.in
+```
+
+Re-run a specific month:
+```bash
+rm $SWF_PROJ/M01/I01/I01_202410/bctides.done
+# set gen_bctides: true, run orchestrator
+```
+
+### Step 3C — gen_source (interactive, once per month)
+
+Generates `source.nc` river discharge forcing for every month from GloFAS data.
+
+**Prerequisites — prepare the two CSV files (one-time):**
+
+1. In QGIS (or any GIS tool), create `source_glofas.csv`:
+   - Add a point on each GloFAS grid node (0.05° grid) you want to extract
+   - The point should sit on the GloFAS cell that best represents that river
+   - Save with columns `id,lon,lat` (id is a unique integer per river)
+
+2. Copy the CSV and rename it `source_schism.csv`:
+   - Move each point to the desired injection location inside the SCHISM mesh
+   - Keep the same `id` values
+   - Save with columns `id,lon,lat`
+
+3. Copy both files to `fix/`:
+```bash
+cp /path/to/source_glofas.csv  $SWF_PROJ/M01/fix/
+cp /path/to/source_schism.csv  $SWF_PROJ/M01/fix/
+```
+
+Column names are flexible — `lon`/`longitude`/`x`/`long` and
+`lat`/`latitude`/`y` are all accepted (case-insensitive).
+
+Edit `$CFG/steps.yaml` — set only `gen_source: true`.
+
+```bash
+conda activate swf_main
+python $WF/orchestrator.py --run --config $CFG \
+    2>&1 | tee $SWF_PROJ/M01/logs/gen_source.log
+```
+
+The script prints the distance (degrees) from each `source_schism` point to
+the nearest element centroid for every month — use this to verify placement.
+Distances flagged `*** LARGE ***` (>0.5°) indicate a point may be outside
+the mesh or placed too far from the intended element.
+
+Verify:
+```bash
+ncdump -h $SWF_PROJ/M01/I01/I01_202409/source.nc
+# expect: source_elem(nsources), vsource(time_vsource, nsources),
+#         msource(time_msource, ntracers, nsources)
+# time_vsource = number of days in September (30)
+
+# Check discharge values look physical
+ncdump -v source_elem $SWF_PROJ/M01/I01/I01_202409/source.nc | tail -5
+```
+
+Re-run a specific month:
+```bash
+rm $SWF_PROJ/M01/I01/I01_202410/source.nc
+# set gen_source: true, run orchestrator
+```
+
+### Step 3D — gen_hotstart (SLURM, once, first month only)
+
+Edit `$CFG/steps.yaml` — set only `gen_hotstart: true`.
+
+```bash
+conda activate swf_main
+python $WF/orchestrator.py --run --config $CFG
+```
+
+Monitor:
+```bash
+squeue -u $USER
+cat $SWF_PROJ/M01/logs/gen_hotstart.out
+ls -lh $SWF_PROJ/M01/I01/I01_202409/hotstart.nc
+```
+
+### Step 3E — gen_3Dth (SLURM array, every month)
+
+Edit `$CFG/steps.yaml` — set only `gen_3Dth: true`.
+
+```bash
+conda activate swf_main
+python $WF/orchestrator.py --run --config $CFG
+```
+
+Monitor:
+```bash
+squeue -u $USER
+ls -lh $SWF_PROJ/M01/I01/I01_202410/
+# expect: elev2D.th.nc  uv3D.th.nc  TEM_3D.th.nc  SAL_3D.th.nc  gen_3Dth.done
+```
+
+Re-run a specific month:
+```bash
+rm $SWF_PROJ/M01/I01/I01_202410/gen_3Dth.done
+```
+
+### Step 3F — gen_nudge (SLURM array, every month)
+
+Edit `$CFG/steps.yaml` — set only `gen_nudge: true`.
+
+```bash
+conda activate swf_main
+python $WF/orchestrator.py --run --config $CFG
+```
+
+Monitor:
+```bash
+squeue -u $USER
+ls -lh $SWF_PROJ/M01/I01/I01_202410/
+# expect: TEM_nu.nc  SAL_nu.nc  gen_nudge.done
+```
+
+---
+
+## Quick reference — step, node, env, internet
+
+| Step | Flag | Node | Env | Internet |
+|------|------|------|-----|----------|
+| `--setup-envs` | — | DTN | swf_main | yes |
+| `--init` | — | any | swf_main | no |
+| `inspect_mesh` (submit) | Phase 0 | login | swf_main | no |
+| inspect_mesh job | Phase 0 | compute | swf_plot (auto) | no |
+| `download_hycom` | Phase 1 | DTN | swf_main | yes |
+| `download_era5` | Phase 1b | DTN | swf_main | yes |
+| `download_glofas` | Phase 1c | DTN | swf_main | yes |
+| `aggregate_hycom` | Phase 2a | any | swf_main | no |
+| `gen_sflux` (submit) | Phase 2b | login | swf_main | no |
+| gen_sflux jobs | Phase 2b | compute | swf_main (auto) | no |
+| `plotting_debug` (submit) | Phase 2c | login | swf_main | no |
+| `plot_sflux` (submit) | Phase 2d | login | swf_main | no |
+| plotting/plot_sflux jobs | Phase 2 | compute | swf_plot (auto) | no |
+| `gen_estuary` | Phase 3A | any | swf_main | no |
+| `gen_bctides` | Phase 3B | any | swf_main | no |
+| `gen_source` | Phase 3C | any | swf_main | no |
+| `gen_hotstart` (submit) | Phase 3D | login | swf_main | no |
+| `gen_3Dth` (submit) | Phase 3E | login | swf_main | no |
+| `gen_nudge` (submit) | Phase 3F | login | swf_main | no |
+| gen_* SLURM jobs | Phase 3D-F | compute | none (Fortran) | no |
+
+---
+
+## Resuming / re-running steps
+
+| Step | Resume behavior |
+|------|----------------|
+| `inspect_mesh` | Skips if `D01_fix/inspect_mesh.done` exists |
+| `download_hycom` | Skips valid existing daily files; stops on stale month |
+| `download_era5` | Skips existing monthly files; stops on stale month |
+| `download_glofas` | Skips existing annual files; stops on stale year |
+| `aggregate_hycom` | Skips months where `SSH_1/TS_1/UV_1.nc` exist |
+| `gen_sflux` | Skips months where `sflux/gen_sflux.done` exists |
+| `plotting_debug` | Re-submit; overwrites GIFs |
+| `plot_sflux` | Skips months where `D01_YYYYMM/plot_sflux.done` exists |
+| `gen_estuary` | Skips if `estuary.gr3` and `bin/*.in` already exist |
+| `gen_bctides` | Skips months where `I01_YYYYMM/bctides.done` exists |
+| `gen_source` | Skips months where `I01_YYYYMM/source.nc` exists and is non-empty |
+| `gen_hotstart` | Skips if `gen_hotstart.done` exists |
+| `gen_3Dth` | Skips months where `gen_3Dth.done` exists |
+| `gen_nudge` | Skips months where `gen_nudge.done` exists |
+
+---
+
+## HYCOM data notes
+
+- **GOFS 3.1** (`expt_93.0`) covers up to **2024-09-04** — daily data, combined ts3z/uv3z.
+- **ESPC-D-V02** covers **2024-09-05 → present** — per-day archive files.
+  The annual `t3z/YYYY` aggregations are **rolling ~70-day windows** — always
+  use the archive files for historical ESPC data.
+- The stale-data check (first vs last day of each month) catches stale data
+  automatically and halts the download with a clear warning.
+
+
+This is a copy-paste-ready walkthrough for **my** Hercules setup. Paths and
+settings below are hardcoded to my case:
+
+- Repo clone:   `/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/stofs_ak_workflow`
+- Project dir:  `/work2/noaa/nos-surge/felicioc/STOFS_3D_AK`
+- Model:        `M01`  (so `M01/`, `I01/`, `R01/`, `P01/`, `D01/`)
+- conda base:   `/work2/noaa/nos-surge/felicioc/envs/miniconda3`
+- Envs:         `swf_main` (download + aggregate + SCHISM preproc), `swf_plot` (plotting + mesh diagnostics)
 - Dates:        `2024-09-07` → `2026-06-30` (monthly; Sep 7 = first full ESPC-D-V02 day)
 - Domain:       lon 150–230, lat 45–78, `lon_reference: "360"`
 

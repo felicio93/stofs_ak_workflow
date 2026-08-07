@@ -25,6 +25,8 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker
 from matplotlib.colors import LogNorm
 
+from workflow.mesh_parser import read_mesh_boundaries as _parse_mesh_boundaries
+
 
 # ─────────────────────────────────────────────
 # Consistent defaults
@@ -45,87 +47,20 @@ PADDING_LAT = 2.0   # degrees latitude
 
 def read_mesh_boundaries(hgrid_path: Path) -> dict:
     """
-    Read hgrid.gr3 (or hgrid.ll) and return all boundary polygons grouped by
-    type.
+    Read hgrid.gr3 (or any .gr3) and return all boundary polygons grouped by
+    type, plus mesh extent.
 
-    Returns:
-        {
-          "open":   [(lons, lats), ...],   # ocean open boundaries -> blue
-          "land":   [(lons, lats), ...],   # land type 0 -> red
-          "island": [(lons, lats), ...],   # island type 1 -> green
-        }
+    Delegates to workflow.mesh_parser.read_mesh_boundaries.
 
-    The hgrid.gr3 format after the element section:
-        nope             <- number of open boundaries
-        neta             <- total open bnd nodes (ignored)
-          nond_i           <- node count for open bnd i
-          node_id ...      <- one node per line
-          ...
-        nland            <- number of land boundaries
-        ntotal           <- total land bnd nodes (ignored)
-          nond_j type_flag <- node count + type (0=land, 1=island)
-          node_id ...
-          ...
-
-        Closes each polygon by repeating the first node at the end.
-
-    Also returns mesh_extent: [lon_min, lon_max, lat_min, lat_max] derived
-    from all boundary node coordinates (tightest bounding box of the mesh).
+    Returns
+    -------
+    dict with keys:
+        "open"        : list of (lons, lats)  — open boundary polylines
+        "land"        : list of (lons, lats)  — mainland coast polylines
+        "island"      : list of (lons, lats)  — island closed polygons
+        "mesh_extent" : [lon_min, lon_max, lat_min, lat_max]
     """
-    with open(hgrid_path) as f:
-        f.readline()                          # title
-        ne, np_nodes = map(int, f.readline().split())
-
-        # Read node coordinates
-        lons = np.empty(np_nodes)
-        lats = np.empty(np_nodes)
-        for i in range(np_nodes):
-            parts = f.readline().split()
-            lons[i] = float(parts[1])
-            lats[i] = float(parts[2])
-
-        # Skip elements
-        for _ in range(ne):
-            f.readline()
-
-        # --- Open boundaries (polylines, NOT closed) ---
-        nope = int(f.readline().split()[0])
-        f.readline()  # total open bnd nodes
-        open_bnds = []
-        for _ in range(nope):
-            nond = int(f.readline().split()[0])
-            ids  = [int(f.readline().strip()) - 1 for _ in range(nond)]
-            ids_arr = np.array(ids)
-            open_bnds.append((lons[ids_arr], lats[ids_arr]))
-
-        # --- Land / island boundaries ---
-        nland = int(f.readline().split()[0])
-        f.readline()  # total land bnd nodes
-        land_bnds   = []
-        island_bnds = []
-        for _ in range(nland):
-            header = f.readline().split()
-            nond      = int(header[0])
-            type_flag = int(header[1])
-            ids = [int(f.readline().strip()) - 1 for _ in range(nond)]
-            ids_arr = np.array(ids)
-            if type_flag == 0:
-                # Mainland coast: polyline (NOT closed — open ends connect to
-                # open boundaries or other land segments)
-                land_bnds.append((lons[ids_arr], lats[ids_arr]))
-            else:
-                # Island: genuine closed loop — close it
-                lo = np.append(lons[ids_arr], lons[ids_arr[0]])
-                la = np.append(lats[ids_arr], lats[ids_arr[0]])
-                island_bnds.append((lo, la))
-
-    # Mesh extent from all node coordinates
-    mesh_extent = [float(lons.min()), float(lons.max()),
-                   float(lats.min()), float(lats.max())]
-
-    result = {"open": open_bnds, "land": land_bnds, "island": island_bnds}
-    result["mesh_extent"] = mesh_extent
-    return result
+    return _parse_mesh_boundaries(hgrid_path)
 
 
 def _draw_boundaries(ax, boundaries: dict):

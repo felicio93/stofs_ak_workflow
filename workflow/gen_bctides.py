@@ -30,6 +30,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from workflow.config import load_config, list_months, model_dir, ProgressTracker
+from workflow.mesh_parser import read_open_boundaries as _parse_open_boundaries
 
 ALL_TPXO9_CONSTITUENTS = [
     'M2', 'S2', 'N2', 'K2', 'K1', 'O1', 'P1', 'Q1',
@@ -39,38 +40,16 @@ MAJOR_CONSTITUENTS = ['Q1', 'O1', 'P1', 'K1', 'N2', 'M2', 'S2', 'K2']
 
 
 # =============================================================================
-# hgrid.gr3 open boundary reader
+# hgrid.gr3 open boundary reader  (delegates to mesh_parser)
 # =============================================================================
 
 def read_open_boundaries(hgrid_path: Path):
     """
     Read hgrid.gr3 and return a list of (n_nodes, lon_array, lat_array)
     for each open boundary segment, in order.
+    Delegates to workflow.mesh_parser.read_open_boundaries.
     """
-    with open(hgrid_path) as f:
-        f.readline()            # title
-        ne, np_nodes = map(int, f.readline().split())
-        lons = np.empty(np_nodes)
-        lats = np.empty(np_nodes)
-        for i in range(np_nodes):
-            parts = f.readline().split()
-            lons[i] = float(parts[1])
-            lats[i] = float(parts[2])
-        # Skip elements
-        for _ in range(ne):
-            f.readline()
-        # Open boundaries
-        nope = int(f.readline().split()[0])
-        neta = int(f.readline().split()[0])  # total open boundary nodes
-        boundaries = []
-        for _ in range(nope):
-            nond = int(f.readline().split()[0])
-            node_ids = []
-            for _ in range(nond):
-                node_ids.append(int(f.readline().strip()) - 1)  # 0-based
-            node_ids = np.array(node_ids)
-            boundaries.append((nond, lons[node_ids], lats[node_ids]))
-    return boundaries
+    return _parse_open_boundaries(hgrid_path)
 
 
 # =============================================================================

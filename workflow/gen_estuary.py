@@ -29,6 +29,8 @@ IMPORTANT NOTES printed at runtime:
 import sys
 from pathlib import Path
 
+import numpy as np
+
 from workflow.config import model_dir
 
 REMINDERS = """
@@ -64,40 +66,38 @@ def generate_estuary_gr3(hgrid_path: Path, out_path: Path, threshold: float):
         1  if  depth <= threshold  (estuary / shallow)
         0  otherwise               (open ocean)
 
-    gr3 format:
-        line 1: comment (title)
-        line 2: ne np
-        lines 3..np+2: node_id  x  y  depth
-        lines np+3..: element connectivity (unchanged)
+    Uses workflow.mesh_parser.read_nodes to parse the node block, then
+    reads the raw file a second time only to preserve the exact original
+    formatting of the element and boundary lines unchanged.
     """
+    from workflow.mesh_parser import read_nodes
+
     print(f"  Reading {hgrid_path} ...")
-    with open(hgrid_path) as f:
-        lines = f.readlines()
+    node_ids, lons, lats, depths = read_nodes(hgrid_path)
+    np_nodes = len(node_ids)
 
-    title = lines[0]
-    ne, np_nodes = map(int, lines[1].split())
-
-    node_lines = lines[2: 2 + np_nodes]
-    elem_lines = lines[2 + np_nodes:]
-
-    n_estuary = 0
-    new_node_lines = []
-    for line in node_lines:
-        parts = line.split()
-        nid, x, y, depth = parts[0], parts[1], parts[2], float(parts[3])
-        flag = 1 if depth <= threshold else 0
-        if flag == 1:
-            n_estuary += 1
-        new_node_lines.append(f"{nid} {x} {y} {float(flag):.1f}\n")
-
+    flags     = np.where(depths <= threshold, 1.0, 0.0)
+    n_estuary = int((flags == 1).sum())
     print(f"  Depth threshold: {threshold} m  "
           f"-> {n_estuary:,} estuary nodes / {np_nodes:,} total")
+
+    # Build new node lines with flag replacing depth
+    new_node_lines = [
+        f"{node_ids[i]} {lons[i]} {lats[i]} {flags[i]:.1f}\n"
+        for i in range(np_nodes)
+    ]
+
+    # Read the original file to capture ne, and preserve element + boundary lines
+    with open(hgrid_path) as f:
+        lines = f.readlines()
+    ne, _ = map(int, lines[1].split())
+    elem_and_bnd_lines = lines[2 + np_nodes:]
 
     with open(out_path, "w") as f:
         f.write("estuary\n")
         f.write(f"{ne} {np_nodes}\n")
         f.writelines(new_node_lines)
-        f.writelines(elem_lines)
+        f.writelines(elem_and_bnd_lines)
 
     print(f"  Written: {out_path}")
 

@@ -37,6 +37,7 @@ import matplotlib.tri as mtri
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from workflow.config import load_config, model_dir
 from workflow.plot_style import make_frame_tripcolor, read_mesh_boundaries
+from workflow.mesh_parser import read_nodes
 
 DPI         = 300
 QUALITY     = 92
@@ -50,31 +51,28 @@ PADDING_LAT = 2.0
 
 def read_hgrid(hgrid_path: Path):
     """
-    Read hgrid.gr3 and return (lon, lat, depth, triangles).
-    Quads are split into two triangles.
+    Read hgrid.gr3 and return (lon, lat, depth, triangles, elem_map).
+    Quads are split into two triangles for matplotlib Triangulation.
+    Delegates node parsing to workflow.mesh_parser.read_nodes.
     """
     print(f"  Reading {hgrid_path.name} ...")
+
+    # Read nodes via shared parser
+    _, lon, lat, depth = read_nodes(hgrid_path)
+    np_nodes = len(lon)
+
+    # Read elements (need quad splitting for tripcolor — done here)
     triangles = []
-    elem_idx   = []   # original element index for each triangle (for quad splitting)
-
+    elem_idx  = []
     with open(hgrid_path) as f:
-        f.readline()  # title
-        ne, np_nodes = map(int, f.readline().split())
-
-        lon   = np.empty(np_nodes)
-        lat   = np.empty(np_nodes)
-        depth = np.empty(np_nodes)
-
-        for i in range(np_nodes):
-            parts = f.readline().split()
-            lon[i]   = float(parts[1])
-            lat[i]   = float(parts[2])
-            depth[i] = float(parts[3])
-
+        f.readline()                              # title
+        ne, _ = map(int, f.readline().split())
+        for _ in range(np_nodes):                 # skip node block
+            f.readline()
         for e in range(ne):
             parts = f.readline().split()
-            nv = int(parts[1])
-            n  = [int(x) - 1 for x in parts[2:2+nv]]
+            nv    = int(parts[1])
+            n     = [int(x) - 1 for x in parts[2:2 + nv]]
             triangles.append([n[0], n[1], n[2]])
             elem_idx.append(e)
             if nv == 4:
@@ -82,19 +80,18 @@ def read_hgrid(hgrid_path: Path):
                 elem_idx.append(e)
 
     tri_arr  = np.array(triangles, dtype=int)
-    elem_map = np.array(elem_idx, dtype=int)
+    elem_map = np.array(elem_idx,  dtype=int)
     print(f"    {np_nodes:,} nodes, {ne:,} elements")
     return lon, lat, depth, tri_arr, elem_map
 
 
 def read_gr3_values(path: Path, np_nodes: int):
-    """Read the scalar depth/value column from a .gr3 file (NP values)."""
-    vals = np.empty(np_nodes)
-    with open(path) as f:
-        f.readline(); f.readline()
-        for i in range(np_nodes):
-            parts = f.readline().split()
-            vals[i] = float(parts[3])
+    """Read the scalar value column from a .gr3 file.
+    Delegates to workflow.mesh_parser.read_nodes (ignores node_ids, lons, lats).
+    np_nodes is kept as a parameter for API compatibility but is not used.
+    """
+    from workflow.mesh_parser import read_nodes as _read_nodes
+    _, _, _, vals = _read_nodes(path)
     return vals
 
 

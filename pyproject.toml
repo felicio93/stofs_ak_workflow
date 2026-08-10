@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stofs-ak-workflow"
+version = "0.1.0"
+description = "Automated pre-processing, run management, and post-processing workflow for the SCHISM ocean model (and future coupled/UFS-Coastal variants), targeting the STOFS-AK Alaska/Bering Sea domain."
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [
+    { name = "Felicio Cassalho", email = "felicio.cassalho@noaa.gov" },
+]
+dependencies = [
+    "pyyaml",
+    "python-dateutil",
+]
+
+# Optional dependency groups. These mirror the conda environments the
+# workflow uses on Hercules (swf_main / swf_plot). They are declared here for
+# documentation and for non-conda installs; on Hercules the conda envs remain
+# the source of truth (see workflow/core/environment.py).
+[project.optional-dependencies]
+download = ["cdsapi", "netCDF4", "xarray", "scipy", "numpy"]
+plot = ["xarray", "matplotlib", "cartopy", "imageio", "netCDF4", "pandas", "numpy"]
+
+[project.scripts]
+stofs-ak = "orchestrator:main"
+
+[tool.setuptools]
+# The package is the `workflow` directory; orchestrator.py is a top-level
+# module exposed as the `stofs-ak` console script.
+py-modules = ["orchestrator"]
+
+[tool.setuptools.packages.find]
+include = ["workflow*"]
+
+[tool.setuptools.package-data]
+# Ship SLURM/config templates that live inside the model packages.
+"workflow.models.schism" = ["templates/slurm/*.sbatch", "templates/config/*.yaml"]

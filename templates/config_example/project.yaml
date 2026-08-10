@@ -7,6 +7,14 @@
 #   M{id}/  I{id}/  R{id}/  P{id}/
 project_id: "01"
 
+# Which model configuration to run. Selects the driver under
+# workflow/models/<model_type>/. Supported:
+#   schism       SCHISM standalone (implemented)
+#   schism_wwm   SCHISM + WWM, internally coupled (planned)
+#   schism_mice  SCHISM + MICE, internally coupled (planned)
+#   ufs_coastal  UFS-Coastal based variants (planned)
+model_type: schism
+
 # Absolute path to the project directory on the HPC filesystem.
 # The workflow will create M{id}/ and all subdirectories here.
 project_dir: /work2/noaa/nos-surge/felicioc/STOFS_3D_AK

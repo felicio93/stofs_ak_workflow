@@ -1,25 +1,32 @@
 """
 orchestrator.py
 ===============
-Main entry point for the STOFS-AK SCHISM preprocessing workflow.
+Main entry point / CLI for the STOFS-AK modeling workflow.
+
+Selects a model driver from project.yaml `model_type` and dispatches one of
+three phases (preprocess / run / postprocess). Model-specific step logic lives
+in the driver (workflow/models/<model>/driver.py), not here.
 
 Usage
 -----
   # Initialize project directory structure
-  python orchestrator.py --init --config /path/to/M01/config
+  stofs-ak --init --config /path/to/M01/config
 
-  # Run enabled workflow steps
-  python orchestrator.py --run --config /path/to/M01/config
+  # Create/verify conda environments (run on the DTN)
+  stofs-ak --setup-envs --config /path/to/M01/config
 
-Modes
------
-  --init   Creates the full project directory tree (M{id}/, fix/, raw/,
-           bin/, I{id}/, R{id}/, P{id}/ and monthly subdirectories).
-           Safe to re-run: existing directories are never deleted.
+  # Run enabled preprocessing steps (default phase)
+  stofs-ak --run --config /path/to/M01/config
 
-  --run    Reads steps.yaml and executes each enabled step in order.
-           Currently supported steps:
-             download_hycom  ->  workflow/download_hycom.py
+  # Run a single step regardless of steps.yaml flags
+  stofs-ak --run --only download_hycom --config /path/to/M01/config
+
+  # Later phases (stubs for now)
+  stofs-ak --run --phase run         --config /path/to/M01/config
+  stofs-ak --run --phase postprocess --config /path/to/M01/config
+
+If installed via `pip install -e .`, the `stofs-ak` console script is
+available; otherwise invoke as `python orchestrator.py ...`.
 """
 
 import argparse
@@ -28,14 +35,10 @@ import sys
 from pathlib import Path
 from datetime import date
 
-# Ensure the repo root is importable regardless of the current working
-# directory, so `from workflow.download_hycom import ...` works when the
-# orchestrator is invoked by absolute path (e.g. python ~/stofs_ak_workflow/orchestrator.py).
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-
 from dateutil.relativedelta import relativedelta
 
-from workflow.config import load_config
+from workflow.core.config import load_config, KNOWN_MODEL_TYPES
+from workflow.models.base import make_driver
 
 
 # =============================================================================
@@ -67,6 +70,11 @@ def validate_config(cfg: dict):
     lon_ref = str(cfg.get("lon_reference", ""))
     if lon_ref not in ("180", "360"):
         print(f"ERROR: lon_reference must be '180' or '360', got: {lon_ref!r}")
+        sys.exit(1)
+
+    model_type = str(cfg.get("model_type", "schism")).lower()
+    if model_type not in KNOWN_MODEL_TYPES:
+        print(f"ERROR: model_type must be one of {KNOWN_MODEL_TYPES}, got: {model_type!r}")
         sys.exit(1)
 
     for key in ("lon_min", "lon_max", "lat_min", "lat_max"):
@@ -159,173 +167,37 @@ def init_project(cfg: dict):
     print(f"\n  Init complete. Next steps:")
     print(f"    1. Copy your mesh and fixed files into:  {model_dir}/fix/")
     print(f"    2. Copy compiled Fortran executables into: {model_dir}/bin/")
-    print(f"    3. Run:  python orchestrator.py --run --config <config_dir>")
+    print(f"    3. Run:  stofs-ak --run --config <config_dir>")
     print()
 
 
 # =============================================================================
-# --run: execute enabled workflow steps
+# --run: dispatch a phase to the model driver
 # =============================================================================
 
-def run_workflow(cfg: dict, config_dir: Path, only: str = None):
-    """Execute each enabled step in order. If `only` is set, run just that step."""
+def run_workflow(cfg: dict, config_dir: Path, phase: str = "preprocess",
+                 only: str = None):
+    """Build the model driver from cfg['model_type'] and run one phase.
 
-    def enabled(step):
-        if only is not None:
-            return step == only
-        return bool(cfg.get(step, False))
-
-    # -------------------------------------------------------------------------
-    # Phase-compatibility warning.
-    # The steps run in different execution contexts and cannot all succeed in
-    # one invocation on a single node:
-    #   download_hycom  -> DTN (internet, usually NO sbatch)
-    #   aggregate_hycom -> any node (no internet needed)
-    #   plotting_debug  -> login node (needs sbatch; DTN usually lacks it)
-    # In particular, download_hycom (DTN-only) and plotting_debug (needs sbatch)
-    # generally cannot run on the same node. Warn rather than block.
-    # -------------------------------------------------------------------------
-    if only is None and enabled("download_hycom") and enabled("plotting_debug"):
-        print(f"\n  {'!'*58}")
-        print("  WARNING: download_hycom and plotting_debug are both enabled.")
-        print("  These run in different contexts and usually cannot succeed in")
-        print("  one invocation on a single node:")
-        print("    - download_hycom needs the DTN (internet, no sbatch)")
-        print("    - plotting_debug needs a node with sbatch (login node)")
-        print("  Run them separately: download on the DTN, then plotting from a")
-        print("  login node. Continuing with the enabled steps in order...")
-        print(f"  {'!'*58}")
+    phase is one of: preprocess (default), run, postprocess.
+    """
+    driver = make_driver(cfg, config_dir)
 
     print(f"\n{'='*60}")
-    print(f"  Running workflow for project M{cfg['project_id']}")
+    print(f"  {driver.name} workflow -- project M{cfg['project_id']} -- phase: {phase}")
     if only:
         print(f"  (restricted to step: {only})")
     print(f"{'='*60}\n")
 
-    # =========================================================================
-    # Phase 0 — Mesh diagnostics
-    # =========================================================================
-
-    # -------------------------------------------------------------------------
-    # Step 0: inspect_mesh (SLURM single job, run once before any other step)
-    # -------------------------------------------------------------------------
-    if enabled("inspect_mesh"):
-        print("[STEP] inspect_mesh")
-        from workflow.submit_inspect_mesh import submit_inspect_mesh
-        submit_inspect_mesh(cfg, config_dir)
+    if phase == "preprocess":
+        driver.preprocess(only=only)
+    elif phase == "run":
+        driver.run(only=only)
+    elif phase == "postprocess":
+        driver.postprocess(only=only)
     else:
-        print("[SKIP] inspect_mesh")
-
-    # =========================================================================
-    # =========================================================================
-    # Phase 1 — Downloads (DTN, internet required)
-    # =========================================================================
-
-    if enabled("download_hycom"):
-        print("[STEP] download_hycom")
-        from workflow.download_hycom import run_download
-        run_download(cfg)
-    else:
-        print("[SKIP] download_hycom")
-
-    if enabled("download_era5"):
-        print("[STEP] download_era5")
-        from workflow.download_era5 import run_download_era5
-        run_download_era5(cfg)
-    else:
-        print("[SKIP] download_era5")
-
-    if enabled("download_glofas"):
-        print("[STEP] download_glofas")
-        from workflow.download_glofas import run_download_glofas
-        run_download_glofas(cfg)
-    else:
-        print("[SKIP] download_glofas")
-
-    # =========================================================================
-    # Phase 2 — Processing (any node, no internet required)
-    # =========================================================================
-
-    if enabled("aggregate_hycom"):
-        print("[STEP] aggregate_hycom")
-        from workflow.aggregate_hycom import run_aggregate
-        run_aggregate(cfg)
-    else:
-        print("[SKIP] aggregate_hycom")
-
-    if enabled("plotting_debug"):
-        print("[STEP] plotting_debug")
-        from workflow.submit_plots import submit_plotting_jobs
-        submit_plotting_jobs(cfg, config_dir)
-    else:
-        print("[SKIP] plotting_debug")
-
-    if enabled("gen_sflux"):
-        print("[STEP] gen_sflux")
-        from workflow.submit_era5 import submit_gen_sflux
-        submit_gen_sflux(cfg, config_dir)
-    else:
-        print("[SKIP] gen_sflux")
-
-    if enabled("plot_sflux"):
-        print("[STEP] plot_sflux")
-        from workflow.submit_era5 import submit_plot_sflux
-        submit_plot_sflux(cfg, config_dir)
-    else:
-        print("[SKIP] plot_sflux")
-
-    # =========================================================================
-    # Phase 3 — SCHISM preprocessing (HYCOM-based Fortran utilities)
-    # =========================================================================
-
-    if enabled("gen_estuary"):
-        print("[STEP] gen_estuary")
-        from workflow.gen_estuary import run_gen_estuary
-        run_gen_estuary(cfg)
-    else:
-        print("[SKIP] gen_estuary")
-
-    if enabled("gen_bctides"):
-        print("[STEP] gen_bctides")
-        from workflow.gen_bctides import run_gen_bctides
-        run_gen_bctides(cfg)
-    else:
-        print("[SKIP] gen_bctides")
-
-    if enabled("gen_source"):
-        print("[STEP] gen_source")
-        from workflow.gen_source import run_gen_source
-        run_gen_source(cfg)
-    else:
-        print("[SKIP] gen_source")
-
-    if enabled("gen_param"):
-        print("[STEP] gen_param")
-        from workflow.gen_param import run_gen_param
-        run_gen_param(cfg)
-    else:
-        print("[SKIP] gen_param")
-
-    if enabled("gen_hotstart"):
-        print("[STEP] gen_hotstart")
-        from workflow.submit_hycom_utils import submit_gen_hotstart
-        submit_gen_hotstart(cfg, config_dir)
-    else:
-        print("[SKIP] gen_hotstart")
-
-    if enabled("gen_3Dth"):
-        print("[STEP] gen_3Dth")
-        from workflow.submit_hycom_utils import submit_gen_3Dth
-        submit_gen_3Dth(cfg, config_dir)
-    else:
-        print("[SKIP] gen_3Dth")
-
-    if enabled("gen_nudge"):
-        print("[STEP] gen_nudge")
-        from workflow.submit_hycom_utils import submit_gen_nudge
-        submit_gen_nudge(cfg, config_dir)
-    else:
-        print("[SKIP] gen_nudge")
+        print(f"ERROR: unknown phase '{phase}'")
+        sys.exit(1)
 
     print(f"\n{'='*60}")
     print("  Workflow complete.")
@@ -338,7 +210,9 @@ def run_workflow(cfg: dict, config_dir: Path, only: str = None):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="STOFS-AK SCHISM preprocessing workflow orchestrator"
+        description="STOFS-AK modeling workflow orchestrator "
+                    "(preprocess / run / postprocess; model selected via "
+                    "project.yaml model_type)"
     )
     parser.add_argument(
         "--config", required=True,
@@ -355,7 +229,12 @@ def main():
     )
     mode.add_argument(
         "--run", action="store_true",
-        help="Run enabled workflow steps"
+        help="Run a workflow phase (see --phase)"
+    )
+    parser.add_argument(
+        "--phase", default="preprocess",
+        choices=("preprocess", "run", "postprocess"),
+        help="Which phase to run with --run (default: preprocess)"
     )
     parser.add_argument(
         "--only", default=None,
@@ -374,10 +253,10 @@ def main():
     if args.init:
         init_project(cfg)
     elif args.setup_envs:
-        from workflow.setup_envs import setup_envs
+        from workflow.core.environment import setup_envs
         setup_envs(cfg)
     elif args.run:
-        run_workflow(cfg, config_dir, only=args.only)
+        run_workflow(cfg, config_dir, phase=args.phase, only=args.only)
 
 
 if __name__ == "__main__":

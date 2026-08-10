@@ -5,6 +5,12 @@
 # Run the workflow one step at a time: enable one step, test it,
 # then disable it and enable the next.
 #
+# Steps are grouped by phase. Preprocessing steps run with:
+#     stofs-ak --run --config <config_dir>            (phase defaults to preprocess)
+# Run-management and post-processing steps run with:
+#     stofs-ak --run --phase run         --config <config_dir>
+#     stofs-ak --run --phase postprocess --config <config_dir>
+#
 # Phase 0 — Mesh diagnostics (SLURM job, run before any other step):
 inspect_mesh: false   # Plot all fix/ input files + mesh resolution + vertical layers
 
@@ -30,3 +36,20 @@ gen_sflux:    false   # Step E: ERA5 raw -> sflux_air/prc/rad per month (SLURM a
 gen_hotstart: false   # Step F: create hotstart.nc (once, first month only, SLURM)
 gen_3Dth:     false   # Step G: create *[23D].th.nc files (SLURM array, one job per month)
 gen_nudge:    false   # Step H: create TEM/SAL_nu.nc files (SLURM array, one job per month)
+
+# =============================================================================
+# Phase 4 — Run management (NOT YET IMPLEMENTED — placeholders)
+# Run with:  stofs-ak --run --phase run --config <config_dir>
+# =============================================================================
+submit_run:      false   # Submit SCHISM run jobs per month (R{ID}_YYYYMM/)
+monitor_run:     false   # Poll SLURM, detect completion/failure, write run.done
+chain_hotstart:  false   # Promote hotstart from month N -> month N+1 run dir
+
+# =============================================================================
+# Phase 5 — Post-processing (NOT YET IMPLEMENTED — placeholders)
+# Run with:  stofs-ak --run --phase postprocess --config <config_dir>
+# =============================================================================
+plot_outputs:    false   # Animated maps of water level / currents / SSS / SST
+station_extract: false   # Extract model time series at CO-OPS/NDBC stations
+skill_metrics:   false   # RMSE, bias, correlation, skill vs observations
+compare_sst:     false   # Compare modeled SST vs satellite (GOES/VIIRS/OI-SST)

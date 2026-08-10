@@ -9,9 +9,9 @@ conda_base: /work2/noaa/nos-surge/felicioc/envs/miniconda3
 # Only steps that invoke Python need an entry here.
 #
 # Create/verify these environments once with:
-#     python orchestrator.py --setup-envs --config <config_dir>
+#     stofs-ak --setup-envs --config <config_dir>
 # (run on the DTN; it needs internet). Known environments and their packages
-# are defined in workflow/setup_envs.py:
+# are defined in workflow/core/environment.py:
 #     swf_main : orchestrator + NCO/CDO (download + aggregate)
 #     swf_plot : matplotlib/cartopy/xarray (plotting_debug)
 #

@@ -299,6 +299,13 @@ def run_workflow(cfg: dict, config_dir: Path, only: str = None):
     else:
         print("[SKIP] gen_source")
 
+    if enabled("gen_param"):
+        print("[STEP] gen_param")
+        from workflow.gen_param import run_gen_param
+        run_gen_param(cfg)
+    else:
+        print("[SKIP] gen_param")
+
     if enabled("gen_hotstart"):
         print("[STEP] gen_hotstart")
         from workflow.submit_hycom_utils import submit_gen_hotstart

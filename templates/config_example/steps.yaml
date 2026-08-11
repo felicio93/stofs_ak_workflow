@@ -38,12 +38,14 @@ gen_3Dth:     false   # Step G: create *[23D].th.nc files (SLURM array, one job 
 gen_nudge:    false   # Step H: create TEM/SAL_nu.nc files (SLURM array, one job per month)
 
 # =============================================================================
-# Phase 4 — Run management (NOT YET IMPLEMENTED — placeholders)
+# Phase 4 — Run management
 # Run with:  stofs-ak --run --phase run --config <config_dir>
 # =============================================================================
-submit_run:      false   # Submit SCHISM run jobs per month (R{ID}_YYYYMM/)
-monitor_run:     false   # Poll SLURM, detect completion/failure, write run.done
-chain_hotstart:  false   # Promote hotstart from month N -> month N+1 run dir
+setup_run:  false   # Populate R{ID}_YYYYMM/ dirs: symlink fix/ + I{ID}_YYYYMM/
+                    # inputs, copy executables, adapt run_test/run_comb job cards,
+                    # write auto_hotstart.py (interactive, fast)
+submit_run: false   # Run auto_hotstart.py month-by-month, chaining hotstarts.
+                    # Blocking — launch inside screen/tmux (see tutorial).
 
 # =============================================================================
 # Phase 5 — Post-processing (NOT YET IMPLEMENTED — placeholders)

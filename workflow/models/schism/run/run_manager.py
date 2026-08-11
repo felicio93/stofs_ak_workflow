@@ -1,26 +1,36 @@
 """
 models/schism/run/run_manager.py
 ================================
-PLACEHOLDER — SCHISM run management (Phase 4). Not yet implemented.
+Phase 4 dispatcher — SCHISM run management.
 
-Planned responsibilities
-------------------------
-  submit_run      Render a run_schism.sbatch template and submit the SCHISM
-                  run for each month's R{ID}_YYYYMM/ directory.
-  monitor_run     Poll squeue/sacct, detect completion or failure, and write a
-                  run.done sentinel per month.
-  chain_hotstart  When month N finishes, promote its outputs/hotstart*.nc into
-                  month N+1's run directory so the next month can start. Can be
-                  driven either by SLURM --dependency=afterok chaining or by a
-                  polling loop here.
+Called by SchismDriver.run(). Dispatches the enabled Phase 4 steps in order:
 
-Wire-up: SchismDriver.run() calls run_phase() below. Add steps to steps.yaml
-under the "Phase 4" block and dispatch them here, mirroring preprocess().
+  setup_run   Populate R{ID}_YYYYMM/ run directories (symlinks, executables,
+              job cards, auto_hotstart.py). Interactive and fast.
+  submit_run  Launch auto_hotstart.py month-by-month, chaining end-of-month
+              hotstarts into the next month. BLOCKING — run inside screen/tmux.
+
+Hotstart chaining (chain_hotstart in schism.yaml) is handled entirely inside
+each run directory's auto_hotstart.py, so there is no separate chain step here.
 """
 
 
 def run_phase(cfg: dict, config_dir, only: str = None):
-    raise NotImplementedError(
-        "SCHISM run management (Phase 4) is not implemented yet. "
-        "See workflow/models/schism/run/run_manager.py for the plan."
-    )
+    def enabled(step: str) -> bool:
+        if only is not None:
+            return step == only
+        return bool(cfg.get(step, False))
+
+    if enabled("setup_run"):
+        print("[STEP] setup_run")
+        from workflow.models.schism.run.setup_run import run_setup_run
+        run_setup_run(cfg)
+    else:
+        print("[SKIP] setup_run")
+
+    if enabled("submit_run"):
+        print("[STEP] submit_run")
+        from workflow.models.schism.run.submit_run import run_submit_run
+        run_submit_run(cfg)
+    else:
+        print("[SKIP] submit_run")

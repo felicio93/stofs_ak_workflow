@@ -37,7 +37,7 @@ model **driver** selected from `project.yaml` (`model_type`):
 | Phase | CLI | Status | Description |
 |-------|-----|--------|-------------|
 | **Preprocess** | `stofs-ak --run` (default) | ✅ Implemented for SCHISM | Download forcing, generate all model inputs |
-| **Run** | `stofs-ak --run --phase run` | 🚧 Placeholder | Submit/monitor model runs, chain hotstarts |
+| **Run** | `stofs-ak --run --phase run` | ✅ Implemented for SCHISM | Set up run dirs, launch monthly runs, chain hotstarts automatically |
 | **Postprocess** | `stofs-ak --run --phase postprocess` | 🚧 Placeholder | Plot outputs, validate against observations, skill metrics |
 
 Within the preprocessing phase, steps run in different execution contexts:
@@ -369,9 +369,9 @@ cp /path/to/compiled/*.exe \
 ### steps.yaml
 
 Boolean flags grouped by phase. Enable one step, test it, disable it, enable
-the next. Phase 0–3 = preprocessing; Phase 4 = run management (placeholders);
-Phase 5 = post-processing (placeholders). See the file's inline comments for
-the full per-step list.
+the next. Phase 0–3 = preprocessing; Phase 4 = run management (`setup_run`,
+`submit_run`); Phase 5 = post-processing (placeholder). See the file's inline
+comments for the full per-step list.
 
 ### envs.yaml
 
@@ -400,8 +400,13 @@ stofs-ak --run --config <config_dir>
 # Run a single step regardless of steps.yaml flags
 stofs-ak --run --only download_hycom --config <config_dir>
 
-# Later phases (currently placeholders)
-stofs-ak --run --phase run         --config <config_dir>
+# Phase 4 — populate run dirs (fast, interactive)
+stofs-ak --run --phase run --only setup_run  --config <config_dir>
+
+# Phase 4 — launch all monthly runs (blocking — use screen/tmux)
+stofs-ak --run --phase run --only submit_run --config <config_dir>
+
+# Phase 5 — post-processing (placeholder)
 stofs-ak --run --phase postprocess --config <config_dir>
 ```
 
@@ -421,6 +426,23 @@ stofs-ak --run --phase postprocess --config <config_dir>
 > **Note:** `download_hycom` (DTN, no `sbatch`) and `plotting_debug` (needs
 > `sbatch`) cannot both succeed in one invocation on the same node. Run them
 > separately; the driver warns if both are enabled.
+
+### Typical run-phase sequence (Phase 4)
+
+1. **`setup_run`** (interactive, fast): populates every `R{ID}_YYYYMM/`
+   directory — symlinks from `fix/` and `I{ID}_YYYYMM/`, copies the SCHISM MPI
+   executable, creates `outputs/` with placeholder files, adapts `run_test` and
+   `run_comb` job cards, and renders `auto_hotstart.py` per month. Requires
+   `executables.schism` and `executables.combine_hotstart` in `project.yaml`.
+2. **`submit_run`** (blocking — run inside `screen`/`tmux`): calls
+   `auto_hotstart.py` for month 1, which submits the SCHISM job, monitors
+   `outputs/mirror.out` for progress and hangs, combines the end-of-month
+   hotstart on completion, symlinks it into the next month's run directory, and
+   launches that month automatically. Returns when all months are done.
+
+> **`chain_hotstart`** in `schism.yaml` controls chaining: `true` (default) =
+> auto-launch month N+1; `false` = stop after each month (useful for testing).
+> See `tutorials/hercules_walkthrough.md` for the complete Phase 4 walkthrough.
 
 ---
 
@@ -455,7 +477,8 @@ stofs-ak --run --phase postprocess --config <config_dir>
 | `gen_sflux` | 2 | ✅ Done |
 | `gen_estuary` / `gen_bctides` / `gen_source` / `gen_param` | 3 | ✅ Done |
 | `gen_hotstart` / `gen_3Dth` / `gen_nudge` | 3 | ✅ Done |
-| Run management (`submit_run`, `monitor_run`, `chain_hotstart`) | 4 | 🚧 Placeholder |
+| `setup_run` (populate R dirs, job cards, auto_hotstart.py) | 4 | ✅ Done |
+| `submit_run` (blocking month-by-month run + hotstart chaining) | 4 | ✅ Done |
 | Post-processing (`plot_outputs`, `station_extract`, `skill_metrics`, `compare_sst`) | 5 | 🚧 Placeholder |
 | SCHISM+WWM / SCHISM+MICE / UFS-Coastal drivers | — | 🚧 Placeholder |
 

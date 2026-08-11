@@ -15,7 +15,7 @@ Phase map (steps.yaml flags):
            gen_sflux, plot_sflux
   Phase 3  gen_estuary, gen_bctides, gen_source,
            gen_param, gen_hotstart, gen_3Dth, gen_nudge
-  Phase 4  run management                            -> run.run_manager  (stub)
+  Phase 4  run management                            -> run.run_manager
   Phase 5  post-processing                           -> postprocess.*     (stub)
 """
 
@@ -147,7 +147,7 @@ class SchismDriver(ModelDriver):
             print("[SKIP] gen_nudge")
 
     # -------------------------------------------------------------------------
-    # Phase 4 — Run management  (placeholder; see run/run_manager.py)
+    # Phase 4 — Run management
     # -------------------------------------------------------------------------
     def run(self, only: str = None):
         from workflow.models.schism.run.run_manager import run_phase

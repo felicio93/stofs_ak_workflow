@@ -55,3 +55,13 @@ nudge_stride: 1
 # The defaults from the SCHISM repository work for most cases.
 nbin:    60000
 mne_bin: 1600
+
+# =============================================================================
+# Run management (Phase 4)
+# =============================================================================
+# When a monthly run completes and its end-of-month hotstart is combined,
+# should the workflow automatically symlink that hotstart into the NEXT month's
+# run directory and launch it?
+#   true  : chain month N -> month N+1 automatically (normal production run)
+#   false : stop after each month completes; no auto-chain (single-month testing)
+chain_hotstart: true

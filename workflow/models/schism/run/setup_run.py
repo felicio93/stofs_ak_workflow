@@ -1,0 +1,289 @@
+"""
+models/schism/run/setup_run.py
+==============================
+Phase 4, step "setup_run" (interactive, fast).
+
+Populates each R{ID}_YYYYMM/ run directory so a SCHISM month can be launched:
+
+  * Symlinks the large static mesh/forcing files from fix/.
+  * Symlinks the monthly boundary/nudging/source inputs from I{ID}_YYYYMM/.
+  * Symlinks the whole sflux/ directory from I{ID}_YYYYMM/.
+  * For month 1 only: symlinks hotstart.nc -> I{ID}_{first}/hotstart.nc
+    (later months receive their hotstart.nc from the previous month at run
+    time, via auto_hotstart.py chaining).
+  * Copies the SCHISM MPI executable into the run dir (needed for `srun ./exe`).
+  * Creates outputs/ with the empty placeholder files SCHISM requires
+    (staout_1..9, flux.out) and copies combine_hotstart7.exe there.
+  * Adapts fix/run_test  -> R{ID}_YYYYMM/run_test  (unique job name).
+  * Adapts fix/run_comb  -> R{ID}_YYYYMM/run_comb  (unique job name, -D ./outputs,
+    and the combine step -i <nhot_write> read from that month's param.nml).
+  * Renders auto_hotstart.py into the run dir.
+
+Sentinel: R{ID}_YYYYMM/setup_run.done
+"""
+
+import re
+import shutil
+import stat
+import sys
+from pathlib import Path
+
+from workflow.core.config import list_months, model_dir
+
+TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
+AUTO_HOTSTART_TEMPLATE = TEMPLATE_DIR / "auto_hotstart.py"
+
+# Static files symlinked from fix/. Any that are missing are reported and
+# skipped (some meshes may not use every optional .gr3).
+FIX_LINKS = [
+    "hgrid.gr3", "hgrid.ll", "vgrid.in", "partition.prop", "tvd.prop",
+    "albedo.gr3", "diffmin.gr3", "diffmax.gr3", "watertype.gr3",
+    "shapiro.gr3", "windrot_geo2proj.gr3", "rough.gr3",
+    "estuary.gr3", "TEM_nudge.gr3", "SAL_nudge.gr3", "station.in",
+]
+
+# Monthly inputs symlinked from I{ID}_YYYYMM/. These MUST exist (produced by
+# the Phase 3 preprocessing steps).
+INPUT_LINKS = [
+    "bctides.in", "param.nml", "source.nc",
+    "TEM_3D.th.nc", "SAL_3D.th.nc", "elev2D.th.nc", "uv3D.th.nc",
+    "TEM_nu.nc", "SAL_nu.nc",
+]
+
+# Empty placeholder files SCHISM expects to find under outputs/ at startup.
+OUTPUT_PLACEHOLDERS = [f"staout_{i}" for i in range(1, 10)] + ["flux.out"]
+
+POLL_SECONDS = 120
+
+
+# =============================================================================
+# Namelist helper (read nhot_write from a generated param.nml)
+# =============================================================================
+
+def _read_nml_int(nml_path: Path, param: str):
+    text = nml_path.read_text()
+    m = re.search(r'^\s*' + re.escape(param) + r'\s*=\s*([^\s!]+)',
+                  text, re.IGNORECASE | re.MULTILINE)
+    if not m:
+        return None
+    try:
+        return int(float(m.group(1)))
+    except ValueError:
+        return None
+
+
+# =============================================================================
+# Job-card adaptation
+# =============================================================================
+
+def _set_sbatch_jobname(text: str, jobname: str) -> str:
+    return re.sub(r'(#SBATCH\s+-J\s+)(\S+)', rf'\g<1>{jobname}', text)
+
+
+def _set_sbatch_workdir(text: str, workdir: str) -> str:
+    return re.sub(r'(#SBATCH\s+-D\s+)(\S+)', rf'\g<1>{workdir}', text)
+
+
+def _set_combine_command(text: str, combine_exe: str, step: int) -> str:
+    """Normalise the combine_hotstart line in run_comb.
+
+    combine_hotstart7 reads its per-rank inputs (local_to_global_000000,
+    hotstart_000000_<step>.nc) from the CURRENT WORKING DIRECTORY and writes
+    hotstart_it=<step>.nc there. Those files live in outputs/, so run_comb is
+    rewritten to run from outputs/ (#SBATCH -D ./outputs, done separately) and
+    invoke the executable as `./<combine_exe> -i <step>`.
+
+    The user's template may call it in several ways, e.g.:
+        ./outputs/combine_hotstart7 -i 168480
+        ~/bin/combine_hotstart7 -i 168480
+    All are rewritten to `./<combine_exe> -i <step>`.
+    """
+    pattern = re.compile(r'(?:\S*/)?combine_hotstart7(?:\.exe)?\s+-i\s+\d+')
+    replacement = f'./{combine_exe} -i {step}'
+    new_text, n = pattern.subn(replacement, text)
+    if n == 0:
+        print("  WARNING: no combine_hotstart7 '-i' line found in run_comb; "
+              "the combine step may not run. Check fix/run_comb.")
+    return new_text
+
+
+def _render_auto_hotstart(run_dir: Path, subs: dict):
+    text = AUTO_HOTSTART_TEMPLATE.read_text()
+    for key, val in subs.items():
+        text = text.replace("{{" + key + "}}", str(val))
+    out = run_dir / "auto_hotstart.py"
+    out.write_text(text)
+    out.chmod(out.stat().st_mode | stat.S_IXUSR)
+
+
+# =============================================================================
+# Symlink helper
+# =============================================================================
+
+def _link(src: Path, dst: Path):
+    """Create/refresh a symlink dst -> src. Returns True if src existed."""
+    if not src.exists():
+        return False
+    if dst.exists() or dst.is_symlink():
+        dst.unlink()
+    dst.symlink_to(src)
+    return True
+
+
+# =============================================================================
+# Per-month setup
+# =============================================================================
+
+def _setup_month(cfg: dict, mdir: Path, ym: str, month_index: int,
+                 next_ym: str, is_last: bool) -> bool:
+    pid    = cfg["project_id"]
+    fix    = mdir / "fix"
+    bind   = mdir / "bin"
+    idir   = mdir / f"I{pid}" / f"I{pid}_{ym}"
+    rdir   = mdir / f"R{pid}" / f"R{pid}_{ym}"
+
+    print(f"\n--- setup_run {ym}  ({rdir}) ---")
+
+    if (rdir / "setup_run.done").exists():
+        print(f"  {ym}: already set up, skipping.")
+        return True
+
+    if not idir.is_dir():
+        print(f"  ERROR {ym}: input dir not found: {idir}")
+        return False
+
+    rdir.mkdir(parents=True, exist_ok=True)
+
+    # --- executables from project.yaml ---
+    exes = cfg.get("executables", {})
+    schism_exe  = exes.get("schism")
+    combine_exe = exes.get("combine_hotstart")
+    if not schism_exe or not combine_exe:
+        print("  ERROR: executables.schism and executables.combine_hotstart "
+              "must be set in project.yaml")
+        return False
+
+    # --- verify job-card templates + executables exist ---
+    missing = []
+    for p in (fix / "run_test", fix / "run_comb",
+              bind / schism_exe, bind / combine_exe):
+        if not p.exists():
+            missing.append(str(p))
+    if missing:
+        print("  ERROR: required file(s) not found:")
+        for m in missing:
+            print(f"    {m}")
+        return False
+
+    # --- symlink static fix/ files ---
+    for name in FIX_LINKS:
+        if not _link(fix / name, rdir / name):
+            print(f"  NOTE: fix/{name} not found, skipped.")
+
+    # --- symlink monthly inputs ---
+    for name in INPUT_LINKS:
+        if not _link(idir / name, rdir / name):
+            print(f"  ERROR {ym}: required input missing: {idir / name}")
+            return False
+
+    # --- sflux directory ---
+    if not _link(idir / "sflux", rdir / "sflux"):
+        print(f"  ERROR {ym}: sflux dir missing: {idir / 'sflux'}")
+        return False
+
+    # --- month 1: hotstart from I{ID}_{first} ---
+    if month_index == 0:
+        if not _link(idir / "hotstart.nc", rdir / "hotstart.nc"):
+            print(f"  ERROR {ym}: month-1 hotstart missing: {idir / 'hotstart.nc'}")
+            print("    Run gen_hotstart (Phase 3) first.")
+            return False
+    # months 2+ : hotstart.nc is created at run time by the previous month.
+
+    # --- copy the SCHISM MPI executable into the run dir ---
+    shutil.copy2(bind / schism_exe, rdir / schism_exe)
+
+    # --- outputs/ + placeholders + combine exe ---
+    outdir = rdir / "outputs"
+    outdir.mkdir(exist_ok=True)
+    for name in OUTPUT_PLACEHOLDERS:
+        f = outdir / name
+        if not f.exists():
+            f.touch()
+    shutil.copy2(bind / combine_exe, outdir / combine_exe)
+
+    # --- combine step number from this month's param.nml ---
+    nhot_write = _read_nml_int(idir / "param.nml", "nhot_write")
+    if nhot_write is None:
+        print(f"  ERROR {ym}: could not read nhot_write from {idir / 'param.nml'}")
+        return False
+
+    # --- adapt run_test ---
+    run_jobname = f"R{pid}_{month_index + 1:02d}"
+    run_test = _set_sbatch_jobname((fix / "run_test").read_text(), run_jobname)
+    run_test = _set_sbatch_workdir(run_test, ".")
+    (rdir / "run_test").write_text(run_test)
+
+    # --- adapt run_comb (job name, run dir = ./outputs, -i nhot_write) ---
+    # combine_hotstart7 reads its per-rank inputs and writes
+    # hotstart_it=<nhot_write>.nc in the current working directory, which must
+    # be outputs/ (that is where the rank files and the copied executable are).
+    comb_jobname = f"C{pid}_{month_index + 1:02d}"
+    run_comb = _set_sbatch_jobname((fix / "run_comb").read_text(), comb_jobname)
+    run_comb = _set_sbatch_workdir(run_comb, "./outputs")
+    run_comb = _set_combine_command(run_comb, combine_exe, nhot_write)
+    (rdir / "run_comb").write_text(run_comb)
+
+    # --- render auto_hotstart.py ---
+    next_rdir = (mdir / f"R{pid}" / f"R{pid}_{next_ym}") if next_ym else None
+    _render_auto_hotstart(rdir, {
+        "RUNDIR":         str(rdir),
+        "NEXT_RUNDIR":    f'r"{next_rdir}"' if next_rdir else "None",
+        "CHAIN_HOTSTART": bool(cfg.get("chain_hotstart", True)),
+        "IS_LAST_MONTH":  bool(is_last),
+        "NHOT_WRITE":     nhot_write,
+        "MONTH":          ym,
+        "RUN_JOBNAME":    run_jobname,
+        "POLL_SECONDS":   POLL_SECONDS,
+    })
+
+    (rdir / "setup_run.done").touch()
+    print(f"  {ym}: run directory ready  "
+          f"(job {run_jobname}, combine step {nhot_write}).")
+    return True
+
+
+# =============================================================================
+# Entry point
+# =============================================================================
+
+def run_setup_run(cfg: dict):
+    pid    = cfg["project_id"]
+    mdir   = model_dir(cfg)
+    months = list_months(cfg)
+
+    print(f"\n{'='*60}")
+    print(f"  setup_run for M{pid}")
+    print(f"  {len(months)} month(s): {months[0]} -> {months[-1]}")
+    print(f"  chain_hotstart: {bool(cfg.get('chain_hotstart', True))}")
+    print(f"{'='*60}")
+
+    failed = []
+    for i, ym in enumerate(months):
+        next_ym = months[i + 1] if i + 1 < len(months) else None
+        is_last = (i + 1 == len(months))
+        ok = _setup_month(cfg, mdir, ym, i, next_ym, is_last)
+        if not ok:
+            failed.append(ym)
+
+    print(f"\n{'='*60}")
+    if not failed:
+        print("  setup_run complete. No failures.")
+        print("  Next: enable submit_run and run inside screen/tmux:")
+        print("    stofs-ak --run --phase run --only submit_run --config <cfg>")
+    else:
+        print(f"  setup_run finished with {len(failed)} failure(s):")
+        for m in failed:
+            print(f"    {m}")
+    print(f"{'='*60}\n")
+    if failed:
+        sys.exit(1)

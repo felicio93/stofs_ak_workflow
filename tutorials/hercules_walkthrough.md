@@ -473,20 +473,150 @@ ls -lh $SWF_PROJ/M01/I01/I01_202410/
 
 ---
 
-## 9. Phase 4 & 5 — Run management and post-processing
+## 9. Phase 4 — Run management
 
-**Not yet implemented** (placeholders). When ready, these will run as:
+### Step 9a — setup_run (interactive, fast)
+
+Populates every `R01/R01_YYYYMM/` run directory: symlinks `fix/` mesh files and
+`I01_YYYYMM/` inputs, copies the SCHISM executable, creates `outputs/` with
+placeholder files (`staout_1..9`, `flux.out`, `combine_hotstart7.exe`), adapts
+`run_test` and `run_comb` job cards with per-month names and the correct
+hotstart step number, and renders `auto_hotstart.py` into each run directory.
+
+**Prerequisites:**
+- All Phase 3 preprocessing done for every month
+- `fix/run_test` and `fix/run_comb` job card templates present in `M01/fix/`
+- `bin/pschism_*` and `bin/combine_hotstart7.exe` present in `M01/bin/`
+- Add the new executables block to `$CFG/project.yaml` if not already there:
+  ```yaml
+  executables:
+    gen_hotstart: gen_hot_from_hycom_0_noscaling.exe
+    gen_3Dth:     gen_3Dth_from_hycom_noscaling.exe
+    gen_nudge:    gen_nudge_from_hycom_noscaling.exe
+    schism:           pschism_HERCULES_NO_PARMETIS_PREC_EVAP_BLD_STANDALONE_SH_MEM_COMM_TVD-VL
+    combine_hotstart: combine_hotstart7.exe
+  ```
+- Copy the updated `schism.yaml` template to your config if not already there
+  (adds `chain_hotstart: true`):
+  ```bash
+  cp $WF/workflow/models/schism/templates/config/schism.yaml $CFG/schism.yaml
+  ```
+
+Edit `$CFG/steps.yaml` — set only `setup_run: true`.
 
 ```bash
-# Phase 4 — submit/monitor SCHISM runs, chain hotstarts month-to-month
-stofs-ak --run --phase run --config $CFG
+conda activate swf_main
+stofs-ak --run --phase run --config $CFG \
+    2>&1 | tee $SWF_PROJ/M01/logs/setup_run_$(date +%Y%m%d_%H%M%S).log
+```
 
-# Phase 5 — plot outputs, station validation, skill metrics, SST comparison
+Verify:
+```bash
+ls -lh $SWF_PROJ/M01/R01/R01_202512/
+# expect: hgrid.gr3 (symlink)  vgrid.in (symlink)  bctides.in (symlink)
+#         param.nml (symlink)   source.nc (symlink)  sflux/ (symlink)
+#         TEM_3D.th.nc (symlink)  SAL_3D.th.nc (symlink)  elev2D.th.nc (symlink)
+#         uv3D.th.nc (symlink)  TEM_nu.nc (symlink)  SAL_nu.nc (symlink)
+#         hotstart.nc (symlink, month 1 ONLY — -> I01_202512/hotstart.nc)
+#         pschism_HERCULES_... (copied executable)
+#         run_test  run_comb  auto_hotstart.py  outputs/  setup_run.done
+
+# Job card names
+grep "SBATCH -J" $SWF_PROJ/M01/R01/R01_202512/run_test    # -> R01_01
+grep "SBATCH -J" $SWF_PROJ/M01/R01/R01_202601/run_test    # -> R01_02
+
+# Combine step in run_comb
+grep "combine_hotstart7" $SWF_PROJ/M01/R01/R01_202512/run_comb
+# expect: ./combine_hotstart7.exe -i 44640   (step = nhot_write from param.nml)
+
+# outputs/ placeholders
+ls $SWF_PROJ/M01/R01/R01_202512/outputs/
+# expect: staout_1 .. staout_9  flux.out  combine_hotstart7.exe
+
+# Month 2 should NOT have hotstart.nc yet (chained at run time):
+ls -la $SWF_PROJ/M01/R01/R01_202601/hotstart.nc  # should say "No such file"
+```
+
+Re-run a month: `rm $SWF_PROJ/M01/R01/R01_YYYYMM/setup_run.done`
+
+---
+
+### Step 9b — submit_run (blocking — run inside screen/tmux)
+
+Calls `auto_hotstart.py` for the first pending month. That script:
+1. Submits `run_test` via sbatch (the SCHISM MPI job)
+2. Polls squeue every 120 s; checks `outputs/mirror.out` for TIME STEP
+   advancement; cancels and resubmits if a hang is detected
+3. When the run finishes ("Run completed successfully" in `mirror.out`):
+   - Submits `run_comb` to run `combine_hotstart7.exe -i <nhot_write>` inside `outputs/`
+   - Waits for the combine job to finish
+   - Verifies `outputs/hotstart_it=<nhot_write>.nc` was created
+   - Symlinks it as `R01_202601/hotstart.nc`
+   - Writes `run.done` in this month's run dir
+   - Launches `R01_202601/auto_hotstart.py` (if `chain_hotstart: true`)
+
+**This command is BLOCKING.** Use `screen` so it survives a disconnected SSH
+session:
+
+```bash
+screen -S stofs_run
+export WF=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/stofs_ak_workflow
+export CFG=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config
+export SWF_PROJ=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK
+conda activate swf_main
+```
+
+Edit `$CFG/steps.yaml` — set `setup_run: false`, `submit_run: true`.
+
+```bash
+stofs-ak --run --phase run --config $CFG \
+    2>&1 | tee $SWF_PROJ/M01/logs/submit_run_$(date +%Y%m%d_%H%M%S).log
+# Ctrl-A D to detach   |   screen -r stofs_run to reattach
+```
+
+Monitor from another terminal while the run is going:
+```bash
+# Which jobs are running
+squeue -u $USER
+
+# Live auto_hotstart output for the current month
+tail -f $SWF_PROJ/M01/R01/R01_202512/scrn.out
+
+# SCHISM time stepping
+tail -f $SWF_PROJ/M01/R01/R01_202512/outputs/mirror.out
+
+# Which months have finished
+ls $SWF_PROJ/M01/R01/R01_*/run.done
+
+# Hotstart chaining check (after month 1 finishes)
+ls -la $SWF_PROJ/M01/R01/R01_202601/hotstart.nc
+# expect: symlink -> /work2/.../R01_202512/outputs/hotstart_it=44640.nc
+```
+
+**Resume behavior:** if your session drops, reattach with `screen -r stofs_run`
+or re-run `stofs-ak --run --phase run --only submit_run --config $CFG` from a
+fresh session. Months with `run.done` are skipped; the loop resumes from the
+first pending month.
+
+Re-run a specific month from scratch:
+```bash
+rm $SWF_PROJ/M01/R01/R01_202512/run.done
+# Also remove the next month's hotstart symlink if it was already created:
+rm -f $SWF_PROJ/M01/R01/R01_202601/hotstart.nc
+stofs-ak --run --phase run --only submit_run --config $CFG
+```
+
+---
+
+## 10. Phase 5 — Post-processing
+
+**Not yet implemented** (placeholder). When ready:
+
+```bash
 stofs-ak --run --phase postprocess --config $CFG
 ```
 
-The step flags for these phases already exist in `steps.yaml` (Phase 4 / Phase 5
-blocks). Running them now raises a clear "not implemented" message.
+The step flags already exist in `steps.yaml` (Phase 5 block).
 
 ---
 
@@ -519,6 +649,10 @@ stofs-ak --run --only download_hycom --config $CFG
 | `gen_estuary` / `gen_bctides` / `gen_source` / `gen_param` | 3 | any | swf_main | no |
 | `gen_hotstart` / `gen_3Dth` / `gen_nudge` (submit) | 3 | login | swf_main | no |
 | gen_* SLURM jobs | 3 | compute | none (Fortran) | no |
+| `setup_run` | 4 | login | swf_main | no |
+| `submit_run` (auto_hotstart loop) | 4 | login | swf_main | no |
+| SCHISM MPI run | 4 | compute | none (MPI) | no |
+| `run_comb` (combine hotstart) | 4 | compute | none (Fortran) | no |
 
 ---
 
@@ -540,6 +674,8 @@ stofs-ak --run --only download_hycom --config $CFG
 | `gen_hotstart` | Skips if `gen_hotstart.done` exists |
 | `gen_3Dth` | Skips months where `gen_3Dth.done` exists |
 | `gen_nudge` | Skips months where `gen_nudge.done` exists |
+| `setup_run` | Skips months where `setup_run.done` exists |
+| `submit_run` | Skips months where `run.done` exists; resumes from first pending month |
 
 ---
 

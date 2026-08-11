@@ -141,7 +141,13 @@ def plot_month(cfg: dict, ym: str):
     idir = mdir / f"I{pid}" / f"I{pid}_{ym}"
     ddir = mdir / f"D{pid}" / f"D{pid}_{ym}"
     ddir.mkdir(parents=True, exist_ok=True)
-    tmp  = ddir / "frames_tmp"
+    tmp      = ddir / "frames_tmp"
+    sentinel = ddir / "plot_hycom.done"
+
+    if sentinel.exists():
+        print(f"  plot_hycom: {ym} already complete. Skipping.")
+        return
+
     tmp.mkdir(parents=True, exist_ok=True)
 
     cmap     = cfg.get("plot_cmap", "jet")
@@ -219,6 +225,13 @@ def plot_month(cfg: dict, ym: str):
         tmp.rmdir()
     except OSError:
         pass
+
+    gif_count = len(list(ddir.glob("HYCOM_*.gif")))
+    if gif_count > 0:
+        sentinel.touch()
+        print(f"  {gif_count} GIF(s) written. Sentinel: {sentinel}")
+    else:
+        print(f"  WARNING: no GIFs produced for {ym}. Sentinel NOT written.")
 
 
 if __name__ == "__main__":

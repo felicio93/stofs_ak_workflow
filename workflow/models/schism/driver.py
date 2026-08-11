@@ -84,14 +84,15 @@ class SchismDriver(ModelDriver):
         if en("gen_sflux"):
             print("[STEP] gen_sflux")
             from workflow.models.schism.preprocess.submit_era5 import submit_gen_sflux
-            submit_gen_sflux(cfg, config_dir)
+            _gen_sflux_jobid = submit_gen_sflux(cfg, config_dir)
         else:
             print("[SKIP] gen_sflux")
+            _gen_sflux_jobid = ""
 
         if en("plot_sflux"):
             print("[STEP] plot_sflux")
             from workflow.models.schism.preprocess.submit_era5 import submit_plot_sflux
-            submit_plot_sflux(cfg, config_dir)
+            submit_plot_sflux(cfg, config_dir, after_jobid=_gen_sflux_jobid)
         else:
             print("[SKIP] plot_sflux")
 

@@ -66,11 +66,18 @@ class SlurmSubmitter:
 
     # -- submission --------------------------------------------------------
 
-    def submit(self, script_path: Path) -> str:
+    def submit(self, script_path: Path, dependency: str = None) -> str:
         """Submit a rendered script with sbatch; return sbatch's stdout line
-        (e.g. 'Submitted batch job 12345'). Exits on failure."""
-        result = subprocess.run(["sbatch", str(script_path)],
-                                capture_output=True, text=True)
+        (e.g. 'Submitted batch job 12345'). Exits on failure.
+
+        dependency: optional SLURM dependency string passed via
+            --dependency, e.g. 'afterok:12345' or 'afterok:12345:12346'.
+        """
+        cmd = ["sbatch"]
+        if dependency:
+            cmd += [f"--dependency={dependency}"]
+        cmd.append(str(script_path))
+        result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
             print(f"  ERROR: sbatch failed: {result.stderr.strip()}")
             sys.exit(1)
@@ -78,12 +85,28 @@ class SlurmSubmitter:
         print(f"  {out}")
         return out
 
+    @staticmethod
+    def parse_jobid(sbatch_output: str) -> str:
+        """Extract the numeric job ID from sbatch stdout.
+
+        sbatch prints 'Submitted batch job 12345' (possibly with a trailing
+        array spec like '12345_[1-3]'). Returns the bare job ID string
+        (e.g. '12345'), suitable for use in a --dependency argument.
+        """
+        # Output is always "Submitted batch job <ID>" — take the last token
+        # and strip any array bracket suffix.
+        token = sbatch_output.strip().split()[-1]
+        return token.split("_")[0]
+
     def render_and_submit(self, template_name: str, subs: dict,
-                          out_path: Path) -> str:
-        """Convenience: render -> write -> submit in one call."""
+                          out_path: Path, dependency: str = None) -> str:
+        """Convenience: render -> write -> submit in one call.
+
+        Returns the raw sbatch stdout line (use parse_jobid to extract the ID).
+        """
         rendered = self.write_rendered(template_name, subs, out_path)
         print(f"  Rendered SLURM script: {rendered}")
-        return self.submit(rendered)
+        return self.submit(rendered, dependency=dependency)
 
 
 def write_manifest(months, manifest_path: Path) -> Path:

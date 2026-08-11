@@ -4,6 +4,11 @@ models/schism/preprocess/submit_era5.py
 SLURM launchers for ERA5-derived compute steps:
   - gen_sflux:  ERA5 raw -> SCHISM sflux files (SLURM array, swf_main)
   - plot_sflux: sflux debug GIFs             (SLURM array, swf_plot)
+
+plot_sflux is submitted with --dependency=afterok:<gen_sflux_jobid> so that
+it only runs after all gen_sflux array tasks have completed successfully.
+Both functions can also be called standalone (driver.preprocess handles
+whether both or only one is enabled).
 """
 
 from pathlib import Path
@@ -28,7 +33,9 @@ def _common(cfg: dict) -> dict:
 # gen_sflux
 # =============================================================================
 
-def submit_gen_sflux(cfg: dict, config_dir: Path):
+def submit_gen_sflux(cfg: dict, config_dir: Path) -> str:
+    """Submit gen_sflux array job. Returns the sbatch job ID string (or ''
+    if nothing was submitted because all months are already complete)."""
     pid    = cfg["project_id"]
     mdir   = model_dir(cfg)
     months = list_months(cfg)
@@ -49,7 +56,7 @@ def submit_gen_sflux(cfg: dict, config_dir: Path):
 
     if not pending:
         print("  All months already complete. Nothing to submit.")
-        return
+        return ""
 
     manifest = write_manifest(pending, logdir / "gen_sflux_months.manifest")
 
@@ -73,16 +80,25 @@ def submit_gen_sflux(cfg: dict, config_dir: Path):
     submitter = SlurmSubmitter(TEMPLATES_DIR)
     print(f"  Submitting gen_sflux: {len(pending)} month(s) "
           f"({pending[0]} -> {pending[-1]})")
-    submitter.render_and_submit("gen_sflux.sbatch", subs,
-                                logdir / "gen_sflux.sbatch")
+    out = submitter.render_and_submit("gen_sflux.sbatch", subs,
+                                      logdir / "gen_sflux.sbatch")
     print(f"  Monitor: squeue -u $USER | Logs: {logdir}/gen_sflux_*.out")
+    return SlurmSubmitter.parse_jobid(out)
 
 
 # =============================================================================
 # plot_sflux
 # =============================================================================
 
-def submit_plot_sflux(cfg: dict, config_dir: Path):
+def submit_plot_sflux(cfg: dict, config_dir: Path,
+                      after_jobid: str = "") -> str:
+    """Submit plot_sflux array job.
+
+    after_jobid: if non-empty, the job is submitted with
+        --dependency=afterok:<after_jobid>
+    so it only starts once the gen_sflux job has completed successfully.
+    Returns the sbatch job ID string (or '' if nothing to submit).
+    """
     pid    = cfg["project_id"]
     mdir   = model_dir(cfg)
     months = list_months(cfg)
@@ -99,9 +115,13 @@ def submit_plot_sflux(cfg: dict, config_dir: Path):
 
     if not pending:
         print("  All months already complete. Nothing to submit.")
-        return
+        return ""
 
     manifest = write_manifest(pending, logdir / "plot_sflux_months.manifest")
+
+    dependency = f"afterok:{after_jobid}" if after_jobid else None
+    if dependency:
+        print(f"  plot_sflux will start after gen_sflux job {after_jobid} completes.")
 
     slurm = cfg.get("slurm", {})
     subs  = _common(cfg)
@@ -120,6 +140,8 @@ def submit_plot_sflux(cfg: dict, config_dir: Path):
 
     submitter = SlurmSubmitter(TEMPLATES_DIR)
     print(f"  Submitting plot_sflux: {len(pending)} month(s)")
-    submitter.render_and_submit("plot_sflux.sbatch", subs,
-                                logdir / "plot_sflux.sbatch")
+    out = submitter.render_and_submit("plot_sflux.sbatch", subs,
+                                     logdir / "plot_sflux.sbatch",
+                                     dependency=dependency)
     print(f"  Monitor: squeue -u $USER | Logs: {logdir}/plot_sflux_*.out")
+    return SlurmSubmitter.parse_jobid(out)

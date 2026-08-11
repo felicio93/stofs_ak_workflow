@@ -148,6 +148,8 @@ def plot_month(cfg: dict, ym: str):
     temp_lim = parse_range(cfg.get("plot_temp_range"))
     salt_lim = parse_range(cfg.get("plot_salt_range"))
     ssh_lim  = parse_range(cfg.get("plot_ssh_range"))
+    uvel_lim = parse_range(cfg.get("plot_uvel_range", [-1, 1]))
+    vvel_lim = parse_range(cfg.get("plot_vvel_range", [-1, 1]))
 
     # Load mesh boundaries once (optional; skip if hgrid.ll not found)
     hgrid_ll = mdir / "fix" / "hgrid.ll"
@@ -193,6 +195,25 @@ def plot_month(cfg: dict, ym: str):
         ds.close(); del ds; gc.collect()
     else:
         print(f"  WARNING: {ssh_file} not found.")
+
+    uv_file = idir / "UV_1.nc"
+    if uv_file.exists():
+        ds = xr.open_dataset(uv_file, decode_times=True)
+        check_missing_days(ds.sizes["time"], ym, "UV")
+        if "water_u" in ds:
+            plot_two_layer_var(ds, "water_u",
+                               "U Current (m/s)", cmap, uvel_lim,
+                               ddir, ym, tmp, boundaries=boundaries)
+        ds.close(); del ds; gc.collect()
+
+        ds = xr.open_dataset(uv_file, decode_times=True)
+        if "water_v" in ds:
+            plot_two_layer_var(ds, "water_v",
+                               "V Current (m/s)", cmap, vvel_lim,
+                               ddir, ym, tmp, boundaries=boundaries)
+        ds.close(); del ds; gc.collect()
+    else:
+        print(f"  WARNING: {uv_file} not found.")
 
     try:
         tmp.rmdir()

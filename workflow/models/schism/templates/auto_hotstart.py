@@ -47,8 +47,33 @@ IS_LAST_MONTH  = {{IS_LAST_MONTH}}      # True for the final month
 NHOT_WRITE     = {{NHOT_WRITE}}         # timestep at which the hotstart is written
 MONTH          = r"{{MONTH}}"           # YYYYMM label (for messages)
 RUN_JOBNAME    = r"{{RUN_JOBNAME}}"     # e.g. R01_01  (matches run_test -J)
-POLL_SECONDS   = {{POLL_SECONDS}}       # polling interval (seconds)
 # =====================================================================================
+
+# Adaptive polling schedule (seconds between status checks).
+# Polls frequently right after job submission, then backs off.
+# After the schedule is exhausted, polls every 3600 s (1 hour) indefinitely.
+_POLL_SCHEDULE = [
+    0,       # check immediately after submit
+    60,      # +1 min
+    60,      # +2 min
+    60,      # +3 min
+    60,      # +4 min
+    60,      # +5 min
+    300,     # +10 min
+    1200,    # +30 min
+    1800,    # +60 min
+]
+_POLL_STEADY = 3600  # 1 hour between checks once schedule is exhausted
+
+
+def _poll_sleep(poll_iter: int):
+    """Sleep the appropriate amount for this poll iteration."""
+    if poll_iter < len(_POLL_SCHEDULE):
+        secs = _POLL_SCHEDULE[poll_iter]
+    else:
+        secs = _POLL_STEADY
+    if secs > 0:
+        time.sleep(secs)
 
 QUEUE_CMD = f"squeue -u {os.environ.get('USER', os.environ.get('LOGNAME', ''))}"
 
@@ -257,10 +282,16 @@ def main():
     # Submit the initial run.
     job_id = submit("run_test")
     previous_step = -1
+    poll_iter = 0
 
     while not run_completed():
-        time.sleep(POLL_SECONDS)
-        print(f"\n{'%'*72}\n  {datetime.now():%Y-%m-%d %H:%M:%S}\n{'%'*72}")
+        _poll_sleep(poll_iter)
+        poll_iter += 1
+        elapsed_mins = sum(_POLL_SCHEDULE[:min(poll_iter, len(_POLL_SCHEDULE))]) // 60
+        if poll_iter > len(_POLL_SCHEDULE):
+            elapsed_mins += (poll_iter - len(_POLL_SCHEDULE)) * _POLL_STEADY // 60
+        print(f"\n{'%'*72}\n  {datetime.now():%Y-%m-%d %H:%M:%S}  "
+              f"(poll #{poll_iter})\n{'%'*72}")
         status = squeue_line_for(RUN_JOBNAME)
         _, full = sh(QUEUE_CMD)
         print(full)
@@ -270,18 +301,21 @@ def main():
             job_id = m.group() if m else job_id  # update job_id when visible
             if re.search(rf"{re.escape(RUN_JOBNAME)}\s+\S+\s+R", status):
                 # RUNNING — hang detection.
-                time.sleep(60)
-                step = mirror_time_step()
-                if step is None:
-                    log(f"{RUN_JOBNAME}: running but mirror.out has no TIME STEP yet.")
-                elif step == previous_step:
-                    log(f"{RUN_JOBNAME}: HANG detected at TIME STEP {step}; cancelling.")
-                    sh(f"scancel {job_id}")
-                    # Loop will find the job gone, see the run is incomplete,
-                    # and the diagnose_failure path will catch or resubmit.
+                # Only check for hangs from poll 4 onward (give the run time
+                # to start writing mirror.out before declaring it hung).
+                if poll_iter >= 4:
+                    step = mirror_time_step()
+                    if step is None:
+                        log(f"{RUN_JOBNAME}: running but mirror.out has no TIME STEP yet.")
+                    elif step == previous_step:
+                        log(f"{RUN_JOBNAME}: HANG detected at TIME STEP {step}; cancelling.")
+                        sh(f"scancel {job_id}")
+                        # Loop will find the job gone, diagnose or resubmit.
+                    else:
+                        log(f"{RUN_JOBNAME}: advancing, TIME STEP {step}.")
+                        previous_step = step
                 else:
-                    log(f"{RUN_JOBNAME}: advancing, TIME STEP {step}.")
-                    previous_step = step
+                    log(f"{RUN_JOBNAME}: running (job {job_id}), early poll — skipping hang check.")
             else:
                 log(f"{RUN_JOBNAME}: queued (job {job_id}), waiting ...")
         else:

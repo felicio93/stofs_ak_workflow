@@ -68,8 +68,6 @@ INPUT_LINKS = [
 # it actually needs with status='replace', so extra empty files are harmless.
 OUTPUT_PLACEHOLDERS = [f"staout_{i}" for i in range(1, 21)] + ["flux.out"]
 
-POLL_SECONDS = 120
-
 
 # =============================================================================
 # fix/ freshness check
@@ -343,7 +341,6 @@ def _setup_month(cfg: dict, mdir: Path, ym: str, month_index: int,
         "NHOT_WRITE":     nhot_write,
         "MONTH":          ym,
         "RUN_JOBNAME":    run_jobname,
-        "POLL_SECONDS":   POLL_SECONDS,
     })
 
     (rdir / "setup_run.done").touch()

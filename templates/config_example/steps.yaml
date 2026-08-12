@@ -48,12 +48,10 @@ submit_run: false   # Run auto_hotstart.py month-by-month, chaining hotstarts.
                     # Blocking — launch inside screen/tmux (see tutorial).
 
 # =============================================================================
-# Phase 5 — Post-processing
+# Phase 5 — Post-processing (NOT YET IMPLEMENTED — placeholders)
 # Run with:  stofs-ak --run --phase postprocess --config <config_dir>
 # =============================================================================
-plot_outputs:    false   # SCHISM field GIFs (elevation, T, S, velocity, etc.)
-                         # Variables and layers configured in postprocess.yaml
-                         # (SLURM array, one job per month)
-station_extract: false   # Extract model time series at CO-OPS/NDBC stations (planned)
-skill_metrics:   false   # RMSE, bias, correlation, skill vs observations (planned)
-compare_sst:     false   # Compare modeled SST vs satellite LEO L3S (planned)
+plot_outputs:    false   # Animated maps of water level / currents / SSS / SST
+station_extract: false   # Extract model time series at CO-OPS/NDBC stations
+skill_metrics:   false   # RMSE, bias, correlation, skill vs observations
+compare_sst:     false   # Compare modeled SST vs satellite (GOES/VIIRS/OI-SST)

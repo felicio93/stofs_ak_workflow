@@ -48,8 +48,6 @@ slurm:
   gen_sflux_mem: "8G"        # memory per gen_sflux task
   plot_sflux_walltime: "00:30:00"
   plot_sflux_mem: "16G"      # memory per plot_sflux task
-  plot_outputs_walltime: "02:00:00"
-  plot_outputs_mem: "32G"    # memory per plot_outputs task (reads model NetCDFs)
 
 # -----------------------------------------------------------------------------
 # SCHISM executable names (must be present in M{id}/bin/).

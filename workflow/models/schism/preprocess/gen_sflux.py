@@ -234,13 +234,11 @@ def gen_sflux_month(cfg: dict, ym: str):
             print(f"  {day_str}: air+prc+rad written (stack {stack})")
 
     # Write sflux_inputs.txt
-    start = date(year, month, 1)
+    # Note: start_year/month/day/hour and utc_start were removed from the
+    # sflux_inputs namelist in newer SCHISM versions (they are commented out
+    # in sflux_9c.F90). Including them causes a Fortran namelist read error
+    # (forrtl: severe 19). Only include the variables still in the namelist.
     sflux_inputs = f"""&sflux_inputs
-start_year  = {start.year}
-start_month = {start.month}
-start_day   = {start.day}
-start_hour  = 0.
-utc_start   = 0.
 air_1_relative_weight = 1.
 air_1_max_window_hours = 120.
 air_1_fail_if_missing = .true.

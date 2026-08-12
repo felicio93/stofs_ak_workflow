@@ -57,7 +57,16 @@ INPUT_LINKS = [
 ]
 
 # Empty placeholder files SCHISM expects to find under outputs/ at startup.
-OUTPUT_PLACEHOLDERS = [f"staout_{i}" for i in range(1, 10)] + ["flux.out"]
+# SCHISM opens staout_1 .. staout_{nvar_sta+1} where:
+#   nvar_sta = 9 + ntracers - 2
+#   ntracers = 2 minimum (T and S)  ->  nvar_sta = 9, loop runs 1..10
+# With additional tracer modules (e.g. nmarsh_types > 0) ntracers increases
+# and SCHISM expects more staout files.
+#
+# We create placeholders staout_1..staout_20 to cover common configurations
+# (T+S only through T+S+~11 tracer variables). SCHISM opens only the ones
+# it actually needs with status='replace', so extra empty files are harmless.
+OUTPUT_PLACEHOLDERS = [f"staout_{i}" for i in range(1, 21)] + ["flux.out"]
 
 POLL_SECONDS = 120
 

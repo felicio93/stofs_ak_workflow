@@ -116,33 +116,73 @@ def run_completed():
     return last is not None and "Run completed successfully" in last
 
 
-def fatal_error():
-    """Return the content of outputs/fatal.error if SCHISM wrote a fatal
-    error, otherwise return None.
+def job_exit_code(job_id: str) -> int:
+    """Query sacct for the exit code of a completed SLURM job.
 
-    SCHISM writes 'outputs/fatal.error' when it aborts with a configuration
-    or input error (e.g. ABORT: INIT: nmarsh_types<=0). This is distinct from
-    a time-limit or node failure, which does not produce fatal.error. If this
-    file is present and non-empty we must NOT resubmit — the user needs to fix
-    the input and re-run manually.
-
-    Also scan 'myout' (the SBATCH -o log) for ABORT lines as a secondary
-    signal, since early crashes may not flush fatal.error before the job dies.
+    Returns the integer exit code, or -1 if sacct is unavailable or the
+    job is not found (treated as unknown/pending).
+    A non-zero code means the job exited abnormally (Fortran error, OOM,
+    signal, etc.) and should NOT be blindly resubmitted.
     """
+    rc, out = sh(f"sacct -n -X -o ExitCode -j {job_id}")
+    if rc != 0 or not out.strip():
+        return -1
+    # sacct ExitCode field is "exit_code:signal" e.g. "19:0" or "0:0"
+    # Take the first non-empty token and split on ':'
+    for token in out.strip().splitlines():
+        token = token.strip()
+        if token:
+            try:
+                return int(token.split(":")[0])
+            except ValueError:
+                return -1
+    return -1
+
+
+def diagnose_failure(job_id: str) -> str:
+    """Return a human-readable failure description for a crashed job.
+
+    Checks (in order):
+      1. outputs/fatal.error  — SCHISM-written abort file
+      2. err2.out             — SBATCH -e log (Fortran/MPI stack traces)
+      3. myout                — SBATCH -o log (ABORT keyword scan)
+      4. sacct exit code      — non-zero means a crash of some kind
+
+    Returns a string describing the failure, or an empty string if nothing
+    definitive is found (caller should still not resubmit if exit code != 0).
+    """
+    # 1. SCHISM fatal.error
     fe = Path(RUNDIR) / "outputs" / "fatal.error"
     if fe.exists():
         txt = fe.read_text(errors="ignore").strip()
         if txt:
-            return txt
+            return f"SCHISM fatal.error:\n{txt}"
 
-    # Secondary: scan myout for any ABORT line
+    # 2. Fortran/MPI error in err2.out (SBATCH -e)
+    err_log = Path(RUNDIR) / "err2.out"
+    if err_log.exists():
+        lines = err_log.read_text(errors="ignore").splitlines()
+        # Look for "forrtl:", "ABORT", "srun: error" as diagnostic lines
+        diag = [l for l in lines
+                if any(k in l for k in ("forrtl:", "ABORT", "srun: error",
+                                        "severe", "error (78)"))]
+        if diag:
+            snippet = "\n".join(diag[:6])
+            return f"Fortran/MPI error in err2.out:\n{snippet}"
+
+    # 3. ABORT keyword in myout (SBATCH -o)
     myout = Path(RUNDIR) / "myout"
     if myout.exists():
         for line in myout.read_text(errors="ignore").splitlines():
             if "ABORT" in line:
-                return line.strip()
+                return f"ABORT in myout: {line.strip()}"
 
-    return None
+    # 4. Fall back to exit code
+    code = job_exit_code(job_id)
+    if code > 0:
+        return f"Job {job_id} exited with non-zero code {code} (no further details found)."
+
+    return ""
 
 
 def combine_and_chain():
@@ -215,7 +255,7 @@ def main():
         sys.exit(1)
 
     # Submit the initial run.
-    submit("run_test")
+    job_id = submit("run_test")
     previous_step = -1
 
     while not run_completed():
@@ -226,8 +266,8 @@ def main():
         print(full)
 
         if status is not None:
-            job_id = re.search(r"\b\d+\b", status)
-            job_id = job_id.group() if job_id else "?"
+            m = re.search(r"\b\d+\b", status)
+            job_id = m.group() if m else job_id  # update job_id when visible
             if re.search(rf"{re.escape(RUN_JOBNAME)}\s+\S+\s+R", status):
                 # RUNNING — hang detection.
                 time.sleep(60)
@@ -238,7 +278,7 @@ def main():
                     log(f"{RUN_JOBNAME}: HANG detected at TIME STEP {step}; cancelling.")
                     sh(f"scancel {job_id}")
                     # Loop will find the job gone, see the run is incomplete,
-                    # and resubmit from the original hotstart.
+                    # and the diagnose_failure path will catch or resubmit.
                 else:
                     log(f"{RUN_JOBNAME}: advancing, TIME STEP {step}.")
                     previous_step = step
@@ -249,20 +289,35 @@ def main():
             if run_completed():
                 break
 
-            # Check for a fatal (non-recoverable) error before deciding
-            # whether to resubmit.
-            err = fatal_error()
-            if err is not None:
-                log(f"FATAL ERROR detected — SCHISM aborted with a configuration")
-                log(f"or input error. Do NOT resubmit until the input is fixed.")
-                log(f"Error message:")
-                for line in err.splitlines()[:10]:
+            # Diagnose the failure before deciding whether to resubmit.
+            # job_id may be None if the job never appeared in the poll loop
+            # (e.g. it started and finished between polls). Use "?" as a
+            # fallback — sacct will return nothing and we fall back to file checks.
+            diag = diagnose_failure(job_id if job_id != "?" else "0")
+            exit_code = job_exit_code(job_id if job_id != "?" else "0")
+
+            if diag:
+                log("ERROR: SCHISM run failed with a non-recoverable error.")
+                log("Do NOT resubmit until the problem is fixed.")
+                log("Details:")
+                for line in diag.splitlines()[:12]:
                     log(f"  {line}")
-                log(f"Full error: {Path(RUNDIR) / 'outputs' / 'fatal.error'}")
-                log(f"SLURM log:  {Path(RUNDIR) / 'myout'}")
-                log(f"Fix the input, delete run.done if it exists, and re-run:")
-                log(f"  stofs-ak --run --phase run --only submit_run --config <cfg>")
+                log(f"SLURM output log: {Path(RUNDIR) / 'myout'}")
+                log(f"SLURM error log:  {Path(RUNDIR) / 'err2.out'}")
+                log(f"SCHISM abort:     {Path(RUNDIR) / 'outputs' / 'fatal.error'}")
+                log("Fix the input, then re-run:")
+                log("  stofs-ak --run --phase run --only submit_run --config <cfg>")
                 sys.exit(1)
+
+            if exit_code > 0:
+                # Non-zero exit but no diagnostic detail found (unexpected).
+                log(f"WARNING: job {job_id} exited with code {exit_code} and "
+                    f"no diagnostic detail was found.")
+                log("This is likely a time-limit, node failure, or OOM.")
+                log("Resubmitting from hotstart.nc (full month re-run).")
+                previous_step = -1
+                submit("run_test")
+                continue
 
             previous_step = -1
             log(f"{RUN_JOBNAME}: not in queue and run incomplete — resubmitting "

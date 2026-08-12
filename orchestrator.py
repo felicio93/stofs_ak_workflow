@@ -3,9 +3,9 @@ orchestrator.py
 ===============
 Main entry point / CLI for the STOFS-AK modeling workflow.
 
-Selects a model driver from project.yaml `model_type` and dispatches one of
-three phases (preprocess / run / postprocess). Model-specific step logic lives
-in the driver (workflow/models/<model>/driver.py), not here.
+Selects a model driver from project.yaml `model_type` and dispatches one or
+more phases (preprocess / run / postprocess / all). Model-specific step logic
+lives in the driver (workflow/models/<model>/driver.py), not here.
 
 Usage
 -----
@@ -21,9 +21,11 @@ Usage
   # Run a single step regardless of steps.yaml flags
   stofs-ak --run --only download_hycom --config /path/to/M01/config
 
-  # Later phases (stubs for now)
-  stofs-ak --run --phase run         --config /path/to/M01/config
-  stofs-ak --run --phase postprocess --config /path/to/M01/config
+  # Run Phase 4 (populate run dirs)
+  stofs-ak --run --phase run --config /path/to/M01/config
+
+  # Run ALL phases in sequence (preprocess -> run -> postprocess)
+  stofs-ak --run --phase all --config /path/to/M01/config
 
 If installed via `pip install -e .`, the `stofs-ak` console script is
 available; otherwise invoke as `python orchestrator.py ...`.
@@ -91,9 +93,50 @@ def validate_config(cfg: dict):
         sys.exit(1)
 
 
-# =============================================================================
-# --init: build project directory structure
-# =============================================================================
+# Phase 4 steps in steps.yaml — if any are enabled but --phase preprocess
+# is active (the default), warn the user so they know to pass --phase run.
+RUN_PHASE_STEPS      = {"setup_run", "submit_run"}
+POSTPROCESS_STEPS    = {"plot_outputs", "station_extract",
+                        "skill_metrics", "compare_sst"}
+
+
+def _phase_mismatch_warnings(cfg: dict, phase: str, only: str):
+    """Warn when steps belonging to a different phase are enabled."""
+    if only is not None:
+        return  # --only is explicit; no ambiguity
+
+    if phase == "preprocess":
+        run_on  = [s for s in RUN_PHASE_STEPS   if cfg.get(s, False)]
+        post_on = [s for s in POSTPROCESS_STEPS if cfg.get(s, False)]
+        if run_on or post_on:
+            print(f"\n  {'!'*58}")
+            print("  WARNING: some steps in your steps.yaml belong to a")
+            print("  different phase and will NOT run with the current command.")
+            if run_on:
+                print(f"    Phase 4 steps enabled but ignored: {', '.join(sorted(run_on))}")
+                print("    Run them with:  stofs-ak --run --phase run --config <cfg>")
+            if post_on:
+                print(f"    Phase 5 steps enabled but ignored: {', '.join(sorted(post_on))}")
+                print("    Run them with:  stofs-ak --run --phase postprocess --config <cfg>")
+            print(f"  {'!'*58}\n")
+
+    elif phase == "run":
+        pre_on = [s for s in cfg
+                  if s not in RUN_PHASE_STEPS | POSTPROCESS_STEPS
+                  and s not in ("project_id", "project_dir", "start_date",
+                                "end_date", "grouping", "slurm", "executables",
+                                "model_type", "conda_base", "conda_envs",
+                                "lon_min", "lon_max", "lat_min", "lat_max",
+                                "lon_reference", "estuary_depth_threshold",
+                                "chain_hotstart")
+                  and cfg.get(s) is True]
+        if pre_on:
+            print(f"\n  {'!'*58}")
+            print("  NOTE: some preprocessing steps are enabled in steps.yaml")
+            print("  but will not run under --phase run:")
+            print(f"    {', '.join(sorted(pre_on))}")
+            print("  Run them with:  stofs-ak --run --config <cfg>")
+            print(f"  {'!'*58}\n")
 
 def init_project(cfg: dict):
     """Create the full project directory tree."""
@@ -172,32 +215,41 @@ def init_project(cfg: dict):
 
 
 # =============================================================================
-# --run: dispatch a phase to the model driver
+# --init: build project directory structure
+# =============================================================================
+
+# =============================================================================
+# --run: dispatch a phase (or all phases) to the model driver
 # =============================================================================
 
 def run_workflow(cfg: dict, config_dir: Path, phase: str = "preprocess",
                  only: str = None):
-    """Build the model driver from cfg['model_type'] and run one phase.
+    """Build the model driver from cfg['model_type'] and run one or all phases.
 
-    phase is one of: preprocess (default), run, postprocess.
+    phase is one of:
+      preprocess  (default) — data downloads + SCHISM input generation
+      run                   — populate run dirs + launch monthly runs
+      postprocess           — output plots, validation, skill metrics
+      all                   — preprocess -> run -> postprocess in sequence
     """
+    _phase_mismatch_warnings(cfg, phase, only)
+
     driver = make_driver(cfg, config_dir)
+    phases = ["preprocess", "run", "postprocess"] if phase == "all" else [phase]
 
-    print(f"\n{'='*60}")
-    print(f"  {driver.name} workflow -- project M{cfg['project_id']} -- phase: {phase}")
-    if only:
-        print(f"  (restricted to step: {only})")
-    print(f"{'='*60}\n")
+    for ph in phases:
+        print(f"\n{'='*60}")
+        print(f"  {driver.name} workflow -- project M{cfg['project_id']} -- phase: {ph}")
+        if only:
+            print(f"  (restricted to step: {only})")
+        print(f"{'='*60}\n")
 
-    if phase == "preprocess":
-        driver.preprocess(only=only)
-    elif phase == "run":
-        driver.run(only=only)
-    elif phase == "postprocess":
-        driver.postprocess(only=only)
-    else:
-        print(f"ERROR: unknown phase '{phase}'")
-        sys.exit(1)
+        if ph == "preprocess":
+            driver.preprocess(only=only)
+        elif ph == "run":
+            driver.run(only=only)
+        elif ph == "postprocess":
+            driver.postprocess(only=only)
 
     print(f"\n{'='*60}")
     print("  Workflow complete.")
@@ -233,8 +285,14 @@ def main():
     )
     parser.add_argument(
         "--phase", default="preprocess",
-        choices=("preprocess", "run", "postprocess"),
-        help="Which phase to run with --run (default: preprocess)"
+        choices=("preprocess", "run", "postprocess", "all"),
+        help=(
+            "Which phase to run with --run (default: preprocess). "
+            "preprocess = download + SCHISM inputs; "
+            "run = populate run dirs + launch monthly runs; "
+            "postprocess = output plots + validation (placeholder); "
+            "all = preprocess -> run -> postprocess in sequence"
+        )
     )
     parser.add_argument(
         "--only", default=None,

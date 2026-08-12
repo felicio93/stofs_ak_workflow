@@ -20,7 +20,23 @@ to steps.yaml under the "Phase 5" block and dispatch them here.
 
 
 def postprocess_phase(cfg: dict, config_dir, only: str = None):
-    raise NotImplementedError(
-        "SCHISM post-processing (Phase 5) is not implemented yet. "
-        "See workflow/models/schism/postprocess/__init__.py for the plan."
-    )
+    """Dispatch Phase 5 post-processing steps (placeholder).
+
+    All Phase 5 flags in steps.yaml default to false. When any are enabled
+    this function will be expanded to dispatch plot_outputs, station_extract,
+    skill_metrics, and compare_sst. Until then it silently skips everything
+    so that --phase all and --phase postprocess do not crash.
+    """
+    postprocess_steps = ("plot_outputs", "station_extract",
+                         "skill_metrics", "compare_sst")
+    any_enabled = any(cfg.get(s, False) for s in postprocess_steps)
+    if any_enabled or only in postprocess_steps:
+        print("  NOTE: Phase 5 post-processing is not yet implemented.")
+        print("  The following steps are planned but will be skipped:")
+        for s in postprocess_steps:
+            state = "[ENABLED]" if cfg.get(s, False) else "[disabled]"
+            print(f"    {state} {s}")
+        print("  See workflow/models/schism/postprocess/__init__.py for the plan.")
+    else:
+        for s in postprocess_steps:
+            print(f"[SKIP] {s}")

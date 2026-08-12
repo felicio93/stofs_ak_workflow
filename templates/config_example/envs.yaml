@@ -30,3 +30,7 @@ conda_envs:
   gen_sflux:      swf_main
   plot_sflux:     swf_plot
   plotting_debug: swf_plot
+  plot_outputs:   swf_plot   # Phase 5 field output GIFs
+  compare_sst:    swf_plot   # Phase 5 model-vs-satellite SST
+  diag_run_plots: swf_plot   # Phase 5 per-stack diagnostics (during run)
+  download_sst:   swf_main   # Phase 5 satellite SST download (DTN + NCO)

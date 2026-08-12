@@ -48,6 +48,17 @@ slurm:
   gen_sflux_mem: "8G"        # memory per gen_sflux task
   plot_sflux_walltime: "00:30:00"
   plot_sflux_mem: "16G"      # memory per plot_sflux task
+  # Phase 5 postprocessing:
+  plot_outputs_walltime: "02:00:00"
+  plot_outputs_mem: "32G"    # per output-file frame task (reads model NetCDFs)
+  plot_outputs_gif_walltime: "01:00:00"
+  plot_outputs_gif_mem: "32G"    # serial GIF assembly (loads all frames)
+  compare_sst_walltime: "01:00:00"
+  compare_sst_mem: "32G"     # per-day model daily-mean + satellite frame
+  compare_sst_gif_walltime: "00:30:00"
+  compare_sst_gif_mem: "16G"
+  diag_run_walltime: "00:30:00"
+  diag_run_mem: "16G"        # per-stack diagnostic frames during the run
 
 # -----------------------------------------------------------------------------
 # SCHISM executable names (must be present in M{id}/bin/).

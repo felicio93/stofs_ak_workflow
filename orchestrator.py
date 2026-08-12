@@ -97,7 +97,8 @@ def validate_config(cfg: dict):
 # is active (the default), warn the user so they know to pass --phase run.
 RUN_PHASE_STEPS      = {"setup_run", "submit_run"}
 POSTPROCESS_STEPS    = {"plot_outputs", "station_extract",
-                        "skill_metrics", "compare_sst"}
+                        "skill_metrics", "compare_sst",
+                        "download_sst", "diag_run_plots"}
 
 
 def _phase_mismatch_warnings(cfg: dict, phase: str, only: str):

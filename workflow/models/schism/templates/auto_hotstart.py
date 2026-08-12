@@ -47,6 +47,10 @@ IS_LAST_MONTH  = {{IS_LAST_MONTH}}      # True for the final month
 NHOT_WRITE     = {{NHOT_WRITE}}         # timestep at which the hotstart is written
 MONTH          = r"{{MONTH}}"           # YYYYMM label (for messages)
 RUN_JOBNAME    = r"{{RUN_JOBNAME}}"     # e.g. R01_01  (matches run_test -J)
+
+# --- diagnostic-plot hook (Phase 5 diag_run_plots, dispatched during the run) ---
+DIAG_ENABLED   = {{DIAG_ENABLED}}       # True/False: submit diag_run jobs for new stacks
+DIAG_SBATCH    = r"{{DIAG_SBATCH}}"     # path to the rendered diag_run.sbatch (or "")
 # =====================================================================================
 
 # Adaptive polling schedule (seconds between status checks).
@@ -139,6 +143,46 @@ def mirror_time_step():
 def run_completed():
     last = mirror_last_line()
     return last is not None and "Run completed successfully" in last
+
+
+# --- diagnostic-plot dispatch (diag_run_plots) --------------------------------
+_diag_submitted = set()   # stacks already handed to a diag_run job
+
+
+def dispatch_diag_plots(run_finished: bool = False):
+    """Submit diag_run jobs for newly-completed output stacks.
+
+    A stack out2d_N.nc is 'complete' once out2d_{N+1}.nc exists (SCHISM writes
+    stacks sequentially), or — for the final stack — once the run has finished.
+    Called on each poll when DIAG_ENABLED. Idempotent: each stack is submitted
+    at most once (tracked in _diag_submitted; the diag job itself also writes a
+    diag_<N>.done marker so re-launches of auto_hotstart won't duplicate work).
+    """
+    if not DIAG_ENABLED or not DIAG_SBATCH:
+        return
+    outdir = Path(RUNDIR) / "outputs"
+    stacks = sorted(
+        (int(p.stem.split("_")[1]) for p in outdir.glob("out2d_*.nc")),
+    )
+    if not stacks:
+        return
+    max_stack = max(stacks)
+    for n in stacks:
+        if n in _diag_submitted:
+            continue
+        # Complete if a later stack exists, or the run has finished.
+        is_complete = (n < max_stack) or run_finished
+        if not is_complete:
+            continue
+        # Submit the diag job for stack n (the diag script is idempotent via
+        # its own diag_<n>.done marker under D{ID}).
+        rc, out = sh(f"sbatch --export=ALL,DIAG_MONTH={MONTH},DIAG_STACK={n} "
+                     f"{DIAG_SBATCH}")
+        if rc == 0:
+            log(f"diag_run_plots: submitted stack {n}  ({out})")
+            _diag_submitted.add(n)
+        else:
+            log(f"diag_run_plots: sbatch failed for stack {n}: {out}")
 
 
 def job_exit_code(job_id: str) -> int:
@@ -296,6 +340,9 @@ def main():
         _, full = sh(QUEUE_CMD)
         print(full)
 
+        # Fire diagnostic plots for any newly-completed output stacks.
+        dispatch_diag_plots(run_finished=run_completed())
+
         if status is not None:
             m = re.search(r"\b\d+\b", status)
             job_id = m.group() if m else job_id  # update job_id when visible
@@ -359,6 +406,9 @@ def main():
             submit("run_test")
 
     log(f"{RUN_JOBNAME}: run completed successfully.")
+    # Final diagnostic pass: the last output stack is only 'complete' now that
+    # the run has finished (no out2d_{N+1} will ever appear).
+    dispatch_diag_plots(run_finished=True)
     combine_and_chain()
     log(f"=== auto_hotstart for {MONTH} done ===")
 

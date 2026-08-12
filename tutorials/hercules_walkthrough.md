@@ -610,13 +610,79 @@ stofs-ak --run --phase run --only submit_run --config $CFG
 
 ## 10. Phase 5 — Post-processing
 
-**Not yet implemented** (placeholder). When ready:
+All Phase 5 behavior is configured in `postprocess.yaml`. Copy the template
+to your config directory (one-time):
 
 ```bash
-stofs-ak --run --phase postprocess --config $CFG
+cp $WF/workflow/models/schism/templates/config/postprocess.yaml $CFG/postprocess.yaml
 ```
 
-The step flags already exist in `steps.yaml` (Phase 5 block).
+Edit it to choose variables, layers, color scales, temporal cadence, the SST
+matching mode, and frame retention. All plots overlay the 200 m and 2000 m
+isobaths.
+
+### Step 10a — diag_run_plots (per-stack diagnostics DURING the run)
+
+Enable **before** `setup_run` so the hook is baked into each run directory's
+`auto_hotstart.py`. As each SCHISM output stack (`out2d_N.nc` + its 3D
+siblings) finishes, `auto_hotstart.py` submits a small SLURM job that writes
+one diagnostic image per timestep per variable to
+`D01/D01_YYYYMM/diag/`. No GIFs — this is for watching run health live.
+
+```bash
+# In steps.yaml: diag_run_plots: true   (set before running setup_run)
+stofs-ak --run --phase run --only setup_run  --config $CFG
+stofs-ak --run --phase run --only submit_run --config $CFG   # inside screen/tmux
+# Watch:
+ls $SWF_PROJ/M01/D01/D01_202512/diag/
+```
+
+### Step 10b — download_sst (DTN, satellite SST)
+
+Downloads the LEO L3S-DY daily satellite SST and subsets it to your domain,
+one file per day, into `M01/obs/sst_leo/`.
+
+```bash
+ssh hercules-dtn.hpc.msstate.edu
+conda activate swf_main
+# In steps.yaml: download_sst: true
+stofs-ak --run --phase postprocess --only download_sst --config $CFG \
+    2>&1 | tee $SWF_PROJ/M01/logs/download_sst_$(date +%Y%m%d_%H%M%S).log
+# Verify:
+ncdump -h $SWF_PROJ/M01/obs/sst_leo/leosst_20251201.nc   # vars: lon, lat, sst (degC)
+```
+
+### Step 10c — plot_outputs (full-run field GIFs)
+
+Two SLURM jobs are submitted: a parallel array (one task per output file) that
+renders frames, and a serial job (`afterok`) that assembles per-variable GIFs
+into `P01/P01_plot_outputs/`.
+
+```bash
+conda activate swf_main
+# In steps.yaml: plot_outputs: true
+stofs-ak --run --phase postprocess --only plot_outputs --config $CFG
+squeue -u $USER
+ls $SWF_PROJ/M01/P01/P01_plot_outputs/*.gif
+```
+
+### Step 10d — compare_sst (model vs satellite SST GIF)
+
+Requires `download_sst` to have run. Parallel per-day frames (model daily-mean
+SST vs satellite, two panels) + serial GIF assembly into `P01/P01_compare_sst/`.
+
+```bash
+conda activate swf_main
+# In steps.yaml: compare_sst: true
+stofs-ak --run --phase postprocess --only compare_sst --config $CFG
+squeue -u $USER
+ls $SWF_PROJ/M01/P01/P01_compare_sst/compare_sst.gif
+```
+
+> **SST matching:** the LEO L3S-DY product is a daily collated field, so the
+> model side is a **daily mean** of SCHISM surface temperature by default
+> (`sst_match: daily_mean`). Switch to `nearest` in `postprocess.yaml` to use
+> the model timestep closest to 12:00Z instead.
 
 ---
 
@@ -653,6 +719,12 @@ stofs-ak --run --only download_hycom --config $CFG
 | `submit_run` (auto_hotstart loop) | 4 | login | swf_main | no |
 | SCHISM MPI run | 4 | compute | none (MPI) | no |
 | `run_comb` (combine hotstart) | 4 | compute | none (Fortran) | no |
+| `diag_run_plots` jobs (during run) | 5 | compute | swf_plot (auto) | no |
+| `download_sst` | 5 | DTN | swf_main | yes |
+| `plot_outputs` frames | 5 | compute | swf_plot (auto) | no |
+| `plot_outputs` GIF assembly | 5 | compute | swf_plot (auto) | no |
+| `compare_sst` frames | 5 | compute | swf_plot (auto) | no |
+| `compare_sst` GIF assembly | 5 | compute | swf_plot (auto) | no |
 
 ---
 
@@ -676,6 +748,10 @@ stofs-ak --run --only download_hycom --config $CFG
 | `gen_nudge` | Skips months where `gen_nudge.done` exists |
 | `setup_run` | Skips months where `setup_run.done` exists |
 | `submit_run` | Skips months where `run.done` exists; resumes from first pending month |
+| `diag_run_plots` | Skips stacks where `D01_YYYYMM/diag/diag_<N>.done` exists |
+| `download_sst` | Skips days where `obs/sst_leo/leosst_YYYYMMDD.nc` exists |
+| `plot_outputs` | Re-submit; frames named by variable + timestamp; GIF in `P01_plot_outputs/` |
+| `compare_sst` | Re-submit; frames in `P01_compare_sst/frames/`; GIF in `P01_compare_sst/` |
 
 ---
 

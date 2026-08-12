@@ -167,12 +167,18 @@ def make_frame_tripcolor(triangulation, values, title, out_path,
                          is_log=False, cbar_km=False,
                          cbar_ticks=None, cbar_extend_minmax=False,
                          padding_lon=5.0, padding_lat=2.0,
-                         dpi=300, quality=92, boundaries=None):
+                         dpi=300, quality=92, boundaries=None,
+                         depth=None, isobaths=None):
     """
     Save one JPEG frame using tripcolor (for mesh/unstructured grids).
     Same style as make_frame: vertical colorbar on the right.
     Extent uses mesh node bounds + padding (consistent with make_frame).
     Optional mesh boundary overlay.
+
+    depth / isobaths:
+        If both are provided, node-based `depth` (same length as the mesh
+        nodes) is contoured at the given `isobaths` levels (e.g. [200, 2000])
+        and drawn as thin black lines on top of the field.
     """
     mesh_lon_min = float(triangulation.x.min())
     mesh_lon_max = float(triangulation.x.max())
@@ -222,6 +228,15 @@ def make_frame_tripcolor(triangulation, values, title, out_path,
                      transform=cbar.ax.transAxes)
 
     _draw_boundaries(ax, boundaries)
+
+    # Depth isobath overlay (e.g. 200 & 2000 m).
+    if depth is not None and isobaths:
+        try:
+            ax.tricontour(triangulation, np.asarray(depth),
+                          levels=list(isobaths),
+                          colors="k", linewidths=0.4, alpha=0.6, zorder=4)
+        except Exception:
+            pass  # never let an isobath failure kill a frame
 
     ax.set_xlim(mesh_lon_min - padding_lon, mesh_lon_max + padding_lon)
     ax.set_ylim(mesh_lat_min - padding_lat, mesh_lat_max + padding_lat)

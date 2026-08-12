@@ -38,7 +38,7 @@ model **driver** selected from `project.yaml` (`model_type`):
 |-------|-----|--------|-------------|
 | **Preprocess** | `stofs-ak --run` (default) | ✅ Implemented for SCHISM | Download forcing, generate all model inputs |
 | **Run** | `stofs-ak --run --phase run` | ✅ Implemented for SCHISM | Set up run dirs, launch monthly runs, chain hotstarts automatically |
-| **Postprocess** | `stofs-ak --run --phase postprocess` | 🚧 Placeholder | Plot outputs, validate against observations, skill metrics |
+| **Postprocess** | `stofs-ak --run --phase postprocess` | ✅ Field GIFs + SST comparison | Field output GIFs, model-vs-satellite SST; station/skill validation planned |
 
 Within the preprocessing phase, steps run in different execution contexts:
 
@@ -444,6 +444,32 @@ stofs-ak --run --phase postprocess --config <config_dir>
 > auto-launch month N+1; `false` = stop after each month (useful for testing).
 > See `tutorials/hercules_walkthrough.md` for the complete Phase 4 walkthrough.
 
+### Typical postprocess sequence (Phase 5)
+
+Configured in `postprocess.yaml` (variables, layers, cadence, color scales,
+frame retention). All plots overlay the 200 m and 2000 m isobaths.
+
+1. **`diag_run_plots`** (during the run, **enable before `setup_run`**):
+   per-output-stack diagnostic frames (SSH/SST/SSS/U/V by default) written to
+   `D{ID}/D{ID}_YYYYMM/diag/` as each stack is written. `auto_hotstart.py`
+   submits a small SLURM job per completed stack. Static images, no GIF —
+   for watching run health as it progresses.
+2. **`download_sst`** (DTN): download + domain-subset the LEO L3S-DY daily
+   satellite SST into `M{ID}/obs/sst_leo/`.
+3. **`plot_outputs`**: full-run field GIFs (any configured variable/layer,
+   every-X-hours cadence). Two-stage SLURM — parallel per-file frames, then a
+   serial GIF-assembly job (`--dependency=afterok`). Output in `P{ID}/`.
+4. **`compare_sst`**: model (daily-mean SST) vs satellite two-panel GIF over a
+   date range. Same two-stage SLURM pattern. Needs `download_sst` first.
+
+```bash
+# Diagnostics: enable diag_run_plots in steps.yaml BEFORE setup_run.
+# Then the standard Phase 5 steps:
+stofs-ak --run --phase postprocess --only download_sst  --config <cfg>   # DTN
+stofs-ak --run --phase postprocess --only plot_outputs  --config <cfg>
+stofs-ak --run --phase postprocess --only compare_sst   --config <cfg>
+```
+
 ---
 
 ## Adding a New Model
@@ -479,7 +505,11 @@ stofs-ak --run --phase postprocess --config <config_dir>
 | `gen_hotstart` / `gen_3Dth` / `gen_nudge` | 3 | ✅ Done |
 | `setup_run` (populate R dirs, job cards, auto_hotstart.py) | 4 | ✅ Done |
 | `submit_run` (blocking month-by-month run + hotstart chaining) | 4 | ✅ Done |
-| Post-processing (`plot_outputs`, `station_extract`, `skill_metrics`, `compare_sst`) | 5 | 🚧 Placeholder |
+| `diag_run_plots` (per-stack diagnostic frames during run) | 5 | ✅ Done |
+| `download_sst` (LEO L3S-DY satellite SST download + subset) | 5 | ✅ Done |
+| `plot_outputs` (full-run field GIFs) | 5 | ✅ Done |
+| `compare_sst` (model vs satellite SST GIF) | 5 | ✅ Done |
+| `station_extract` / `skill_metrics` | 5 | 🚧 Planned |
 | SCHISM+WWM / SCHISM+MICE / UFS-Coastal drivers | — | 🚧 Placeholder |
 
 ---

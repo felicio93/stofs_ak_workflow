@@ -35,9 +35,11 @@ from datetime import datetime
 from pathlib import Path
 
 from workflow.core.config import list_months, model_dir
+from workflow.core.environment import env_python
 
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
 AUTO_HOTSTART_TEMPLATE = TEMPLATE_DIR / "auto_hotstart.py"
+DIAG_SBATCH_TEMPLATE   = TEMPLATE_DIR / "slurm" / "diag_run.sbatch"
 
 # Static files symlinked from fix/. Any that are missing are reported and
 # skipped (some meshes may not use every optional .gr3).
@@ -214,6 +216,34 @@ def _render_auto_hotstart(run_dir: Path, subs: dict):
     out.chmod(out.stat().st_mode | stat.S_IXUSR)
 
 
+def _render_diag_sbatch(cfg: dict, mdir: Path, rdir: Path, config_dir: Path) -> Path:
+    """Render diag_run.sbatch into the run dir and return its path.
+
+    auto_hotstart.py submits this once per newly-completed output stack,
+    passing DIAG_MONTH / DIAG_STACK via --export. Returns the written path.
+    """
+    slurm = cfg.get("slurm", {})
+    subs = {
+        "WORKDIR":    str(rdir),
+        "JOBNAME":    f"diag_{rdir.name}",
+        "ACCOUNT":    slurm.get("account",             "nos-surge"),
+        "PARTITION":  slurm.get("partition",            "hercules-2"),
+        "MEM":        slurm.get("diag_run_mem",         "16G"),
+        "WALLTIME":   slurm.get("diag_run_walltime",    "00:30:00"),
+        "LOGDIR":     str(mdir / "logs"),
+        "MAILUSER":   slurm.get("mail_user",            "felicio.cassalho@noaa.gov"),
+        "PY":         env_python(cfg, "diag_run_plots", default="swf_plot"),
+        "SCRIPT":     "-m workflow.models.schism.postprocess.diag_run",
+        "CONFIG_DIR": str(config_dir),
+    }
+    text = DIAG_SBATCH_TEMPLATE.read_text()
+    for k, v in subs.items():
+        text = text.replace("{{" + k + "}}", str(v))
+    out = rdir / "diag_run.sbatch"
+    out.write_text(text)
+    return out
+
+
 # =============================================================================
 # Symlink helper
 # =============================================================================
@@ -233,7 +263,7 @@ def _link(src: Path, dst: Path):
 # =============================================================================
 
 def _setup_month(cfg: dict, mdir: Path, ym: str, month_index: int,
-                 next_ym: str, is_last: bool) -> bool:
+                 next_ym: str, is_last: bool, config_dir: Path) -> bool:
     pid    = cfg["project_id"]
     fix    = mdir / "fix"
     bind   = mdir / "bin"
@@ -331,6 +361,12 @@ def _setup_month(cfg: dict, mdir: Path, ym: str, month_index: int,
     run_comb = _set_combine_command(run_comb, combine_exe, nhot_write)
     (rdir / "run_comb").write_text(run_comb)
 
+    # --- diag_run_plots hook (Phase 5, dispatched during the run) ---
+    diag_enabled = bool(cfg.get("diag_run_plots", False))
+    diag_sbatch  = ""
+    if diag_enabled:
+        diag_sbatch = str(_render_diag_sbatch(cfg, mdir, rdir, config_dir))
+
     # --- render auto_hotstart.py ---
     next_rdir = (mdir / f"R{pid}" / f"R{pid}_{next_ym}") if next_ym else None
     _render_auto_hotstart(rdir, {
@@ -341,6 +377,8 @@ def _setup_month(cfg: dict, mdir: Path, ym: str, month_index: int,
         "NHOT_WRITE":     nhot_write,
         "MONTH":          ym,
         "RUN_JOBNAME":    run_jobname,
+        "DIAG_ENABLED":   diag_enabled,
+        "DIAG_SBATCH":    diag_sbatch,
     })
 
     (rdir / "setup_run.done").touch()
@@ -353,10 +391,12 @@ def _setup_month(cfg: dict, mdir: Path, ym: str, month_index: int,
 # Entry point
 # =============================================================================
 
-def run_setup_run(cfg: dict):
+def run_setup_run(cfg: dict, config_dir=None):
+    from pathlib import Path as _Path
     pid    = cfg["project_id"]
     mdir   = model_dir(cfg)
     months = list_months(cfg)
+    config_dir = _Path(config_dir) if config_dir is not None else _Path(".")
 
     print(f"\n{'='*60}")
     print(f"  setup_run for M{pid}")
@@ -396,7 +436,7 @@ def run_setup_run(cfg: dict):
     for i, ym in enumerate(months):
         next_ym = months[i + 1] if i + 1 < len(months) else None
         is_last = (i + 1 == len(months))
-        ok = _setup_month(cfg, mdir, ym, i, next_ym, is_last)
+        ok = _setup_month(cfg, mdir, ym, i, next_ym, is_last, config_dir)
         if not ok:
             failed.append(ym)
 

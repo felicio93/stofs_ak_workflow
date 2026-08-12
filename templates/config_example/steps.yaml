@@ -48,10 +48,15 @@ submit_run: false   # Run auto_hotstart.py month-by-month, chaining hotstarts.
                     # Blocking — launch inside screen/tmux (see tutorial).
 
 # =============================================================================
-# Phase 5 — Post-processing (NOT YET IMPLEMENTED — placeholders)
+# Phase 5 — Post-processing
 # Run with:  stofs-ak --run --phase postprocess --config <config_dir>
+# Variables/layers/cadence configured in postprocess.yaml.
 # =============================================================================
-plot_outputs:    false   # Animated maps of water level / currents / SSS / SST
-station_extract: false   # Extract model time series at CO-OPS/NDBC stations
-skill_metrics:   false   # RMSE, bias, correlation, skill vs observations
-compare_sst:     false   # Compare modeled SST vs satellite (GOES/VIIRS/OI-SST)
+diag_run_plots:  false   # Per-output-stack diagnostic frames -> D{ID} DURING the
+                         # run (dispatched by auto_hotstart.py). Enable BEFORE
+                         # setup_run so it is baked into the run directories.
+download_sst:    false   # DTN: download LEO L3S-DY satellite SST + subset -> M{ID}/obs/
+plot_outputs:    false   # Full-run field GIFs -> P{ID} (SLURM: parallel frames + GIF)
+compare_sst:     false   # Model vs satellite SST GIF -> P{ID} (needs download_sst first)
+station_extract: false   # Extract model time series at CO-OPS/NDBC stations (planned)
+skill_metrics:   false   # RMSE, bias, correlation, skill vs observations (planned)

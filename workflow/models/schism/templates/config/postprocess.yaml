@@ -1,0 +1,91 @@
+# =============================================================================
+# postprocess.yaml — Phase 5 post-processing settings
+# =============================================================================
+# Copied into your project's config/ directory. Loaded automatically by
+# workflow.core.config.load_config (optional file).
+
+# Depth isobaths (metres) overlaid on ALL plots (diagnostics, field GIFs,
+# SST comparison). Extracted from the mesh 'depth' in out2d/hgrid.
+isobaths: [200, 2000]
+
+# =============================================================================
+# diag_run_plots — per-output-stack diagnostic frames DURING the run
+# =============================================================================
+# Static images (no GIF), one per timestep per variable, written to
+# D{ID}/D{ID}_YYYYMM/diag/ as each SCHISM output stack completes. Dispatched
+# by auto_hotstart.py from the Phase-4 monitoring loop. Enable BEFORE setup_run
+# so the hook is baked into the run directories.
+#
+# Variable entry fields (shared by diag_run_vars and plot_outputs_vars):
+#   file_prefix : NetCDF filename prefix without _{N}.nc (e.g. out2d, temperature)
+#   var_name    : exact variable name inside the NetCDF
+#   label       : colorbar / title text (include units)
+#   cmap        : matplotlib colormap
+#   vmin / vmax : color limits (null = robust 2nd/98th percentile)
+#   is_3d       : true if the variable has a vertical (sigma) dimension
+#   layer       : "surface" | "bottom" | integer index (only used if is_3d)
+diag_run_vars:
+  - {file_prefix: out2d,          var_name: elevation,      label: "SSH (m)",   cmap: RdBu_r, vmin: -2,   vmax: 2,    is_3d: false}
+  - {file_prefix: temperature,    var_name: temperature,    label: "SST (°C)",  cmap: jet,    vmin: -2,   vmax: 12,   is_3d: true, layer: surface}
+  - {file_prefix: salinity,       var_name: salinity,       label: "SSS (psu)", cmap: viridis,vmin: 30,   vmax: 34.5, is_3d: true, layer: surface}
+  - {file_prefix: horizontalVelX, var_name: horizontalVelX, label: "U (m/s)",   cmap: RdBu_r, vmin: -1.5, vmax: 1.5,  is_3d: true, layer: surface}
+  - {file_prefix: horizontalVelY, var_name: horizontalVelY, label: "V (m/s)",   cmap: RdBu_r, vmin: -1.5, vmax: 1.5,  is_3d: true, layer: surface}
+diag_run_dpi: 150
+
+# =============================================================================
+# plot_outputs — full-run field GIFs (after the run completes)
+# =============================================================================
+plot_outputs_vars:
+  - {file_prefix: out2d,          var_name: elevation,      label: "Water Level (m)",           cmap: RdBu_r, vmin: -2,   vmax: 2,    is_3d: false}
+  - {file_prefix: temperature,    var_name: temperature,    label: "Sea Surface Temp (°C)",     cmap: jet,    vmin: -2,   vmax: 12,   is_3d: true, layer: surface}
+  - {file_prefix: salinity,       var_name: salinity,       label: "Sea Surface Salinity (psu)",cmap: viridis,vmin: 30,   vmax: 34.5, is_3d: true, layer: surface}
+  - {file_prefix: horizontalVelX, var_name: horizontalVelX, label: "Surface U (m/s)",           cmap: RdBu_r, vmin: -1.5, vmax: 1.5,  is_3d: true, layer: surface}
+  - {file_prefix: horizontalVelY, var_name: horizontalVelY, label: "Surface V (m/s)",           cmap: RdBu_r, vmin: -1.5, vmax: 1.5,  is_3d: true, layer: surface}
+
+# Date range for the GIF (null = whole run). Format YYYY-MM-DD.
+plot_outputs_start: null
+plot_outputs_end:   null
+
+# Temporal cadence in HOURS, independent of file structure. Only timesteps
+# landing on this cadence (from 00:00Z) are plotted. e.g. 6 = 4 frames/day.
+plot_outputs_every_hours: 6
+
+# GIF frames per second and per-frame DPI.
+plot_outputs_fps: 4
+plot_outputs_dpi: 150
+
+# =============================================================================
+# SST comparison (model vs LEO L3S-DY satellite)
+# =============================================================================
+# The L3S-LEO-DY product is a DAILY collated field (all day/night passes over
+# a 24 h window). Matching options:
+#   daily_mean : arithmetic daily mean of SCHISM surface temperature (default)
+#   nearest    : SCHISM surface temperature nearest 12:00Z (satellite stamp)
+sst_match: daily_mean
+
+# Date range for the comparison GIF (null = whole run).
+compare_sst_start: null
+compare_sst_end:   null
+
+compare_sst_vmin: -2
+compare_sst_vmax: 12
+compare_sst_cmap: jet
+compare_sst_fps:  4
+compare_sst_dpi:  150
+
+# =============================================================================
+# Frame retention (applies to plot_outputs and compare_sst GIFs)
+# =============================================================================
+# true  = keep individual JPEG frames after building the GIF
+# false = delete frames once the GIF is written
+keep_frames: true
+
+# =============================================================================
+# Optional SLURM overrides for Phase 5 jobs (else defaults from the code).
+# Add to the slurm: block in project.yaml:
+#   diag_run_mem / diag_run_walltime
+#   plot_outputs_mem / plot_outputs_walltime
+#   plot_outputs_gif_mem / plot_outputs_gif_walltime
+#   compare_sst_mem / compare_sst_walltime
+#   compare_sst_gif_mem / compare_sst_gif_walltime
+# =============================================================================

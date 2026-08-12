@@ -24,7 +24,7 @@ def run_phase(cfg: dict, config_dir, only: str = None):
     if enabled("setup_run"):
         print("[STEP] setup_run")
         from workflow.models.schism.run.setup_run import run_setup_run
-        run_setup_run(cfg)
+        run_setup_run(cfg, config_dir)
     else:
         print("[SKIP] setup_run")
 

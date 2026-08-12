@@ -233,34 +233,15 @@ def gen_sflux_month(cfg: dict, ym: str):
 
             print(f"  {day_str}: air+prc+rad written (stack {stack})")
 
-    # Write sflux_inputs.txt
-    # Note: start_year/month/day/hour and utc_start were removed from the
-    # sflux_inputs namelist in newer SCHISM versions (they are commented out
-    # in sflux_9c.F90). Including them causes a Fortran namelist read error
-    # (forrtl: severe 19). Only include the variables still in the namelist.
-    sflux_inputs = f"""&sflux_inputs
-air_1_relative_weight = 1.
-air_1_max_window_hours = 120.
-air_1_fail_if_missing = .true.
-air_1_file = 'sflux_air_1'
-rad_1_relative_weight = 1.
-rad_1_max_window_hours = 120.
-rad_1_fail_if_missing = .true.
-rad_1_file = 'sflux_rad_1'
-prc_1_relative_weight = 1.
-prc_1_max_window_hours = 120.
-prc_1_fail_if_missing = .true.
-prc_1_file = 'sflux_prc_1'
-uwind_name = 'uwind'
-vwind_name = 'vwind'
-prmsl_name = 'prmsl'
-stmp_name  = 'stmp'
-spfh_name  = 'spfh'
-dlwrf_name = 'dlwrf'
-dswrf_name = 'dswrf'
-prate_name = 'prate'
-/
-"""
+    # Write sflux_inputs.txt as a minimal empty namelist.
+    # SCHISM uses this file only to override defaults; an empty namelist
+    # causes SCHISM to use its hardcoded defaults for all sflux parameters
+    # (air_1_file='sflux_air_1', max_window_hours=120, etc.), which are
+    # exactly what we want. Writing only &sflux_inputs\n/ is safe across
+    # all SCHISM versions: older builds that still have start_year in the
+    # namelist don't need it here (SCHISM reads start_date from param.nml),
+    # and newer builds that removed those variables won't crash on them.
+    (sflux_dir / "sflux_inputs.txt").write_text("&sflux_inputs\n/\n")
     (sflux_dir / "sflux_inputs.txt").write_text(sflux_inputs)
     print(f"  Written: sflux_inputs.txt")
 

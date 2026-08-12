@@ -30,3 +30,4 @@ conda_envs:
   gen_sflux:      swf_main
   plot_sflux:     swf_plot
   plotting_debug: swf_plot
+  plot_outputs:   swf_plot   # Phase 5 field output GIFs

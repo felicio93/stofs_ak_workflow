@@ -53,6 +53,14 @@ def load_config(config_dir: Path) -> dict:
             if data:
                 cfg.update(data)
 
+    # Load postprocess.yaml if present (optional, phase-5 settings).
+    pp_fpath = config_dir / "postprocess.yaml"
+    if pp_fpath.exists():
+        with open(pp_fpath) as f:
+            data = yaml.safe_load(f)
+            if data:
+                cfg.update(data)
+
     return cfg
 
 

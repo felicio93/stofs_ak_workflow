@@ -1,0 +1,102 @@
+# =============================================================================
+# postprocess.yaml — Post-processing settings (Phase 5)
+# =============================================================================
+# Copied into your project's config/ directory.
+# Loaded automatically by workflow.core.config.load_config when model_type: schism.
+
+# =============================================================================
+# plot_outputs — SCHISM field output GIFs
+# =============================================================================
+# Output files to plot. SCHISM writes one NetCDF per variable per ihfskip
+# timestep stack. Supported filename patterns:
+#   out2d_{N}.nc         — 2D variables (elevation, air pressure, wind, etc.)
+#   temperature_{N}.nc   — 3D temperature
+#   salinity_{N}.nc      — 3D salinity
+#   horizontalVelX_{N}.nc / horizontalVelY_{N}.nc — 3D horizontal velocity
+#   verticalVelocity_{N}.nc — 3D vertical velocity
+#   (etc. — any variable in outputs/ that matches SCHISM New I/O naming)
+
+# Which variables to plot. Each entry has:
+#   file_prefix : the NetCDF filename prefix without _{N}.nc
+#                 e.g. "out2d" for out2d_1.nc, "temperature" for temperature_1.nc
+#   var_name    : exact variable name inside the NetCDF
+#   label       : colorbar / GIF title label (include units)
+#   cmap        : matplotlib colormap name
+#   vmin / vmax : color scale limits (null = robust 2nd/98th percentile)
+#   is_3d       : true = variable has a vertical dimension (nSCHISM_vgrid_layers)
+#   layer       : which vertical layer to plot when is_3d=true.
+#                 "surface" = last layer (-1), "bottom" = deepest wet layer,
+#                 or an integer index (0 = sigma-0, -1 = surface, etc.)
+#   isobaths    : depth contours to overlay (metres, null = none)
+
+plot_outputs_vars:
+  - file_prefix: out2d
+    var_name:    elevation
+    label:       "Water Level (m)"
+    cmap:        RdBu_r
+    vmin:        -2.0
+    vmax:         2.0
+    is_3d:       false
+    isobaths:    null
+
+  - file_prefix: temperature
+    var_name:    temperature
+    label:       "Sea Surface Temperature (°C)"
+    cmap:        jet
+    vmin:        -2.0
+    vmax:        12.0
+    is_3d:       true
+    layer:       surface
+    isobaths:    [200, 2000]
+
+  - file_prefix: salinity
+    var_name:    salinity
+    label:       "Sea Surface Salinity (psu)"
+    cmap:        viridis
+    vmin:        30.0
+    vmax:        34.5
+    is_3d:       true
+    layer:       surface
+    isobaths:    [200, 2000]
+
+  - file_prefix: horizontalVelX
+    var_name:    horizontalVelX
+    label:       "Surface U Velocity (m/s)"
+    cmap:        RdBu_r
+    vmin:        -1.5
+    vmax:         1.5
+    is_3d:       true
+    layer:       surface
+    isobaths:    null
+
+  - file_prefix: horizontalVelY
+    var_name:    horizontalVelY
+    label:       "Surface V Velocity (m/s)"
+    cmap:        RdBu_r
+    vmin:        -1.5
+    vmax:         1.5
+    is_3d:       true
+    layer:       surface
+    isobaths:    null
+
+# Temporal sub-sampling of output files.
+# SCHISM writes one timestep per ihfskip steps; each output stack file
+# (e.g. temperature_1.nc) may contain many timesteps.
+# plot_outputs_stride controls how many files to skip between plotted frames.
+#   1  = plot every output stack file (one frame per file)
+#   2  = every other file
+#   6  = every 6th file (e.g. daily if ihfskip gives hourly files)
+#   24 = every 24th file (e.g. daily if ihfskip gives hourly files)
+# Set to 1 to plot all available files (highest temporal resolution).
+plot_outputs_stride: 1
+
+# GIF frames per second.
+plot_outputs_fps: 4
+
+# DPI for individual frames.
+plot_outputs_dpi: 150
+
+# SLURM resources for plot_outputs jobs (one job per month).
+# Add these to the slurm: block in project.yaml if you need to override:
+#   plot_outputs_walltime: "02:00:00"
+#   plot_outputs_mem:      "32G"

@@ -116,6 +116,35 @@ def run_completed():
     return last is not None and "Run completed successfully" in last
 
 
+def fatal_error():
+    """Return the content of outputs/fatal.error if SCHISM wrote a fatal
+    error, otherwise return None.
+
+    SCHISM writes 'outputs/fatal.error' when it aborts with a configuration
+    or input error (e.g. ABORT: INIT: nmarsh_types<=0). This is distinct from
+    a time-limit or node failure, which does not produce fatal.error. If this
+    file is present and non-empty we must NOT resubmit — the user needs to fix
+    the input and re-run manually.
+
+    Also scan 'myout' (the SBATCH -o log) for ABORT lines as a secondary
+    signal, since early crashes may not flush fatal.error before the job dies.
+    """
+    fe = Path(RUNDIR) / "outputs" / "fatal.error"
+    if fe.exists():
+        txt = fe.read_text(errors="ignore").strip()
+        if txt:
+            return txt
+
+    # Secondary: scan myout for any ABORT line
+    myout = Path(RUNDIR) / "myout"
+    if myout.exists():
+        for line in myout.read_text(errors="ignore").splitlines():
+            if "ABORT" in line:
+                return line.strip()
+
+    return None
+
+
 def combine_and_chain():
     """Submit run_comb, wait, verify the combined hotstart, then chain."""
     combined = Path(RUNDIR) / "outputs" / f"hotstart_it={NHOT_WRITE}.nc"
@@ -219,6 +248,22 @@ def main():
             # Not in queue. Either finished successfully or stopped early.
             if run_completed():
                 break
+
+            # Check for a fatal (non-recoverable) error before deciding
+            # whether to resubmit.
+            err = fatal_error()
+            if err is not None:
+                log(f"FATAL ERROR detected — SCHISM aborted with a configuration")
+                log(f"or input error. Do NOT resubmit until the input is fixed.")
+                log(f"Error message:")
+                for line in err.splitlines()[:10]:
+                    log(f"  {line}")
+                log(f"Full error: {Path(RUNDIR) / 'outputs' / 'fatal.error'}")
+                log(f"SLURM log:  {Path(RUNDIR) / 'myout'}")
+                log(f"Fix the input, delete run.done if it exists, and re-run:")
+                log(f"  stofs-ak --run --phase run --only submit_run --config <cfg>")
+                sys.exit(1)
+
             previous_step = -1
             log(f"{RUN_JOBNAME}: not in queue and run incomplete — resubmitting "
                 f"from hotstart.nc (full month re-run).")

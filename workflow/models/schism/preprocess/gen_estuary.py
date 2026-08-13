@@ -136,7 +136,7 @@ def generate_in_files(bin_dir: Path, cfg: dict):
         f"{ot} {os_}             !T,S for nodes outside HYCOM grid\n"
         f"{dt}                   !time step in .nc [sec]\n"
         f"{nob} {obs_str}        !# of open bnds; list of IDs\n"
-        f"32                     !# of days needed (fixed ceiling; file ends naturally)\n"
+        f"34                     !# of days needed (matches the 34-record stack ceiling)\n"
         f"1                      !# of HYCOM stacks\n"
     )
     th_in.write_text(th_content)

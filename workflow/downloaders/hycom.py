@@ -490,6 +490,18 @@ def run_download(cfg: dict):
     project_dir = Path(cfg["project_dir"])
     start = date.fromisoformat(cfg["start_date"])
     end = date.fromisoformat(cfg["end_date"])
+    # Aggregation builds a 34-daily-record stack for EVERY project month,
+    # starting at day 1 of the month (list_months includes the calendar month
+    # of end_date). So the LAST project month's stack spans its day 1 through
+    # ~day 34 (into the following month), regardless of where end_date falls
+    # within that month. Extend the HYCOM download to the last project month's
+    # last calendar day + 6 days to guarantee that 34-record window is fully
+    # covered. (The 34-record ceiling satisfies SCHISM's nudging / *.th.nc
+    # read-ahead: a 31-day run needs record index 33 <= 34.)
+    STACK_PAD_DAYS = 6
+    last_month_last_day = date(end.year, end.month,
+                               monthrange(end.year, end.month)[1])
+    download_end = last_month_last_day + timedelta(days=STACK_PAD_DAYS)
     lon_min = float(cfg["lon_min"]); lon_max = float(cfg["lon_max"])
     lat_min = float(cfg["lat_min"]); lat_max = float(cfg["lat_max"])
     lon_ref = str(cfg["lon_reference"])
@@ -505,6 +517,7 @@ def run_download(cfg: dict):
 
     print(f"\n{'='*60}")
     print(f"  HYCOM download: {start} -> {end}")
+    print(f"  (+{STACK_PAD_DAYS}-day pad for stack ceiling -> through {download_end})")
     print(f"  Domain: lon [{lon_min}, {lon_max}]  lat [{lat_min}, {lat_max}]")
     print(f"  Lon reference: {lon_ref}")
     print(f"  Raw output:    {raw_dir}")
@@ -513,7 +526,7 @@ def run_download(cfg: dict):
 
     products = [("ssh", ssh_dir), ("ts", ts_dir), ("uv", uv_dir)]
 
-    total_days = (end - start).days + 1
+    total_days = (download_end - start).days + 1
     prog = ProgressTracker(total=total_days, label="HYCOM download")
 
     failed_days = []
@@ -526,13 +539,13 @@ def run_download(cfg: dict):
         return d.strftime("%Y%m")
 
     current = start
-    while current <= end:
+    while current <= download_end:
         ym = month_key(current)
 
         # Determine the last day of this month within the requested range.
         yr, mo = int(ym[:4]), int(ym[4:])
         month_last_day = date(yr, mo, monthrange(yr, mo)[1])
-        month_end = min(end, month_last_day)
+        month_end = min(download_end, month_last_day)
 
         print(f"\n{'#'*60}\n#  Month {ym}  ({current} -> {month_end})\n{'#'*60}")
 

@@ -110,6 +110,52 @@ def write_sflux_file(path: Path, ftype: str, day_date: date,
             v[:] = arr
 
 
+def _pad_last(arr, n):
+    """Persist the last time record until arr has n records along axis 0."""
+    if arr.shape[0] >= n:
+        return arr
+    last = arr[-1:, :, :]
+    reps = n - arr.shape[0]
+    return np.concatenate([arr] + [last] * reps, axis=0)
+
+
+def _next_month_first_step(mdir, year, month):
+    """Return the first (00Z) atmospheric fields of the month after
+    (year, month), read from era5_{YYYYMM+1}.nc, as a dict of 2-D arrays
+    keyed by ERA5 raw variable name (lat DESCENDING, matching the raw file).
+    Returns None if the next-month ERA5 file is not available.
+
+    Only the single first time record is read (the 00Z field), which is the
+    25th step of the current month's last day.
+    """
+    ny = year + 1 if month == 12 else year
+    nm = 1 if month == 12 else month + 1
+    nxt_path = mdir / "raw" / "era5" / str(ny) / f"era5_{ny}{nm:02d}.nc"
+    if not (nxt_path.exists() and nxt_path.stat().st_size > 0):
+        return None
+
+    out = {}
+    with nc4.Dataset(nxt_path) as ds:
+        # First record only (index 0 = 00Z of the next month's day 1).
+        def r(v):
+            return ds.variables[v][0, :, :].astype(np.float32)
+        out["u10"] = r("u10"); out["v10"] = r("v10")
+        out["msl"] = r("msl"); out["t2m"] = r("t2m"); out["d2m"] = r("d2m")
+        prc = "mtpr" if "mtpr" in ds.variables else \
+              "avg_tprate" if "avg_tprate" in ds.variables else None
+        if prc:
+            out["mtpr"] = r(prc)
+        lw = "msdwlwrf" if "msdwlwrf" in ds.variables else \
+             "avg_sdlwrf" if "avg_sdlwrf" in ds.variables else None
+        if lw:
+            out["dlwrf"] = r(lw)
+        sw = "msdwswrf" if "msdwswrf" in ds.variables else \
+             "avg_sdswrf" if "avg_sdswrf" in ds.variables else None
+        if sw:
+            out["dswrf"] = r(sw)
+    return out
+
+
 def gen_sflux_month(cfg: dict, ym: str):
     pid   = cfg["project_id"]
     mdir  = model_dir(cfg)
@@ -194,15 +240,40 @@ def gen_sflux_month(cfg: dict, ym: str):
             if sw_var is None:
                 print(f"  WARNING: shortwave radiation variable not found for {day_str}")
 
-            # Pad to 25 if needed (last day of ERA5 file may only have 24 steps)
+            # Pad to 25 if needed.
+            #
+            # The current month's ERA5 file ends at 23Z of the last calendar
+            # day, so the last day's 25th step (00Z of the next month's first
+            # day) is not in this file. For all days EXCEPT the last, the 25th
+            # step is the next day's 00Z which IS present, so no padding runs.
+            #
+            # For the LAST day of the month we read the true 00Z field from the
+            # next month's ERA5 file (era5_{YYYYMM+1}.nc) instead of persisting
+            # the 23Z value. This gives a correct, continuous atmospheric
+            # forcing across the month boundary. If the next-month file is not
+            # available (e.g. the final project month), we fall back to padding.
             n_actual = u10.shape[0]
+            if n_actual < 25 and iday == ndays:
+                nxt = _next_month_first_step(mdir, year, month)
+                if nxt is not None:
+                    def app(arr, key):
+                        return np.concatenate([arr, nxt[key][np.newaxis, ::-1, :]], axis=0)
+                    u10  = app(u10,  "u10");  v10  = app(v10,  "v10")
+                    msl  = app(msl,  "msl");  t2m  = app(t2m,  "t2m")
+                    d2m  = app(d2m,  "d2m")
+                    mtpr = app(mtpr, "mtpr") if "mtpr" in nxt else _pad_last(mtpr, 25)
+                    dlwrf = app(dlwrf, "dlwrf") if "dlwrf" in nxt else _pad_last(dlwrf, 25)
+                    dswrf = app(dswrf, "dswrf") if "dswrf" in nxt else _pad_last(dswrf, 25)
+                    print(f"    {day_str}: 25th step read from next month's ERA5 00Z.")
+                    n_actual = u10.shape[0]
+
+            # Any remaining shortfall (e.g. last project month with no next
+            # file, or a mid-file gap) is filled by persisting the last value.
             if n_actual < 25:
-                def pad(arr):
-                    last = arr[-1:, :, :]
-                    return np.concatenate([arr] + [last] * (25 - n_actual), axis=0)
-                u10 = pad(u10); v10 = pad(v10); msl = pad(msl)
-                t2m = pad(t2m); d2m = pad(d2m); mtpr = pad(mtpr)
-                dlwrf = pad(dlwrf); dswrf = pad(dswrf)
+                u10 = _pad_last(u10, 25); v10 = _pad_last(v10, 25)
+                msl = _pad_last(msl, 25); t2m = _pad_last(t2m, 25)
+                d2m = _pad_last(d2m, 25); mtpr = _pad_last(mtpr, 25)
+                dlwrf = _pad_last(dlwrf, 25); dswrf = _pad_last(dswrf, 25)
 
             spfh = dewpoint_to_spfh(d2m, msl)
 

@@ -85,31 +85,50 @@ def hours_since_2000(d: date) -> int:
     return int((d - date(2000, 1, 1)).total_seconds() // 3600)
 
 
-def daily_files_for_month(var_dir: Path, prefix: str, ym: str):
+# Fixed daily-record ceiling for every monthly stack.
+#
+# SCHISM's nudging and *.th.nc readers pre-read one record ahead: at model
+# time t they read nudging record index (t/step + 2). For a full 31-day month
+# with daily (86400 s) forcing, the last timestep needs record index 33, so a
+# stack containing only the 31 calendar days (records 1..31 spanning days 0..30)
+# runs out and SCHISM aborts with 'tracer nudging nc(2)'.
+#
+# To always satisfy the read-ahead we build every monthly stack to a FIXED
+# ceiling of 34 daily records: the month's own days plus the first few days of
+# the following month(s). 34 >= (31 + 2) with margin, so every month is safe.
+# The extra days come from the next month's raw HYCOM files, which exist
+# because download_hycom fetches 6 days past end_date (covering the last month).
+STACK_CEILING = 34
+
+
+def daily_files_for_stack(var_dir: Path, prefix: str, ym: str):
     """
-    Return (present_files, missing_dates) for a given month.
-    present_files: sorted list of existing daily Path objects.
-    missing_dates: list of 'YYYYMMDD' strings with no file.
+    Return (present_files, missing_dates) for a 34-daily-record stack that
+    starts on day 1 of `ym` and continues into the following day(s) until
+    STACK_CEILING files have been considered.
+
+    present_files: sorted list of existing daily Path objects (calendar order).
+    missing_dates: list of 'YYYYMMDD' strings with no file (within the ceiling).
     """
-    year = int(ym[:4])
+    year  = int(ym[:4])
     month = int(ym[4:])
-    ndays = monthrange(year, month)[1]
+    d = date(year, month, 1)
     present, missing = [], []
-    for day in range(1, ndays + 1):
-        d = date(year, month, day)
+    for _ in range(STACK_CEILING):
         flat = d.strftime("%Y%m%d")
         f = var_dir / f"{prefix}_{flat}.nc"
         if f.exists() and f.stat().st_size > 0:
             present.append(f)
         else:
             missing.append(flat)
+        d += timedelta(days=1)
     return present, missing
 
 
 def report_missing(var, ym, missing):
     if missing:
-        print(f"  WARNING [{var} {ym}]: {len(missing)} missing day(s): "
-              f"{', '.join(missing)}")
+        print(f"  WARNING [{var} {ym}]: {len(missing)} missing day(s) within the "
+              f"{STACK_CEILING}-record stack window: {', '.join(missing)}")
         print(f"           Proceeding with available days only.")
 
 
@@ -227,7 +246,7 @@ def run_aggregate(cfg: dict):
         if is_complete_file(ssh_out):
             print("  SSH: already aggregated, skipping.")
         else:
-            present, missing = daily_files_for_month(ssh_dir, "ssh", ym)
+            present, missing = daily_files_for_stack(ssh_dir, "ssh", ym)
             report_missing("ssh", ym, missing)
             try:
                 aggregate_ssh(present, ssh_out, tmp_dir)
@@ -239,7 +258,7 @@ def run_aggregate(cfg: dict):
         if is_complete_file(uv_out):
             print("  UV:  already aggregated, skipping.")
         else:
-            present, missing = daily_files_for_month(uv_dir, "uv", ym)
+            present, missing = daily_files_for_stack(uv_dir, "uv", ym)
             report_missing("uv", ym, missing)
             try:
                 aggregate_uv(present, uv_out, tmp_dir)
@@ -251,7 +270,7 @@ def run_aggregate(cfg: dict):
         if is_complete_file(ts_out):
             print("  TS:  already aggregated, skipping.")
         else:
-            present, missing = daily_files_for_month(ts_dir, "ts", ym)
+            present, missing = daily_files_for_stack(ts_dir, "ts", ym)
             report_missing("ts", ym, missing)
             try:
                 aggregate_ts(present, ts_out, tmp_dir)

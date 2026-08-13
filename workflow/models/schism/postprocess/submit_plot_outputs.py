@@ -83,7 +83,7 @@ def submit_plot_outputs(cfg: dict, config_dir: Path) -> str:
         "JOBNAME":  f"plotout_frm_M{pid}",
         "NTASKS":   str(len(tasks)),
         "MEM":      slurm.get("plot_outputs_mem",      "32G"),
-        "WALLTIME": slurm.get("plot_outputs_walltime", "02:00:00"),
+        "WALLTIME": slurm.get("plot_outputs_walltime", "00:30:00"),
         "MANIFEST": str(manifest),
     })
     print(f"  Submitting plot_outputs frames: {len(tasks)} output file(s)")
@@ -97,7 +97,7 @@ def submit_plot_outputs(cfg: dict, config_dir: Path) -> str:
     stage2.update({
         "JOBNAME":  f"plotout_gif_M{pid}",
         "MEM":      slurm.get("plot_outputs_gif_mem",      "32G"),
-        "WALLTIME": slurm.get("plot_outputs_gif_walltime", "01:00:00"),
+        "WALLTIME": slurm.get("plot_outputs_gif_walltime", "00:30:00"),
     })
     print(f"  Submitting plot_outputs GIF assembly (afterok:{jid1})")
     out2 = submitter.render_and_submit(

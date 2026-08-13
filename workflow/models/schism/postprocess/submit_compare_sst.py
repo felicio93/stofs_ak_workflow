@@ -69,7 +69,7 @@ def submit_compare_sst(cfg: dict, config_dir: Path) -> str:
         "JOBNAME":  f"cmpsst_frm_M{pid}",
         "NTASKS":   str(len(days)),
         "MEM":      slurm.get("compare_sst_mem",      "32G"),
-        "WALLTIME": slurm.get("compare_sst_walltime", "01:00:00"),
+        "WALLTIME": slurm.get("compare_sst_walltime", "00:30:00"),
         "MANIFEST": str(manifest),
     })
     print(f"  Submitting compare_sst frames: {len(days)} day(s) "

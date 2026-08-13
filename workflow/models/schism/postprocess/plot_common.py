@@ -37,11 +37,22 @@ SAFE_DROP = [
 # =============================================================================
 
 def split_quads(face_nodes):
-    """Split quad elements into triangles. Returns int array (N_tri, 3)."""
+    """Split quad elements into triangles.
+
+    Returns (tris, is_tri):
+      tris   : int array (N_tri, 3) of triangle vertex indices. Pure triangles
+               come first, then each quad split into two triangles
+               (0,1,2) and (0,2,3).
+      is_tri : bool array (N_elem,) — True for elements that were already
+               triangles, False for quads. Used to expand element-centered
+               fields onto the split triangulation (a quad's value is repeated
+               for both of its child triangles).
+    """
     import numpy as np
     fn = np.array(face_nodes)
     if fn.shape[1] == 3:
-        return fn.astype(int)
+        n = fn.shape[0]
+        return fn.astype(int), np.ones(n, dtype=bool)
     col4 = fn[:, 3]
     with np.errstate(invalid="ignore"):
         is_tri = np.isnan(col4) | (col4 < 0)
@@ -49,31 +60,49 @@ def split_quads(face_nodes):
     quads = fn[~is_tri]
     if len(quads):
         tris = np.vstack([tris, quads[:, :3], quads[:, [0, 2, 3]]])
-    return tris.astype(int)
+    return tris.astype(int), is_tri
+
+
+def expand_elem_values(values, is_tri):
+    """Map an element-centered field onto the split triangulation.
+
+    The triangulation orders faces as: [pure-triangle elems] + [quad tri #1] +
+    [quad tri #2]. An element-centered value array (length N_elem) must be
+    reordered to match: triangle-element values first, then each quad value
+    repeated for its two child triangles.
+    """
+    import numpy as np
+    v = np.asarray(values)
+    tri_vals  = v[is_tri]
+    quad_vals = v[~is_tri]
+    return np.concatenate([tri_vals, quad_vals, quad_vals])
 
 
 def load_mesh(out2d_path: Path):
-    """Return (x, y, depth, triangulation) from a SCHISM out2d_*.nc file.
+    """Return (x, y, depth, triangulation, is_tri) from a SCHISM out2d_*.nc file.
 
     out2d files always carry SCHISM_hgrid_face_nodes / _node_x / _node_y /
     depth, so the mesh (and its 200/2000 m isobaths) can be built once from
-    any out2d stack.
+    any out2d stack. `is_tri` is returned so element-centered variables can be
+    expanded onto the split triangulation via expand_elem_values().
+
+    The NetCDF engine is auto-selected by xarray (h5netcdf or netcdf4); SCHISM
+    New I/O output is HDF5/NETCDF4 and readable by either.
     """
     import numpy as np
     import xarray as xr
     import matplotlib.tri as mtri
 
-    ds  = xr.open_dataset(str(out2d_path), engine="h5netcdf",
-                          drop_variables=SAFE_DROP)
+    ds  = xr.open_dataset(str(out2d_path), drop_variables=SAFE_DROP)
     raw = np.nan_to_num(np.array(ds["SCHISM_hgrid_face_nodes"]), nan=0) - 1
     x   = np.array(ds["SCHISM_hgrid_node_x"])
     y   = np.array(ds["SCHISM_hgrid_node_y"])
     dep = np.array(ds["depth"])
     ds.close()
 
-    tris = split_quads(raw)
+    tris, is_tri = split_quads(raw)
     dep  = np.where(np.isnan(dep), -9999.0, dep)
-    return x, y, dep, mtri.Triangulation(x, y, tris)
+    return x, y, dep, mtri.Triangulation(x, y, tris), is_tri
 
 
 # =============================================================================
@@ -134,11 +163,14 @@ def extract_layer(da, layer_spec):
 def render_frame(triang, values, title, out_path, cbar_label,
                  cmap="jet", vmin=None, vmax=None,
                  depth=None, isobaths=(200, 2000),
-                 dpi=150, quality=90, boundaries=None):
+                 dpi=150, quality=90, boundaries=None, is_elem=False):
     """Render one JPEG frame using the shared workflow style plus isobaths.
 
     Delegates the panel/colorbar/style/isobaths to
     core.plot_style.make_frame_tripcolor. Returns the written JPEG path.
+
+    is_elem: True for element-centered fields (values already expanded onto the
+    split triangulation via expand_elem_values) — drawn as facecolors.
     """
     import numpy as np
     from workflow.core.plot_style import make_frame_tripcolor
@@ -147,7 +179,7 @@ def render_frame(triang, values, title, out_path, cbar_label,
         triang, np.asarray(values), title=title, out_path=Path(out_path),
         cbar_label=cbar_label, cmap=cmap, vmin=vmin, vmax=vmax,
         dpi=dpi, quality=quality, boundaries=boundaries,
-        depth=depth, isobaths=isobaths,
+        depth=depth, isobaths=isobaths, is_elem=is_elem,
     )
 
 
@@ -202,6 +234,7 @@ def var_spec(entry: dict) -> dict:
         "vmax":        entry.get("vmax", None),
         "is_3d":       bool(entry.get("is_3d", False)),
         "layer":       entry.get("layer", "surface"),
+        "loc":         str(entry.get("loc", "node")).lower(),  # node | elem
     }
 
 

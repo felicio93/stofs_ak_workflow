@@ -121,21 +121,23 @@ def frames_for_file(cfg, ym: str, prefix: str, stack: int):
         print(f"  {ym} {prefix}_{stack}: no out2d_*.nc found in any run directory. "
               f"Has the model run completed?")
         return
-    x, y, depth, triang = pc.load_mesh(out2d0)
+    x, y, depth, triang, is_tri = pc.load_mesh(out2d0)
     boundaries = _load_boundaries(cfg)
 
     fdir = _frames_dir(cfg)
     fdir.mkdir(parents=True, exist_ok=True)
 
-    ds = xr.open_dataset(str(nc_path), engine="h5netcdf",
-                         drop_variables=pc.SAFE_DROP)
+    ds = xr.open_dataset(str(nc_path), drop_variables=pc.SAFE_DROP)
     times = ds["time"].values
 
     for vc in var_cfgs:
         name = vc["var_name"]
         if name not in ds:
-            print(f"    '{name}' not in {nc_path.name}, skipping.")
+            print(f"    WARNING: '{name}' not in {nc_path.name}, skipping "
+                  f"(check var_name / file_prefix in postprocess.yaml).")
             continue
+
+        is_elem = (vc["loc"] == "elem")
 
         arr = pc.extract_layer(ds[name], vc["layer"]) if vc["is_3d"] \
             else np.array(ds[name])
@@ -148,7 +150,13 @@ def frames_for_file(cfg, ym: str, prefix: str, stack: int):
                 continue
             vals = arr[t_idx]
             if getattr(vals, "ndim", 1) > 1:
-                vals = vals.ravel()[:len(x)]
+                vals = vals.ravel()
+            # Node-centered fields have one value per node; element-centered
+            # fields must be expanded onto the split triangulation.
+            if is_elem:
+                vals = pc.expand_elem_values(vals, is_tri)
+            else:
+                vals = vals[:len(x)]
 
             # Frame filename embeds a sortable absolute timestamp so Stage 2
             # can stitch across months/files in chronological order.
@@ -164,7 +172,7 @@ def frames_for_file(cfg, ym: str, prefix: str, stack: int):
                 cbar_label=vc["label"], cmap=vc["cmap"],
                 vmin=vmin, vmax=vmax,
                 depth=depth, isobaths=isobaths,
-                dpi=dpi, boundaries=boundaries,
+                dpi=dpi, boundaries=boundaries, is_elem=is_elem,
             )
         gc.collect()
 

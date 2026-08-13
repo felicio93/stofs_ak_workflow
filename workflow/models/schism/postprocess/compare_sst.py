@@ -92,8 +92,7 @@ def _model_sst_for_day(cfg, d: date):
     target = np.datetime64(f"{d.isoformat()}T12")
 
     for nc in stacks:
-        ds = xr.open_dataset(str(nc), engine="h5netcdf",
-                             drop_variables=pc.SAFE_DROP)
+        ds = xr.open_dataset(str(nc), drop_variables=pc.SAFE_DROP)
         if "temperature" not in ds:
             ds.close(); continue
         times = ds["time"].values
@@ -138,7 +137,7 @@ def _sat_sst_for_day(cfg, d: date):
     f = mdir / "obs" / "sst_leo" / f"leosst_{d:%Y%m%d}.nc"
     if not (f.exists() and f.stat().st_size > 0):
         return None
-    ds = xr.open_dataset(str(f), engine="h5netcdf")
+    ds = xr.open_dataset(str(f))
     lon = np.array(ds["lon"])
     lat = np.array(ds["lat"])
     sst = np.array(ds["sst"])
@@ -184,7 +183,7 @@ def frame_for_day(cfg, d: date):
         print(f"  {d:%Y%m%d}: no out2d_*.nc found in any run directory. "
               f"Has the model run completed?")
         return
-    x, y, depth, triang = pc.load_mesh(out2d0)
+    x, y, depth, triang, _is_tri = pc.load_mesh(out2d0)
     boundaries = None
     for hp in (model_dir(cfg) / "fix" / "hgrid.ll",
                model_dir(cfg) / "fix" / "hgrid.gr3"):

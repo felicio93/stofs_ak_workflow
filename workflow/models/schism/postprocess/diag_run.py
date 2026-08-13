@@ -66,7 +66,7 @@ def diag_stack(cfg, ym: str, stack: int):
             print(f"  diag {ym} stack {stack}: no out2d file for mesh, skipping.")
             return
         out2d = stacks[0]
-    x, y, depth, triang = pc.load_mesh(out2d)
+    x, y, depth, triang, is_tri = pc.load_mesh(out2d)
 
     boundaries = None
     for hp in (mdir / "fix" / "hgrid.ll", mdir / "fix" / "hgrid.gr3"):
@@ -83,15 +83,17 @@ def diag_stack(cfg, ym: str, stack: int):
         name   = vc["var_name"]
         nc_path = outputs / f"{prefix}_{stack}.nc"
         if not nc_path.exists():
-            print(f"    {prefix}_{stack}.nc not found, skipping {name}.")
+            print(f"    WARNING: {prefix}_{stack}.nc not found, skipping {name}.")
             continue
 
-        ds = xr.open_dataset(str(nc_path), engine="h5netcdf",
-                             drop_variables=pc.SAFE_DROP)
+        ds = xr.open_dataset(str(nc_path), drop_variables=pc.SAFE_DROP)
         if name not in ds:
             ds.close()
-            print(f"    '{name}' not in {nc_path.name}, skipping.")
+            print(f"    WARNING: '{name}' not in {nc_path.name}, skipping "
+                  f"(check var_name / file_prefix in postprocess.yaml).")
             continue
+
+        is_elem = (vc["loc"] == "elem")
 
         arr = pc.extract_layer(ds[name], vc["layer"]) if vc["is_3d"] \
             else np.array(ds[name])
@@ -101,7 +103,11 @@ def diag_stack(cfg, ym: str, stack: int):
         for t_idx in range(arr.shape[0]):
             vals = arr[t_idx]
             if getattr(vals, "ndim", 1) > 1:
-                vals = vals.ravel()[:len(x)]
+                vals = vals.ravel()
+            if is_elem:
+                vals = pc.expand_elem_values(vals, is_tri)
+            else:
+                vals = vals[:len(x)]
             t = times[t_idx]
             ts = np.datetime_as_string(t, unit="h").replace(":", "").replace("-", "")
             fp = ddir / f"{name}__{ts}.jpg"
@@ -113,7 +119,7 @@ def diag_stack(cfg, ym: str, stack: int):
                 cbar_label=vc["label"], cmap=vc["cmap"],
                 vmin=vmin, vmax=vmax,
                 depth=depth, isobaths=isobaths,
-                dpi=dpi, boundaries=boundaries,
+                dpi=dpi, boundaries=boundaries, is_elem=is_elem,
             )
             made += 1
         ds.close()

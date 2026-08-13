@@ -135,7 +135,7 @@ ENV_SPECS = {
     "swf_plot": {
         "conda_packages": [
             "python=3.11", "xarray", "matplotlib", "cartopy", "imageio",
-            "netcdf4", "pandas", "numpy", "pyyaml", "python-dateutil",
+            "netcdf4", "h5netcdf", "pandas", "numpy", "pyyaml", "python-dateutil",
         ],
         "verify_imports": ["xarray", "matplotlib", "cartopy", "imageio",
                            "netCDF4", "pandas", "numpy", "yaml", "dateutil"],

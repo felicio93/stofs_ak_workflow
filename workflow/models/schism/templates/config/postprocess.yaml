@@ -18,12 +18,19 @@ isobaths: [200, 2000]
 #
 # Variable entry fields (shared by diag_run_vars and plot_outputs_vars):
 #   file_prefix : NetCDF filename prefix without _{N}.nc (e.g. out2d, temperature)
-#   var_name    : exact variable name inside the NetCDF
+#   var_name    : exact variable name inside the NetCDF (SCHISM New I/O name)
 #   label       : colorbar / title text (include units)
 #   cmap        : matplotlib colormap
 #   vmin / vmax : color limits (null = robust 2nd/98th percentile)
 #   is_3d       : true if the variable has a vertical (sigma) dimension
 #   layer       : "surface" | "bottom" | integer index (only used if is_3d)
+#   loc         : "node" (default) or "elem" (element-centered, e.g.
+#                 verticalVelAtElement) — elem fields are drawn as facecolors
+#
+# Any variable listed here that is NOT found in the model outputs/ is skipped
+# with a warning (so you can keep a full list and only the produced ones plot).
+#
+# diag_run_vars: the quick health-check subset plotted live during the run.
 diag_run_vars:
   - {file_prefix: out2d,          var_name: elevation,      label: "SSH (m)",   cmap: RdBu_r, vmin: -2,   vmax: 2,    is_3d: false}
   - {file_prefix: temperature,    var_name: temperature,    label: "SST (°C)",  cmap: jet,    vmin: -2,   vmax: 12,   is_3d: true, layer: surface}
@@ -35,12 +42,42 @@ diag_run_dpi: 150
 # =============================================================================
 # plot_outputs — full-run field GIFs (after the run completes)
 # =============================================================================
+# The full SCHISM New I/O variable set. Variables not present in your run's
+# outputs/ (e.g. modules you did not enable, or iof_* output flags left off in
+# param.nml) are skipped with a warning. Trim this list to what you output to
+# save time. 3D variables plot the "surface" layer by default (change `layer`
+# to "bottom" or an integer sigma index).
 plot_outputs_vars:
-  - {file_prefix: out2d,          var_name: elevation,      label: "Water Level (m)",           cmap: RdBu_r, vmin: -2,   vmax: 2,    is_3d: false}
-  - {file_prefix: temperature,    var_name: temperature,    label: "Sea Surface Temp (°C)",     cmap: jet,    vmin: -2,   vmax: 12,   is_3d: true, layer: surface}
-  - {file_prefix: salinity,       var_name: salinity,       label: "Sea Surface Salinity (psu)",cmap: viridis,vmin: 30,   vmax: 34.5, is_3d: true, layer: surface}
-  - {file_prefix: horizontalVelX, var_name: horizontalVelX, label: "Surface U (m/s)",           cmap: RdBu_r, vmin: -1.5, vmax: 1.5,  is_3d: true, layer: surface}
-  - {file_prefix: horizontalVelY, var_name: horizontalVelY, label: "Surface V (m/s)",           cmap: RdBu_r, vmin: -1.5, vmax: 1.5,  is_3d: true, layer: surface}
+  # --- 2D node-centered variables (from out2d_*.nc) ---
+  - {file_prefix: out2d, var_name: elevation,         label: "Water Level (m)",              cmap: RdBu_r,   vmin: -2,     vmax: 2,      is_3d: false}
+  - {file_prefix: out2d, var_name: airPressure,       label: "Air Pressure (Pa)",            cmap: viridis,  vmin: 96000,  vmax: 104000, is_3d: false}
+  - {file_prefix: out2d, var_name: airTemperature,    label: "Air Temperature (°C)",         cmap: RdYlBu_r, vmin: -15,    vmax: 25,     is_3d: false}
+  - {file_prefix: out2d, var_name: specificHumidity,  label: "Specific Humidity (kg/kg)",    cmap: YlGnBu,   vmin: 0,      vmax: 0.02,   is_3d: false}
+  - {file_prefix: out2d, var_name: solarRadiation,    label: "Solar Radiation (W/m²)",       cmap: YlOrRd,   vmin: 0,      vmax: 800,    is_3d: false}
+  - {file_prefix: out2d, var_name: sensibleHeat,      label: "Sensible Heat (W/m²)",         cmap: RdBu_r,   vmin: -100,   vmax: 300,    is_3d: false}
+  - {file_prefix: out2d, var_name: latentHeat,        label: "Latent Heat (W/m²)",           cmap: RdBu_r,   vmin: -50,    vmax: 400,    is_3d: false}
+  - {file_prefix: out2d, var_name: upwardLongwave,    label: "Upward Longwave (W/m²)",       cmap: YlOrRd,   vmin: 250,    vmax: 450,    is_3d: false}
+  - {file_prefix: out2d, var_name: downwardLongwave,  label: "Downward Longwave (W/m²)",     cmap: YlOrRd,   vmin: 150,    vmax: 450,    is_3d: false}
+  - {file_prefix: out2d, var_name: totalHeat,         label: "Total Heat Flux (W/m²)",       cmap: RdBu_r,   vmin: -400,   vmax: 400,    is_3d: false}
+  - {file_prefix: out2d, var_name: evaporationRate,   label: "Evaporation (kg/m²/s)",        cmap: YlGnBu,   vmin: 0,      vmax: 1.0e-4, is_3d: false}
+  - {file_prefix: out2d, var_name: precipitationRate, label: "Precipitation (kg/m²/s)",      cmap: YlGnBu,   vmin: 0,      vmax: 5.0e-4, is_3d: false}
+  - {file_prefix: out2d, var_name: windSpeedX,        label: "Wind U (m/s)",                 cmap: RdBu_r,   vmin: -25,    vmax: 25,     is_3d: false}
+  - {file_prefix: out2d, var_name: windSpeedY,        label: "Wind V (m/s)",                 cmap: RdBu_r,   vmin: -25,    vmax: 25,     is_3d: false}
+  - {file_prefix: out2d, var_name: windStressX,       label: "Wind Stress X (Pa)",           cmap: RdBu_r,   vmin: -0.01,  vmax: 0.01,   is_3d: false}
+  - {file_prefix: out2d, var_name: windStressY,       label: "Wind Stress Y (Pa)",           cmap: RdBu_r,   vmin: -0.01,  vmax: 0.01,   is_3d: false}
+  # --- 3D node-centered variables (one file per variable) ---
+  - {file_prefix: temperature,          var_name: temperature,          label: "Temperature (°C)",       cmap: jet,     vmin: -2,      vmax: 12,     is_3d: true, layer: surface}
+  - {file_prefix: salinity,             var_name: salinity,             label: "Salinity (psu)",         cmap: viridis, vmin: 30,      vmax: 34.5,   is_3d: true, layer: surface}
+  - {file_prefix: horizontalVelX,       var_name: horizontalVelX,       label: "Horizontal Vel X (m/s)", cmap: RdBu_r,  vmin: -1.5,    vmax: 1.5,    is_3d: true, layer: surface}
+  - {file_prefix: horizontalVelY,       var_name: horizontalVelY,       label: "Horizontal Vel Y (m/s)", cmap: RdBu_r,  vmin: -1.5,    vmax: 1.5,    is_3d: true, layer: surface}
+  - {file_prefix: verticalVelocity,     var_name: verticalVelocity,     label: "Vertical Velocity (m/s)",cmap: RdBu_r,  vmin: -5.0e-4, vmax: 5.0e-4, is_3d: true, layer: surface}
+  - {file_prefix: waterDensity,         var_name: waterDensity,         label: "Water Density (kg/m³)",  cmap: viridis, vmin: 1015,    vmax: 1028,   is_3d: true, layer: surface}
+  - {file_prefix: diffusivity,          var_name: diffusivity,          label: "Diffusivity (m²/s)",     cmap: viridis, vmin: 0,       vmax: 0.01,   is_3d: true, layer: surface}
+  - {file_prefix: viscosity,            var_name: viscosity,            label: "Viscosity (m²/s)",       cmap: viridis, vmin: 0,       vmax: 0.01,   is_3d: true, layer: surface}
+  - {file_prefix: turbulentKineticEner, var_name: turbulentKineticEner, label: "TKE (m²/s²)",            cmap: viridis, vmin: 0,       vmax: 0.01,   is_3d: true, layer: surface}
+  - {file_prefix: mixingLength,         var_name: mixingLength,         label: "Mixing Length (m)",      cmap: viridis, vmin: 0,       vmax: 0.5,    is_3d: true, layer: surface}
+  # --- 3D element-centered variable (loc: elem) ---
+  - {file_prefix: verticalVelAtElement, var_name: verticalVelAtElement, label: "Vertical Vel @ Elem (m/s)", cmap: RdBu_r, vmin: -0.01, vmax: 0.01,  is_3d: true, layer: surface, loc: elem}
 
 # Date range for the GIF (null = whole run). Format YYYY-MM-DD.
 plot_outputs_start: null

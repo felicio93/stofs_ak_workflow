@@ -161,7 +161,7 @@ def run_gen_estuary(cfg: dict):
     mdir      = model_dir(cfg)
     fix_dir   = mdir / "fix"
     bin_dir   = mdir / "bin"
-    threshold = float(cfg.get("estuary_depth_threshold", 3.0))
+    threshold = float(cfg.get("estuary_depth_threshold", -10.0))
 
     hgrid   = fix_dir / "hgrid.gr3"
     estuary = fix_dir / "estuary.gr3"

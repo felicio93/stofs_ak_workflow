@@ -24,9 +24,13 @@ lat_max:  78.0
 lon_reference: "360"
 
 # Depth threshold (meters) for estuary.gr3 generation.
-# Nodes with depth <= this value are marked as estuary (value=1).
-# Nodes deeper than this are open ocean (value=0).
-estuary_depth_threshold: 3.0
+# Nodes with depth <= this value are marked as estuary (value=1); all others
+# are open ocean (value=0, interpolated from HYCOM).
+# Set to a large negative number (e.g. -10) to mark NO nodes as estuary —
+# HYCOM interpolation is used everywhere (appropriate for all-ocean domains
+# like the Bering Sea where there are no estuaries to exclude).
+# Set to a small positive number (e.g. 3.0) to mark shallow coastal nodes.
+estuary_depth_threshold: -10.0
 
 # -----------------------------------------------------------------------------
 # Debug plotting options (used by the plotting_debug step).

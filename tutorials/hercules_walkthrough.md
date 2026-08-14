@@ -310,7 +310,7 @@ Re-run a month: `rm $SWF_PROJ/M01/I01/I01_202410/sflux/gen_sflux.done`.
 
 ## 7. Step 2 — Debug plots (SLURM job arrays, optional)
 
-HYCOM debug GIFs — set only `plotting_debug: true`; sflux GIFs — set only
+HYCOM debug GIFs — set only `plot_hycom: true`; sflux GIFs — set only
 `plot_sflux: true`.
 
 ```bash
@@ -710,7 +710,7 @@ stofs-ak --run --only download_hycom --config $CFG
 | `aggregate_hycom` | 2 | any | swf_main | no |
 | `gen_sflux` (submit) | 2 | login | swf_main | no |
 | gen_sflux jobs | 2 | compute | swf_main (auto) | no |
-| `plotting_debug` / `plot_sflux` (submit) | 2 | login | swf_main | no |
+| `plot_hycom` / `plot_sflux` (submit) | 2 | login | swf_main | no |
 | plotting jobs | 2 | compute | swf_plot (auto) | no |
 | `gen_estuary` / `gen_bctides` / `gen_source` / `gen_param` | 3 | any | swf_main | no |
 | `gen_hotstart` / `gen_3Dth` / `gen_nudge` (submit) | 3 | login | swf_main | no |
@@ -738,7 +738,7 @@ stofs-ak --run --only download_hycom --config $CFG
 | `download_glofas` | Skips existing annual files; stops on stale year |
 | `aggregate_hycom` | Skips months where `SSH_1/TS_1/UV_1.nc` exist |
 | `gen_sflux` | Skips months where `sflux/gen_sflux.done` exists |
-| `plotting_debug` | Re-submit; overwrites GIFs |
+| `plot_hycom` | Re-submit; overwrites GIFs |
 | `plot_sflux` | Skips months where `D01_YYYYMM/plot_sflux.done` exists |
 | `gen_estuary` | Skips if `estuary.gr3` and `bin/*.in` exist |
 | `gen_bctides` | Skips months where `bctides.done` exists |

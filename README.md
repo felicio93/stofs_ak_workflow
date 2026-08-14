@@ -46,7 +46,7 @@ Within the preprocessing phase, steps run in different execution contexts:
 |---------|--------------|----------|----------|
 | Downloads | Head node / DTN | Yes | `download_hycom`, `download_era5`, `download_glofas` |
 | Processing | Any node | No | `aggregate_hycom`, `gen_bctides`, `gen_source` |
-| SLURM jobs | Login node → compute | No | `inspect_mesh`, `plotting_debug`, `gen_sflux`, `gen_3Dth`, ... |
+| SLURM jobs | Login node → compute | No | `inspect_mesh`, `plot_hycom`, `gen_sflux`, `gen_3Dth`, ... |
 
 The orchestrator (`orchestrator.py`, exposed as the `stofs-ak` command) reads
 your configuration, builds the project directory tree, and dispatches the
@@ -417,13 +417,13 @@ stofs-ak --run --phase postprocess --config <config_dir>
    scripts refuse to run off a DTN unless `export ALLOW_NON_DTN=1`.
 2. **Aggregate (any node):** `aggregate_hycom` builds monthly `SSH_1/TS_1/UV_1`
    stacks.
-3. **SLURM steps (login node):** `inspect_mesh`, `plotting_debug`, `gen_sflux`,
+3. **SLURM steps (login node):** `inspect_mesh`, `plot_hycom`, `gen_sflux`,
    `plot_sflux`, `gen_hotstart`, `gen_3Dth`, `gen_nudge` — each renders a SLURM
    script and submits it. Monitor with `squeue -u $USER`; logs in `M{ID}/logs/`.
 4. **Interactive SCHISM inputs:** `gen_estuary` (once), `gen_bctides`,
    `gen_source`, `gen_param`.
 
-> **Note:** `download_hycom` (DTN, no `sbatch`) and `plotting_debug` (needs
+> **Note:** `download_hycom` (DTN, no `sbatch`) and `plot_hycom` (needs
 > `sbatch`) cannot both succeed in one invocation on the same node. Run them
 > separately; the driver warns if both are enabled.
 
@@ -499,7 +499,7 @@ stofs-ak --run --phase postprocess --only compare_sst   --config <cfg>
 | `inspect_mesh` | 0 | ✅ Done |
 | `download_hycom` / `download_era5` / `download_glofas` | 1 | ✅ Done |
 | `aggregate_hycom` | 2 | ✅ Done |
-| `plotting_debug` / `plot_sflux` | 2 | ✅ Done |
+| `plot_hycom` / `plot_sflux` | 2 | ✅ Done |
 | `gen_sflux` | 2 | ✅ Done |
 | `gen_estuary` / `gen_bctides` / `gen_source` / `gen_param` | 3 | ✅ Done |
 | `gen_hotstart` / `gen_3Dth` / `gen_nudge` | 3 | ✅ Done |

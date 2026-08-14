@@ -22,8 +22,8 @@ download_glofas: false   # Download GloFAS v4 reanalysis discharge (one file per
 # Phase 2 — Any node, no internet required:
 aggregate_hycom: false  # Concatenate HYCOM daily -> monthly SCHISM stacks
 
-# plotting_debug submits SLURM job arrays (one task per month).
-plotting_debug: false   # HYCOM debug GIFs (temperature, salinity, ssh)
+# plot_hycom submits SLURM job arrays (one task per month).
+plot_hycom: false   # HYCOM debug GIFs (temperature, salinity, ssh)
 plot_sflux:     false   # ERA5/sflux debug GIFs (6-hourly, all variables)
 
 # Phase 3 — SCHISM preprocessing (no internet required):

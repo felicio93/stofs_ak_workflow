@@ -17,7 +17,7 @@ TEMPLATES_DIR = (Path(__file__).resolve().parent.parent
 
 
 def submit_plotting_jobs(cfg: dict, config_dir: Path) -> str:
-    """Submit plotting_debug job array. Returns job ID or ''."""
+    """Submit plot_hycom job array. Returns job ID or ''."""
     pid    = cfg["project_id"]
     mdir   = model_dir(cfg)
     ddir   = mdir / f"D{pid}"
@@ -28,7 +28,7 @@ def submit_plotting_jobs(cfg: dict, config_dir: Path) -> str:
     nmonths = len(months)
     manifest = write_manifest(months, ddir / "plot_months.manifest")
 
-    py = env_python(cfg, "plotting_debug", default="swf_plot")
+    py = env_python(cfg, "plot_hycom", default="swf_plot")
 
     slurm = cfg.get("slurm", {})
     subs = {

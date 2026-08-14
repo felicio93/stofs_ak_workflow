@@ -11,7 +11,7 @@ workflow.models.base.make_driver and calls preprocess()/run()/postprocess().
 Phase map (steps.yaml flags):
   Phase 0  inspect_mesh                              -> diagnostics.submit_inspect_mesh
   Phase 1  download_{hycom,era5,glofas}              -> workflow.downloaders.*  (DTN)
-  Phase 2  aggregate_hycom, plotting_debug,
+  Phase 2  aggregate_hycom, plot_hycom,
            gen_sflux, plot_sflux
   Phase 3  gen_estuary, gen_bctides, gen_source,
            gen_param, gen_hotstart, gen_3Dth, gen_nudge
@@ -80,13 +80,13 @@ class SchismDriver(ModelDriver):
         else:
             print("[SKIP] aggregate_hycom")
 
-        if en("plotting_debug"):
-            print("[STEP] plotting_debug")
+        if en("plot_hycom"):
+            print("[STEP] plot_hycom")
             from workflow.diagnostics.submit_plots import submit_plotting_jobs
             jid = submit_plotting_jobs(cfg, config_dir)
             if jid: _slurm_jobs.append(jid)
         else:
-            print("[SKIP] plotting_debug")
+            print("[SKIP] plot_hycom")
 
         if en("gen_sflux"):
             print("[STEP] gen_sflux")
@@ -179,14 +179,14 @@ class SchismDriver(ModelDriver):
     # Internal helpers
     # -------------------------------------------------------------------------
     def _preprocess_compat_warning(self, only):
-        """download_hycom (DTN, no sbatch) and plotting_debug (needs sbatch)
+        """download_hycom (DTN, no sbatch) and plot_hycom (needs sbatch)
         generally cannot succeed in one invocation on the same node."""
-        if only is None and self.enabled("download_hycom") and self.enabled("plotting_debug"):
+        if only is None and self.enabled("download_hycom") and self.enabled("plot_hycom"):
             print(f"\n  {'!'*58}")
-            print("  WARNING: download_hycom and plotting_debug are both enabled.")
+            print("  WARNING: download_hycom and plot_hycom are both enabled.")
             print("  These run in different contexts and usually cannot succeed in")
             print("  one invocation on a single node:")
             print("    - download_hycom needs the DTN (internet, no sbatch)")
-            print("    - plotting_debug needs a node with sbatch (login node)")
+            print("    - plot_hycom needs a node with sbatch (login node)")
             print("  Run them separately. Continuing with enabled steps in order...")
             print(f"  {'!'*58}")

@@ -30,7 +30,7 @@ end_date:   "2026-06-30"
 grouping: monthly
 
 # -----------------------------------------------------------------------------
-# SLURM settings (used by steps that submit jobs, e.g. plotting_debug).
+# SLURM settings (used by steps that submit jobs, e.g. plot_hycom).
 # -----------------------------------------------------------------------------
 slurm:
   account: nos-surge
@@ -57,7 +57,7 @@ slurm:
   compare_sst_mem: "32G"     # per-day model daily-mean + satellite frame
   compare_sst_gif_walltime: "00:30:00"
   compare_sst_gif_mem: "16G"
-  diag_run_walltime: "00:15:00"
+  diag_run_walltime: "00:45:00"
   diag_run_mem: "16G"        # per-stack diagnostic frames during the run
 
 # -----------------------------------------------------------------------------

@@ -236,7 +236,7 @@ def run_workflow(cfg: dict, config_dir: Path, phase: str = "preprocess",
     When phase='all', the orchestrator inserts a wait barrier between the
     preprocess and run phases: it collects the SLURM job IDs of all async
     SLURM submissions made during preprocessing (gen_hotstart, gen_3Dth,
-    gen_nudge, gen_sflux, plotting_debug, inspect_mesh) and polls squeue
+    gen_nudge, gen_sflux, plot_hycom, inspect_mesh) and polls squeue
     until they all leave the queue. This prevents the run phase (setup_run)
     from checking for output files before the SLURM jobs have written them.
     """

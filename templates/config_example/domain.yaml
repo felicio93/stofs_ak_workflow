@@ -33,7 +33,7 @@ lon_reference: "360"
 estuary_depth_threshold: -10.0
 
 # -----------------------------------------------------------------------------
-# Debug plotting options (used by the plotting_debug step).
+# Debug plotting options (used by the plot_hycom step).
 # -----------------------------------------------------------------------------
 # Colormap for all HYCOM debug plots.
 plot_cmap: jet

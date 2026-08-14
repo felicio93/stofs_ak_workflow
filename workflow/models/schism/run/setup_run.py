@@ -229,7 +229,7 @@ def _render_diag_sbatch(cfg: dict, mdir: Path, rdir: Path, config_dir: Path) -> 
         "ACCOUNT":    slurm.get("account",             "nos-surge"),
         "PARTITION":  slurm.get("partition",            "hercules-2"),
         "MEM":        slurm.get("diag_run_mem",         "16G"),
-        "WALLTIME":   slurm.get("diag_run_walltime",    "00:15:00"),
+        "WALLTIME":   slurm.get("diag_run_walltime",    "00:45:00"),
         "LOGDIR":     str(mdir / "logs"),
         "MAILUSER":   slurm.get("mail_user",            "felicio.cassalho@noaa.gov"),
         "PY":         env_python(cfg, "diag_run_plots", default="swf_plot"),

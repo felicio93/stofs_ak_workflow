@@ -313,7 +313,6 @@ def gen_sflux_month(cfg: dict, ym: str):
     # namelist don't need it here (SCHISM reads start_date from param.nml),
     # and newer builds that removed those variables won't crash on them.
     (sflux_dir / "sflux_inputs.txt").write_text("&sflux_inputs\n/\n")
-    (sflux_dir / "sflux_inputs.txt").write_text(sflux_inputs)
     print(f"  Written: sflux_inputs.txt")
 
     sentinel.touch()

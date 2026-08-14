@@ -303,6 +303,37 @@ def _setup_month(cfg: dict, mdir: Path, ym: str, month_index: int,
             print(f"    {m}")
         return False
 
+    # -----------------------------------------------------------------------
+    # Sentinel checks for SLURM-generated inputs.
+    #
+    # Unlike interactive steps (gen_bctides, gen_param, gen_source) which fail
+    # synchronously, SLURM steps are fire-and-forget.  A missing sentinel means
+    # either the job crashed before finishing or hasn't run yet.  We check
+    # before trying to symlink so the error message is actionable rather than
+    # a cryptic "required input missing".
+    #
+    # Under --phase all the wait_for_slurm_jobs barrier already guarantees all
+    # SLURM jobs have LEFT the queue, so a missing sentinel here unambiguously
+    # means the job failed.  Under --phase run (manual) the same check catches
+    # both "still running" and "failed" with the same guidance: wait / rerun.
+    # -----------------------------------------------------------------------
+    def _check_sentinel(sentinel_path: Path, step: str) -> bool:
+        if not sentinel_path.exists():
+            print(f"  ERROR {ym}: '{step}' has not completed successfully.")
+            print(f"    Missing sentinel: {sentinel_path}")
+            print(f"    Either the SLURM job is still running, or it failed.")
+            print(f"    Re-run:  stofs-ak --run --only {step} --config <cfg>")
+            print(f"    Then re-run setup_run once it completes.")
+            return False
+        return True
+
+    if not _check_sentinel(idir / "gen_3Dth.done",  "gen_3Dth"):  return False
+    if not _check_sentinel(idir / "gen_nudge.done", "gen_nudge"): return False
+    sflux_sentinel = idir / "sflux" / "gen_sflux.done"
+    if not _check_sentinel(sflux_sentinel, "gen_sflux"): return False
+    if month_index == 0:
+        if not _check_sentinel(idir / "gen_hotstart.done", "gen_hotstart"): return False
+
     # --- symlink static fix/ files ---
     for name in FIX_LINKS:
         if not _link(fix / name, rdir / name):

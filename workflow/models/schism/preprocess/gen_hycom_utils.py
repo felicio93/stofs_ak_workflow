@@ -92,7 +92,8 @@ def _check_in_files(bin_dir: Path, names: list):
 # Step F — gen_hotstart (single job, first month only)
 # =============================================================================
 
-def submit_gen_hotstart(cfg: dict, config_dir: Path):
+def submit_gen_hotstart(cfg: dict, config_dir: Path) -> str:
+    """Submit gen_hotstart. Returns the job ID string, or '' if skipped."""
     print(REMINDERS)
 
     pid    = cfg["project_id"]
@@ -112,7 +113,7 @@ def submit_gen_hotstart(cfg: dict, config_dir: Path):
     if (idir / "gen_hotstart.done").exists():
         print(f"  gen_hotstart already complete (sentinel found in "
               f"I{pid}_{first}). Skipping.")
-        return
+        return ""
 
     subs = _common_subs(cfg, mdir)
     subs.update({
@@ -125,16 +126,18 @@ def submit_gen_hotstart(cfg: dict, config_dir: Path):
 
     submitter = SlurmSubmitter(TEMPLATES_DIR)
     print(f"  Submitting gen_hotstart for month {first} ...")
-    submitter.render_and_submit("gen_hotstart.sbatch", subs,
-                                logdir / "gen_hotstart.sbatch")
+    out = submitter.render_and_submit("gen_hotstart.sbatch", subs,
+                                      logdir / "gen_hotstart.sbatch")
     print(f"  Log: {logdir}/gen_hotstart.out")
+    return SlurmSubmitter.parse_jobid(out)
 
 
 # =============================================================================
 # Step G — gen_3Dth (array, every month)
 # =============================================================================
 
-def submit_gen_3Dth(cfg: dict, config_dir: Path):
+def submit_gen_3Dth(cfg: dict, config_dir: Path) -> str:
+    """Submit gen_3Dth array. Returns the job ID string, or '' if skipped."""
     print(REMINDERS)
 
     pid    = cfg["project_id"]
@@ -159,7 +162,7 @@ def submit_gen_3Dth(cfg: dict, config_dir: Path):
 
     if not pending:
         print("  All months already complete. Nothing to submit.")
-        return
+        return ""
 
     manifest = write_manifest(pending, logdir / "gen_3Dth_months.manifest")
     nmonths = len(pending)
@@ -177,17 +180,19 @@ def submit_gen_3Dth(cfg: dict, config_dir: Path):
     submitter = SlurmSubmitter(TEMPLATES_DIR)
     print(f"  Submitting gen_3Dth array: {nmonths} month(s) "
           f"({pending[0]} -> {pending[-1]})")
-    submitter.render_and_submit("gen_3Dth.sbatch", subs,
-                                logdir / "gen_3Dth.sbatch")
+    out = submitter.render_and_submit("gen_3Dth.sbatch", subs,
+                                      logdir / "gen_3Dth.sbatch")
     print(f"  Monitor: squeue -u $USER")
     print(f"  Logs: {logdir}/gen_3Dth_*.out")
+    return SlurmSubmitter.parse_jobid(out)
 
 
 # =============================================================================
 # Step H — gen_nudge (array, every month)
 # =============================================================================
 
-def submit_gen_nudge(cfg: dict, config_dir: Path):
+def submit_gen_nudge(cfg: dict, config_dir: Path) -> str:
+    """Submit gen_nudge array. Returns the job ID string, or '' if skipped."""
     print(REMINDERS)
 
     pid    = cfg["project_id"]
@@ -212,7 +217,7 @@ def submit_gen_nudge(cfg: dict, config_dir: Path):
 
     if not pending:
         print("  All months already complete. Nothing to submit.")
-        return
+        return ""
 
     manifest = write_manifest(pending, logdir / "gen_nudge_months.manifest")
     nmonths = len(pending)
@@ -230,7 +235,8 @@ def submit_gen_nudge(cfg: dict, config_dir: Path):
     submitter = SlurmSubmitter(TEMPLATES_DIR)
     print(f"  Submitting gen_nudge array: {nmonths} month(s) "
           f"({pending[0]} -> {pending[-1]})")
-    submitter.render_and_submit("gen_nudge.sbatch", subs,
-                                logdir / "gen_nudge.sbatch")
+    out = submitter.render_and_submit("gen_nudge.sbatch", subs,
+                                      logdir / "gen_nudge.sbatch")
     print(f"  Monitor: squeue -u $USER")
     print(f"  Logs: {logdir}/gen_nudge_*.out")
+    return SlurmSubmitter.parse_jobid(out)

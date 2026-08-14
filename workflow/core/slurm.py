@@ -118,3 +118,41 @@ def write_manifest(months, manifest_path: Path) -> Path:
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text("\n".join(months) + "\n")
     return manifest_path
+
+
+def wait_for_slurm_jobs(job_ids: list, poll_seconds: int = 30,
+                        label: str = "preprocess SLURM jobs"):
+    """Block until all given SLURM job IDs have left the queue.
+
+    Polls `squeue` every `poll_seconds` seconds and returns when none of the
+    job IDs appear in the queue. Empty / None IDs in the list are ignored.
+    Used by `--phase all` to ensure Phase 3 async SLURM jobs (gen_hotstart,
+    gen_3Dth, gen_nudge, gen_sflux, etc.) have completed before Phase 4
+    (setup_run) starts checking for their output files.
+    """
+    import os
+    import time
+    import subprocess
+
+    active = [str(j) for j in job_ids if j]
+    if not active:
+        return
+
+    user = os.environ.get("USER", os.environ.get("LOGNAME", ""))
+    queue_cmd = f"squeue -u {user} -h -o '%i'"
+
+    print(f"\n  [--phase all] Waiting for {len(active)} {label} to complete "
+          f"before starting the run phase ...")
+    print(f"  Job IDs: {', '.join(active)}")
+
+    while True:
+        result = subprocess.run(queue_cmd, shell=True,
+                                capture_output=True, text=True)
+        queued = set(result.stdout.split())
+        still_running = [j for j in active if j in queued]
+        if not still_running:
+            print(f"  All {label} have completed. Proceeding to run phase.")
+            break
+        print(f"  Still pending/running: {', '.join(still_running)}. "
+              f"Checking again in {poll_seconds}s ...")
+        time.sleep(poll_seconds)

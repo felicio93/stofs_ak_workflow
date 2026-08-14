@@ -19,7 +19,8 @@ TEMPLATES_DIR = (Path(__file__).resolve().parent.parent
                  / "models" / "schism" / "templates" / "slurm")
 
 
-def submit_inspect_mesh(cfg: dict, config_dir: Path):
+def submit_inspect_mesh(cfg: dict, config_dir: Path) -> str:
+    """Submit inspect_mesh job. Returns job ID or '' if skipped."""
     pid  = cfg["project_id"]
     mdir = model_dir(cfg)
     out  = mdir / f"D{pid}" / f"D{pid}_fix"
@@ -28,7 +29,7 @@ def submit_inspect_mesh(cfg: dict, config_dir: Path):
     sentinel = out / "inspect_mesh.done"
     if sentinel.exists():
         print("  inspect_mesh already complete (sentinel found). Skipping.")
-        return
+        return ""
 
     logdir = mdir / "logs"
     logdir.mkdir(parents=True, exist_ok=True)
@@ -52,7 +53,8 @@ def submit_inspect_mesh(cfg: dict, config_dir: Path):
     submitter = SlurmSubmitter(TEMPLATES_DIR)
     print(f"  Output directory: {out}")
     print(f"  Interpreter:      {py}")
-    submitter.render_and_submit("inspect_mesh.sbatch", subs,
-                                logdir / "inspect_mesh.sbatch")
+    out_str = submitter.render_and_submit("inspect_mesh.sbatch", subs,
+                                          logdir / "inspect_mesh.sbatch")
     print(f"  Monitor: squeue -u $USER")
     print(f"  Log:     {logdir}/inspect_mesh.out")
+    return SlurmSubmitter.parse_jobid(out_str)

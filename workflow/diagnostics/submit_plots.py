@@ -16,7 +16,8 @@ TEMPLATES_DIR = (Path(__file__).resolve().parent.parent
                  / "models" / "schism" / "templates" / "slurm")
 
 
-def submit_plotting_jobs(cfg: dict, config_dir: Path):
+def submit_plotting_jobs(cfg: dict, config_dir: Path) -> str:
+    """Submit plotting_debug job array. Returns job ID or ''."""
     pid    = cfg["project_id"]
     mdir   = model_dir(cfg)
     ddir   = mdir / f"D{pid}"
@@ -50,6 +51,8 @@ def submit_plotting_jobs(cfg: dict, config_dir: Path):
     print(f"  Month manifest: {manifest}  ({nmonths} months)")
     print(f"  Interpreter:    {py}")
     print(f"  Submitting job array 1-{nmonths} ...")
-    submitter.render_and_submit("plot_hycom.sbatch", subs,
-                                ddir / "plot_hycom.sbatch")
+    out = submitter.render_and_submit("plot_hycom.sbatch", subs,
+                                      ddir / "plot_hycom.sbatch")
     print(f"  Monitor: squeue -u $USER | Logs: {logdir}")
+    from workflow.core.slurm import SlurmSubmitter as _S
+    return _S.parse_jobid(out)

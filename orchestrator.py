@@ -232,11 +232,20 @@ def run_workflow(cfg: dict, config_dir: Path, phase: str = "preprocess",
       run                   — populate run dirs + launch monthly runs
       postprocess           — output plots, validation, skill metrics
       all                   — preprocess -> run -> postprocess in sequence
+
+    When phase='all', the orchestrator inserts a wait barrier between the
+    preprocess and run phases: it collects the SLURM job IDs of all async
+    SLURM submissions made during preprocessing (gen_hotstart, gen_3Dth,
+    gen_nudge, gen_sflux, plotting_debug, inspect_mesh) and polls squeue
+    until they all leave the queue. This prevents the run phase (setup_run)
+    from checking for output files before the SLURM jobs have written them.
     """
     _phase_mismatch_warnings(cfg, phase, only)
 
     driver = make_driver(cfg, config_dir)
     phases = ["preprocess", "run", "postprocess"] if phase == "all" else [phase]
+
+    _preprocess_slurm_jobs = []
 
     for ph in phases:
         print(f"\n{'='*60}")
@@ -246,9 +255,22 @@ def run_workflow(cfg: dict, config_dir: Path, phase: str = "preprocess",
         print(f"{'='*60}\n")
 
         if ph == "preprocess":
-            driver.preprocess(only=only)
+            result = driver.preprocess(only=only)
+            # Collect async SLURM job IDs returned by preprocess().
+            if isinstance(result, list):
+                _preprocess_slurm_jobs = [j for j in result if j]
+
         elif ph == "run":
+            # If running all phases, wait for preprocess SLURM jobs first.
+            if phase == "all" and _preprocess_slurm_jobs:
+                from workflow.core.slurm import wait_for_slurm_jobs
+                wait_for_slurm_jobs(
+                    _preprocess_slurm_jobs,
+                    poll_seconds=30,
+                    label="Phase 3 SLURM jobs (gen_hotstart/gen_3Dth/gen_nudge/gen_sflux/...)"
+                )
             driver.run(only=only)
+
         elif ph == "postprocess":
             driver.postprocess(only=only)
 

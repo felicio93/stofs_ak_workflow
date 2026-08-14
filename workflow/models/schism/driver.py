@@ -29,6 +29,8 @@ class SchismDriver(ModelDriver):
 
     # -------------------------------------------------------------------------
     # Phase 1-3 — Pre-processing
+    # Returns a list of async SLURM job IDs that must complete before Phase 4
+    # can safely start (used by --phase all via preprocess_slurm_jobs()).
     # -------------------------------------------------------------------------
     def preprocess(self, only: str = None):
         cfg, config_dir = self.cfg, self.config_dir
@@ -36,11 +38,15 @@ class SchismDriver(ModelDriver):
 
         self._preprocess_compat_warning(only)
 
+        # Collect job IDs of async SLURM submissions so --phase all can wait.
+        _slurm_jobs = []
+
         # --- Phase 0: mesh diagnostics --------------------------------------
         if en("inspect_mesh"):
             print("[STEP] inspect_mesh")
             from workflow.diagnostics.submit_inspect_mesh import submit_inspect_mesh
-            submit_inspect_mesh(cfg, config_dir)
+            jid = submit_inspect_mesh(cfg, config_dir)
+            if jid: _slurm_jobs.append(jid)
         else:
             print("[SKIP] inspect_mesh")
 
@@ -77,7 +83,8 @@ class SchismDriver(ModelDriver):
         if en("plotting_debug"):
             print("[STEP] plotting_debug")
             from workflow.diagnostics.submit_plots import submit_plotting_jobs
-            submit_plotting_jobs(cfg, config_dir)
+            jid = submit_plotting_jobs(cfg, config_dir)
+            if jid: _slurm_jobs.append(jid)
         else:
             print("[SKIP] plotting_debug")
 
@@ -85,6 +92,7 @@ class SchismDriver(ModelDriver):
             print("[STEP] gen_sflux")
             from workflow.models.schism.preprocess.submit_era5 import submit_gen_sflux
             _gen_sflux_jobid = submit_gen_sflux(cfg, config_dir)
+            if _gen_sflux_jobid: _slurm_jobs.append(_gen_sflux_jobid)
         else:
             print("[SKIP] gen_sflux")
             _gen_sflux_jobid = ""
@@ -92,7 +100,8 @@ class SchismDriver(ModelDriver):
         if en("plot_sflux"):
             print("[STEP] plot_sflux")
             from workflow.models.schism.preprocess.submit_era5 import submit_plot_sflux
-            submit_plot_sflux(cfg, config_dir, after_jobid=_gen_sflux_jobid)
+            jid = submit_plot_sflux(cfg, config_dir, after_jobid=_gen_sflux_jobid)
+            if jid: _slurm_jobs.append(jid)
         else:
             print("[SKIP] plot_sflux")
 
@@ -128,23 +137,29 @@ class SchismDriver(ModelDriver):
         if en("gen_hotstart"):
             print("[STEP] gen_hotstart")
             from workflow.models.schism.preprocess.gen_hycom_utils import submit_gen_hotstart
-            submit_gen_hotstart(cfg, config_dir)
+            jid = submit_gen_hotstart(cfg, config_dir)
+            if jid: _slurm_jobs.append(jid)
         else:
             print("[SKIP] gen_hotstart")
 
         if en("gen_3Dth"):
             print("[STEP] gen_3Dth")
             from workflow.models.schism.preprocess.gen_hycom_utils import submit_gen_3Dth
-            submit_gen_3Dth(cfg, config_dir)
+            jid = submit_gen_3Dth(cfg, config_dir)
+            if jid: _slurm_jobs.append(jid)
         else:
             print("[SKIP] gen_3Dth")
 
         if en("gen_nudge"):
             print("[STEP] gen_nudge")
             from workflow.models.schism.preprocess.gen_hycom_utils import submit_gen_nudge
-            submit_gen_nudge(cfg, config_dir)
+            jid = submit_gen_nudge(cfg, config_dir)
+            if jid: _slurm_jobs.append(jid)
         else:
             print("[SKIP] gen_nudge")
+
+        # Return collected job IDs so --phase all can wait for them.
+        return _slurm_jobs
 
     # -------------------------------------------------------------------------
     # Phase 4 — Run management

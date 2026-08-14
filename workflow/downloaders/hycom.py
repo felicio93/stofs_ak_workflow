@@ -21,9 +21,19 @@ For TS and UV, both variables are fetched (from combined OR separate sources)
 and merged into a single ts_YYYYMMDD.nc / uv_YYYYMMDD.nc so that the aggregate
 step and the SCHISM Fortran tools see an identical format regardless of epoch.
 
-Includes a per-month "stale data" sanity check: if the first and last day of a
-month have identical field means, the data is almost certainly not being
-downloaded correctly (e.g. an expired aggregation echoing its last timestep).
+Includes two per-month data quality checks run after downloading each month:
+
+  1. Constant-field detection: every depth level of every variable in every
+     daily file is checked for zero variance over valid (non-fill) points. A
+     level that is spatially constant (std < 1e-6) across the entire domain
+     indicates a corrupt or failed HYCOM forecast cycle. Up to 3 consecutive
+     bad days are automatically repaired by linear interpolation from the
+     nearest good neighbors; the original corrupt file is preserved as
+     <filename>.nc.bad. More than 3 consecutive bad days triggers an error.
+
+  2. Stale-data check: if the first and last day of a month have identical
+     field means, the data is almost certainly not being downloaded correctly
+     (e.g. an expired aggregation echoing its last timestep).
 
 - Resume-safe (skips valid files, atomic finalize).
 - Applies longitude reference frame handling based on domain.yaml.
@@ -40,9 +50,11 @@ import socket
 import subprocess
 import sys
 from calendar import monthrange
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
+import numpy as np
+import netCDF4 as nc4
 import yaml
 
 from workflow.core.config import ProgressTracker, DebugLog
@@ -477,6 +489,333 @@ def stale_check_month(ym, ssh_dir, ts_dir, uv_dir, tmp_dir):
 
 
 # =============================================================================
+# Data quality check and repair
+# =============================================================================
+
+# Variables to inspect per product, and whether a depth dimension is present.
+_PRODUCT_VARS = {
+    "ts":  (["water_temp", "salinity"], True),
+    "uv":  (["water_u",    "water_v"],  True),
+    "ssh": (["surf_el"],                False),
+}
+
+# A field is flagged as constant (corrupted) when its std over valid
+# (non-fill, non-masked) points is below this threshold.
+_CONSTANT_STD_THRESHOLD = 1e-6
+
+# Maximum number of consecutive bad days before we refuse to interpolate
+# and raise an error instead.
+_MAX_CONSECUTIVE_BAD = 3
+
+
+def check_constant_field(nc_file: Path, product: str) -> list:
+    """
+    Inspect every variable (and every depth level for 3-D products) in
+    *nc_file* for constant fields.
+
+    A field is "constant" when all valid (non-fill / non-masked) points share
+    the same value, i.e. std < _CONSTANT_STD_THRESHOLD while valid_pts > 0.
+
+    Returns a list of human-readable strings describing each bad variable/level
+    combination (empty list means the file is clean).
+    """
+    varnames, has_depth = _PRODUCT_VARS.get(product, ([], False))
+    issues = []
+    try:
+        ds = nc4.Dataset(nc_file)
+        try:
+            for varname in varnames:
+                if varname not in ds.variables:
+                    continue
+                data = ds.variables[varname][:]   # shape: (time, [depth,] ylat, xlon)
+                # Collapse the time dimension (always 1 record per raw file).
+                if data.ndim == 4:
+                    data = data[0]   # -> (depth, ylat, xlon)
+                elif data.ndim == 3:
+                    data = data[0]   # -> (ylat, xlon)
+                # data may be a masked array; convert fill values to masked.
+                if not isinstance(data, np.ma.MaskedArray):
+                    fv = getattr(ds.variables[varname], '_FillValue', None)
+                    if fv is not None:
+                        data = np.ma.masked_equal(data, fv)
+                    else:
+                        data = np.ma.array(data)
+
+                if has_depth and data.ndim == 3:
+                    n_levels = data.shape[0]
+                    for k in range(n_levels):
+                        sl = data[k]
+                        valid_pts = int(sl.count())
+                        if valid_pts == 0:
+                            continue   # fully masked (ocean-less) level — OK
+                        std = float(sl.std())
+                        if std < _CONSTANT_STD_THRESHOLD:
+                            issues.append(
+                                f"{varname} level {k}: std={std:.2e}, "
+                                f"mean={float(sl.mean()):.4f}, "
+                                f"valid_pts={valid_pts}"
+                            )
+                else:
+                    # 2-D field (SSH) or already sliced.
+                    sl = data
+                    valid_pts = int(sl.count())
+                    if valid_pts > 0:
+                        std = float(sl.std())
+                        if std < _CONSTANT_STD_THRESHOLD:
+                            issues.append(
+                                f"{varname}: std={std:.2e}, "
+                                f"mean={float(sl.mean()):.4f}, "
+                                f"valid_pts={valid_pts}"
+                            )
+        finally:
+            ds.close()
+    except Exception as exc:
+        issues.append(f"could not open/read file: {exc}")
+    return issues
+
+
+def _interp_nc(prev_file: Path, next_file: Path,
+               bad_date: date, prev_date: date, next_date: date,
+               product: str, out_file: Path):
+    """
+    Write a linearly interpolated NetCDF for *bad_date* between *prev_file*
+    (at *prev_date*) and *next_file* (at *next_date*) into *out_file*.
+
+    Strategy:
+    - Copy *prev_file* as the structural template (dimensions, coordinates,
+      attributes, time value).
+    - Overwrite every data variable with a weighted linear interpolation:
+        alpha = (bad_date - prev_date).days / (next_date - prev_date).days
+        interp = (1 - alpha) * prev_val + alpha * next_val
+    - When only one neighbor is available (prev or next is None-equivalent,
+      indicated by passing the same file for both), use nearest-neighbor copy.
+    - Add a global attribute documenting the repair.
+    """
+    varnames, _ = _PRODUCT_VARS.get(product, ([], False))
+    total_days = (next_date - prev_date).days
+    alpha = (bad_date - prev_date).days / total_days if total_days > 0 else 0.5
+
+    shutil.copy2(prev_file, out_file)
+
+    ds_out  = nc4.Dataset(out_file,  'r+')
+    ds_prev = nc4.Dataset(prev_file, 'r')
+    ds_next = nc4.Dataset(next_file, 'r')
+    try:
+        for varname in varnames:
+            if varname not in ds_prev.variables:
+                continue
+            v_prev = ds_prev.variables[varname][:]
+            v_next = ds_next.variables[varname][:]
+            # Both arrays should be float; handle masked arrays safely.
+            p = np.ma.filled(v_prev.astype(np.float64), np.nan)
+            n = np.ma.filled(v_next.astype(np.float64), np.nan)
+            interp = (1.0 - alpha) * p + alpha * n
+            # Restore original dtype and fill value.
+            fv = getattr(ds_prev.variables[varname], '_FillValue', -30000.0)
+            interp = np.where(np.isnan(interp), fv, interp)
+            ds_out.variables[varname][:] = interp.astype(
+                ds_prev.variables[varname].dtype)
+
+        # Tag the file so it is self-documenting.
+        timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        ds_out.repaired_by_workflow = (
+            f"interpolated from {prev_file.name} (weight {1-alpha:.3f}) "
+            f"and {next_file.name} (weight {alpha:.3f}) "
+            f"on {timestamp} (UTC)"
+        )
+    finally:
+        ds_out.close()
+        ds_prev.close()
+        ds_next.close()
+
+
+def quality_check_and_repair_month(
+        ym: str,
+        ssh_dir: Path, ts_dir: Path, uv_dir: Path,
+        tmp_dir: Path) -> bool:
+    """
+    Scan every downloaded daily file for *ym* (YYYYMM) across all three
+    products (ts, uv, ssh) for corrupted/constant fields.
+
+    For each product independently:
+    - Collect all bad days (days whose file has at least one constant field).
+    - Find consecutive runs of bad days.
+    - If any run exceeds _MAX_CONSECUTIVE_BAD days: print an ERROR and return
+      False (caller will abort the workflow).
+    - Otherwise repair each bad day by linear interpolation between the
+      nearest good neighbors, rename the original to <name>.bad, write the
+      repaired file in its place, and tag it with a global NetCDF attribute.
+
+    All detections and repairs are printed to screen (WARNING prefix) and
+    written to the module-level debug log.
+
+    Returns True if all checks passed (and all needed repairs succeeded),
+    False if an unrecoverable problem was found.
+    """
+
+    prod_dirs = {"ts": ts_dir, "uv": uv_dir, "ssh": ssh_dir}
+    year, month = int(ym[:4]), int(ym[4:])
+    ndays = monthrange(year, month)[1]
+
+    all_ok = True
+
+    for product, vdir in prod_dirs.items():
+        # Build the ordered list of (date, file_path) for this month.
+        month_files = []
+        for d in range(1, ndays + 1):
+            flat = f"{ym}{d:02d}"
+            f = vdir / f"{product}_{flat}.nc"
+            if f.exists() and f.stat().st_size > 0:
+                month_files.append((date(year, month, d), f))
+
+        if not month_files:
+            continue
+
+        # --- Scan for bad days ---
+        bad_days = []   # list of (date, file_path, issues_list)
+        for day_date, fpath in month_files:
+            issues = check_constant_field(fpath, product)
+            if issues:
+                flat = day_date.strftime("%Y%m%d")
+                msg = (f"WARNING: [{product.upper()} {flat}] corrupted/constant "
+                       f"field detected in {fpath.name}:")
+                print(f"  {msg}")
+                _dbg(msg)
+                for iss in issues:
+                    print(f"    - {iss}")
+                    _dbg(f"    - {iss}")
+                bad_days.append((day_date, fpath, issues))
+
+        if not bad_days:
+            _dbg(f"  quality check [{product.upper()} {ym}]: all days clean.")
+            continue
+
+        # --- Find consecutive runs ---
+        # Group bad days into consecutive runs.
+        runs = []
+        current_run = [bad_days[0]]
+        for bd in bad_days[1:]:
+            prev_d = current_run[-1][0]
+            if (bd[0] - prev_d).days == 1:
+                current_run.append(bd)
+            else:
+                runs.append(current_run)
+                current_run = [bd]
+        runs.append(current_run)
+
+        # Check for unrecoverable runs (> _MAX_CONSECUTIVE_BAD days).
+        fatal_runs = [r for r in runs if len(r) > _MAX_CONSECUTIVE_BAD]
+        if fatal_runs:
+            msg = (f"ERROR: [{product.upper()} {ym}] {len(fatal_runs)} run(s) of "
+                   f"more than {_MAX_CONSECUTIVE_BAD} consecutive corrupted days "
+                   f"found. Automatic interpolation is not safe for runs this long.")
+            print(f"\n  {'!'*58}")
+            print(f"  {msg}")
+            _dbg(msg)
+            for r in fatal_runs:
+                dates_str = ", ".join(d.strftime("%Y%m%d") for d, _, _ in r)
+                detail = f"    Bad days ({len(r)}): {dates_str}"
+                print(detail)
+                _dbg(detail)
+            print("  Action required:")
+            print("    1. Investigate the HYCOM source for these dates.")
+            print("    2. Manually replace or delete the bad raw files.")
+            print("    3. Re-run:  stofs-ak --run --only download_hycom --config <cfg>")
+            print(f"  {'!'*58}\n")
+            all_ok = False
+            continue   # report all products before returning
+
+        # --- Repair each bad day ---
+        # Build a lookup of good (date -> file) for neighbor search.
+        good_files = {d: f for d, f in month_files
+                      if not any(d == bd[0] for bd in bad_days)}
+
+        # Also look into the pad days that exist in the directory (files from
+        # the adjacent months that were downloaded for the stack ceiling).
+        # Scan up to 7 days before and after the month boundary.
+        for offset in range(1, 8):
+            d_before = date(year, month, 1) - timedelta(days=offset)
+            flat_b = d_before.strftime("%Y%m%d")
+            fb = vdir / f"{product}_{flat_b}.nc"
+            if fb.exists() and fb.stat().st_size > 0 and d_before not in good_files:
+                issues_b = check_constant_field(fb, product)
+                if not issues_b:
+                    good_files[d_before] = fb
+
+            d_after = date(year, month, ndays) + timedelta(days=offset)
+            flat_a = d_after.strftime("%Y%m%d")
+            fa = vdir / f"{product}_{flat_a}.nc"
+            if fa.exists() and fa.stat().st_size > 0 and d_after not in good_files:
+                issues_a = check_constant_field(fa, product)
+                if not issues_a:
+                    good_files[d_after] = fa
+
+        sorted_good_dates = sorted(good_files.keys())
+
+        for run in runs:
+            for bad_date, bad_fpath, _ in run:
+                flat = bad_date.strftime("%Y%m%d")
+
+                # Find nearest good neighbor before and after.
+                prev_candidates = [d for d in sorted_good_dates if d < bad_date]
+                next_candidates = [d for d in sorted_good_dates if d > bad_date]
+                prev_date = prev_candidates[-1] if prev_candidates else None
+                next_date = next_candidates[0]  if next_candidates else None
+
+                if prev_date is None and next_date is None:
+                    msg = (f"ERROR: [{product.upper()} {flat}] no good neighbor "
+                           f"found within 7 days on either side — cannot repair.")
+                    print(f"  {msg}")
+                    _dbg(msg)
+                    all_ok = False
+                    continue
+
+                # Nearest-neighbor if only one side is available.
+                if prev_date is None:
+                    prev_date = next_date
+                if next_date is None:
+                    next_date = prev_date
+
+                prev_file = good_files[prev_date]
+                next_file = good_files[next_date]
+
+                # Rename bad file to .bad for archiving.
+                bad_backup = bad_fpath.with_suffix(".nc.bad")
+                bad_fpath.rename(bad_backup)
+                msg_rename = (f"  Renamed corrupted file: "
+                              f"{bad_fpath.name} -> {bad_backup.name}")
+                print(msg_rename)
+                _dbg(msg_rename)
+
+                # Write the repaired file.
+                try:
+                    _interp_nc(prev_file, next_file,
+                               bad_date, prev_date, next_date,
+                               product, bad_fpath)
+                    msg_repair = (
+                        f"  WARNING: [{product.upper()} {flat}] repaired by "
+                        f"interpolation between {prev_file.name} "
+                        f"(weight {1 - (bad_date - prev_date).days / max((next_date - prev_date).days, 1):.3f}) "
+                        f"and {next_file.name} "
+                        f"(weight {(bad_date - prev_date).days / max((next_date - prev_date).days, 1):.3f}). "
+                        f"Original saved as {bad_backup.name}."
+                    )
+                    print(f"  {msg_repair}")
+                    _dbg(msg_repair)
+                except Exception as exc:
+                    msg_err = (f"ERROR: [{product.upper()} {flat}] interpolation "
+                               f"failed: {exc}")
+                    print(f"  {msg_err}")
+                    _dbg(msg_err)
+                    # Restore original so it isn't silently lost.
+                    if bad_backup.exists() and not bad_fpath.exists():
+                        bad_backup.rename(bad_fpath)
+                    all_ok = False
+
+    return all_ok
+
+
+# =============================================================================
 # Main download loop
 # =============================================================================
 
@@ -577,6 +916,26 @@ def run_download(cfg: dict):
 
             prog.update(date_str)
             day += timedelta(days=1)
+
+        # --- Quality check + repair for THIS month ---
+        print(f"\n  Quality check (constant-field detection) for {ym}...")
+        _dbg(f"quality_check_and_repair_month: starting for {ym}")
+        qc_ok = quality_check_and_repair_month(
+            ym, ssh_dir, ts_dir, uv_dir, tmp_dir)
+        if not qc_ok:
+            print(f"\n{'='*60}")
+            print(f"  STOPPING: month {ym} has unrecoverable data quality issues.")
+            print(f"  See details above. Fix the bad raw files, then re-run:")
+            print(f"    stofs-ak --run --only download_hycom --config <cfg>")
+            if failed_days:
+                print(f"\n  Note: {len(failed_days)} day/var download failure(s) so far:")
+                for d, var in failed_days:
+                    print(f"    {d}  {var}")
+            print(f"  Full command trace: {_DEBUG.path}")
+            print(f"{'='*60}\n")
+            _DEBUG.close()
+            sys.exit(1)
+        print(f"  Quality check passed for {ym}.")
 
         # --- Stale-data check for THIS month, before proceeding ---
         print(f"\n  Stale-data check for {ym}...")

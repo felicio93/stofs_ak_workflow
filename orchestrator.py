@@ -287,8 +287,103 @@ def run_workflow(cfg: dict, config_dir: Path, phase: str = "preprocess",
 
 
 # =============================================================================
-# CLI
+# --refresh: delete all sentinel files so the workflow re-runs from scratch
 # =============================================================================
+
+# All sentinel filenames used across the workflow, keyed by the directory
+# they live in relative to the per-month subdirectory.
+_SENTINELS = {
+    # Preprocessing sentinels (in I{pid}/I{pid}_{ym}/)
+    "idir": [
+        "gen_hotstart.done",
+        "gen_3Dth.done",
+        "gen_nudge.done",
+        "bctides.done",
+        "sflux/gen_sflux.done",
+    ],
+    # Run sentinels (in R{pid}/R{pid}_{ym}/)
+    "rdir": [
+        "setup_run.done",
+        "run.done",
+    ],
+    # Diagnostics / postprocess sentinels (in D{pid}/D{pid}_{ym}/)
+    "ddir": [
+        "plot_hycom.done",
+        "plot_sflux.done",
+        "plot_outputs.done",
+        "compare_sst.done",
+    ],
+}
+
+# Top-level (non-monthly) sentinels.
+_TOP_LEVEL_SENTINELS = [
+    # inspect_mesh writes its sentinel into D{pid}/D{pid}_fix/
+    "inspect_mesh.done",
+]
+
+
+def reset_sentinels(cfg: dict):
+    """Delete every sentinel file in the project so the workflow re-runs
+    from scratch on the next invocation.
+
+    Raw downloaded data (raw/hycom, raw/era5, raw/glofas) and generated
+    NetCDF outputs (TS_1.nc, SAL_nu.nc, sflux_*.nc, etc.) are NOT deleted —
+    only the *.done sentinels that control resume logic. Steps whose outputs
+    are already present will regenerate them; steps that check for outputs
+    before writing (e.g. aggregate_hycom's is_complete_file check) will skip
+    them gracefully.
+
+    Prints a summary of every sentinel deleted (or not found).
+    """
+    from workflow.core.config import list_months, model_dir
+
+    pid    = cfg["project_id"]
+    mdir   = model_dir(cfg)
+    months = list_months(cfg)
+
+    deleted = []
+    missing = []
+
+    def _remove(path: Path):
+        if path.exists():
+            path.unlink()
+            deleted.append(path)
+        else:
+            missing.append(path)
+
+    # --- Per-month sentinels ---
+    for ym in months:
+        dirs = {
+            "idir": mdir / f"I{pid}" / f"I{pid}_{ym}",
+            "rdir": mdir / f"R{pid}" / f"R{pid}_{ym}",
+            "ddir": mdir / f"D{pid}" / f"D{pid}_{ym}",
+        }
+        for key, names in _SENTINELS.items():
+            base = dirs[key]
+            for name in names:
+                _remove(base / name)
+
+    # --- Top-level sentinels ---
+    fix_ddir = mdir / f"D{pid}" / f"D{pid}_fix"
+    for name in _TOP_LEVEL_SENTINELS:
+        _remove(fix_ddir / name)
+
+    # --- Summary ---
+    print(f"\n{'='*60}")
+    print(f"  --refresh: sentinel reset for M{pid}")
+    print(f"  {len(months)} month(s): {months[0]} -> {months[-1]}")
+    print(f"{'='*60}")
+    if deleted:
+        print(f"\n  Deleted {len(deleted)} sentinel(s):")
+        for p in deleted:
+            print(f"    {p.relative_to(mdir)}")
+    if missing:
+        print(f"\n  Not found (already absent): {len(missing)} sentinel(s).")
+    print(f"\n  Raw data and NetCDF outputs were NOT deleted.")
+    print(f"  Re-run:  stofs-ak --run --phase all --config <cfg>")
+    print(f"{'='*60}\n")
+
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -312,6 +407,14 @@ def main():
     mode.add_argument(
         "--run", action="store_true",
         help="Run a workflow phase (see --phase)"
+    )
+    mode.add_argument(
+        "--refresh", action="store_true",
+        help=(
+            "Delete all *.done sentinel files so the workflow re-runs from "
+            "scratch on the next --run invocation. Raw data and NetCDF outputs "
+            "are NOT deleted — only the resume sentinels."
+        )
     )
     parser.add_argument(
         "--phase", default="preprocess",
@@ -343,6 +446,8 @@ def main():
     elif args.setup_envs:
         from workflow.core.environment import setup_envs
         setup_envs(cfg)
+    elif args.refresh:
+        reset_sentinels(cfg)
     elif args.run:
         run_workflow(cfg, config_dir, phase=args.phase, only=args.only)
 

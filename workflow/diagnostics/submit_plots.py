@@ -24,9 +24,23 @@ def submit_plotting_jobs(cfg: dict, config_dir: Path) -> str:
     logdir = mdir / "logs"
     logdir.mkdir(parents=True, exist_ok=True)
 
-    months  = list_months(cfg)
-    nmonths = len(months)
-    manifest = write_manifest(months, ddir / "plot_months.manifest")
+    months = list_months(cfg)
+
+    # Skip months whose GIFs are already complete.
+    pending = []
+    for ym in months:
+        sentinel = mdir / f"D{pid}" / f"D{pid}_{ym}" / "plot_hycom.done"
+        if sentinel.exists():
+            print(f"  {ym}: plot_hycom already complete, skipping.")
+        else:
+            pending.append(ym)
+
+    if not pending:
+        print("  All months already complete. Nothing to submit.")
+        return ""
+
+    nmonths  = len(pending)
+    manifest = write_manifest(pending, ddir / "plot_months.manifest")
 
     py = env_python(cfg, "plot_hycom", default="swf_plot")
 

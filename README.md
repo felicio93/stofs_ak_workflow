@@ -408,6 +408,12 @@ stofs-ak --run --phase run --only submit_run --config <config_dir>
 
 # Phase 5 — post-processing (placeholder)
 stofs-ak --run --phase postprocess --config <config_dir>
+
+# Run all phases in sequence (preprocess -> run -> postprocess)
+stofs-ak --run --phase all --config <config_dir>
+
+# Reset all sentinels so the workflow re-runs from scratch on the next --run
+stofs-ak --refresh --config <config_dir>
 ```
 
 ### Typical preprocessing sequence
@@ -496,6 +502,7 @@ stofs-ak --run --phase postprocess --only compare_sst   --config <cfg>
 |------|-------|--------|
 | `--init` directory creation | — | ✅ Done |
 | `--setup-envs` | — | ✅ Done |
+| `--refresh` sentinel reset | — | ✅ Done |
 | `inspect_mesh` | 0 | ✅ Done |
 | `download_hycom` / `download_era5` / `download_glofas` | 1 | ✅ Done |
 | `aggregate_hycom` | 2 | ✅ Done |
@@ -527,6 +534,20 @@ stofs-ak --run --config /path/to/M01/config \
 files and skip already-completed months. Just re-run the same command; check
 logs for `ERROR:` lines. Set a step's flag to `false` once verified.
 
+**Re-running from scratch:** to reset all sentinels and re-run the entire
+workflow (raw data and NetCDF outputs are preserved):
+
+```bash
+stofs-ak --refresh --config <config_dir>
+stofs-ak --run --phase all --config <config_dir>
+```
+
+`--refresh` prints every sentinel it deletes, then exits. It clears sentinels
+in `I{ID}`, `R{ID}`, and `D{ID}` for all months, as well as the top-level
+`inspect_mesh.done`. Raw downloaded files and generated NetCDF inputs are
+**not** deleted — steps with output-presence checks (e.g. `aggregate_hycom`,
+`gen_sflux`) will skip regenerating files that already exist.
+
 ---
 
 ## Troubleshooting
@@ -547,6 +568,21 @@ On other systems: `export ALLOW_NON_DTN=1`.
 
 ### `sbatch not found`
 Submit SLURM steps from a login node, not the DTN.
+
+### HYCOM corrupted daily files (constant-field detection)
+
+After downloading each month, the workflow scans every daily file for
+spatially-constant fields (std < 1e-6 over valid points at any depth level).
+This detects failed HYCOM forecast cycles where a level is filled with a
+uniform value. Behaviour:
+
+- **1–3 consecutive bad days**: the corrupt file is renamed to
+  `ts_YYYYMMDD.nc.bad` and replaced with a linearly interpolated file built
+  from the nearest good neighbors. A `repaired_by_workflow` global attribute
+  is added to the repaired file. A `WARNING:` line is printed to screen and
+  the debug log.
+- **More than 3 consecutive bad days**: the workflow stops with an `ERROR:`
+  message listing the bad days and instructions to investigate the source.
 
 ### HYCOM download returns stale/wrong dates
 The workflow auto-selects the correct HYCOM source per date and runs a

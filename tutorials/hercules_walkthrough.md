@@ -696,6 +696,61 @@ stofs-ak --run --only download_hycom --config $CFG
 
 ---
 
+## Running all phases in one command
+
+To run preprocess → run → postprocess in sequence (with a SLURM barrier between
+preprocess and run, and a 15-second filesystem-propagation pause before
+`setup_run`):
+
+```bash
+screen -S stofs_all
+conda activate swf_main
+stofs-ak --run --phase all --config $CFG \
+    2>&1 | tee $SWF_PROJ/M01/logs/run_all_$(date +%Y%m%d_%H%M%S).log
+# Ctrl-A D to detach
+```
+
+---
+
+## Re-running from scratch (--refresh)
+
+`--refresh` deletes all `*.done` sentinel files across the project so the
+next `--run --phase all` re-runs every step from scratch. Raw downloaded data
+and generated NetCDF outputs are **not** deleted — steps with output-presence
+checks will skip regenerating files that already exist.
+
+```bash
+stofs-ak --refresh --config $CFG
+```
+
+Output example:
+```
+============================================================
+  --refresh: sentinel reset for M01
+  4 month(s): 202509 -> 202512
+============================================================
+
+  Deleted 28 sentinel(s):
+    I01/I01_202509/gen_nudge.done
+    I01/I01_202509/gen_3Dth.done
+    ...
+    R01/R01_202509/setup_run.done
+    R01/R01_202509/run.done
+    D01/D01_202509/plot_hycom.done
+    ...
+
+  Raw data and NetCDF outputs were NOT deleted.
+  Re-run:  stofs-ak --run --phase all --config <cfg>
+============================================================
+```
+
+Then re-run everything:
+```bash
+stofs-ak --run --phase all --config $CFG
+```
+
+---
+
 ## Quick reference — step, node, env, internet
 
 | Step | Phase | Node | Env | Internet |
@@ -738,7 +793,7 @@ stofs-ak --run --only download_hycom --config $CFG
 | `download_glofas` | Skips existing annual files; stops on stale year |
 | `aggregate_hycom` | Skips months where `SSH_1/TS_1/UV_1.nc` exist |
 | `gen_sflux` | Skips months where `sflux/gen_sflux.done` exists |
-| `plot_hycom` | Re-submit; overwrites GIFs |
+| `plot_hycom` | Skips months where `D01_YYYYMM/plot_hycom.done` exists |
 | `plot_sflux` | Skips months where `D01_YYYYMM/plot_sflux.done` exists |
 | `gen_estuary` | Skips if `estuary.gr3` and `bin/*.in` exist |
 | `gen_bctides` | Skips months where `bctides.done` exists |
@@ -755,7 +810,27 @@ stofs-ak --run --only download_hycom --config $CFG
 
 ---
 
-## HYCOM data notes
+## HYCOM data quality
+
+After each month is downloaded, the workflow automatically scans every daily
+file for spatially-constant fields (failed HYCOM forecast cycles where a depth
+level is filled with a uniform value):
+
+- **1–3 consecutive bad days**: the corrupt file is renamed to
+  `ts_YYYYMMDD.nc.bad` and replaced with a linearly interpolated file. A
+  `WARNING:` line is printed and the repair is logged. The `repaired_by_workflow`
+  global attribute in the repaired file records which neighbors were used.
+- **More than 3 consecutive bad days**: the workflow halts with an `ERROR:`
+  listing the affected days.
+
+To inspect a repaired file:
+```bash
+ncdump -h $SWF_PROJ/M01/raw/hycom/ts/ts_20250917.nc | grep repaired
+# repaired_by_workflow = "interpolated from ts_20250916.nc (weight 0.500) ..."
+ls $SWF_PROJ/M01/raw/hycom/ts/ts_20250917.nc.bad   # original corrupt file
+```
+
+
 
 - **GOFS 3.1** (`expt_93.0`) covers up to **2024-09-04** — combined ts3z/uv3z.
 - **ESPC-D-V02** covers **2024-09-05 → present** — per-day archive files. The

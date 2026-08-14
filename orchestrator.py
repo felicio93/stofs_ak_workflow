@@ -34,6 +34,7 @@ available; otherwise invoke as `python orchestrator.py ...`.
 import argparse
 import re
 import sys
+import time
 from pathlib import Path
 from datetime import date
 
@@ -269,6 +270,12 @@ def run_workflow(cfg: dict, config_dir: Path, phase: str = "preprocess",
                     poll_seconds=30,
                     label="Phase 3 SLURM jobs (gen_hotstart/gen_3Dth/gen_nudge/gen_sflux/...)"
                 )
+                # Lustre/NFS metadata written on compute nodes can take a few
+                # seconds to become visible on the login node. Sleep briefly so
+                # setup_run's sentinel checks don't race against filesystem
+                # propagation and produce false "not completed" errors.
+                print("  Waiting 15 s for filesystem metadata propagation ...")
+                time.sleep(15)
             driver.run(only=only)
 
         elif ph == "postprocess":

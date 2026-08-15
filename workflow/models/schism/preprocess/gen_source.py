@@ -27,7 +27,9 @@ Output — source.nc format (SCHISM source_sink.nml reader):
     Dimensions:
         nsources          — number of unique SCHISM source elements
         nsinks            — 1  (dummy; SCHISM requires the sink block)
-        time_vsource      — number of daily timesteps in the month
+        time_vsource      — SOURCE_CEILING (34) daily timesteps: the month's
+                            own days plus a few spill-over days of the next
+                            month, so SCHISM's read-ahead never runs out
         time_msource      — same as time_vsource
         time_vsink        — same as time_vsource
         ntracers          — 2  (temperature, salinity)
@@ -52,7 +54,7 @@ Resume-safe: months with an existing non-empty source.nc are skipped.
 
 import sys
 from calendar import monthrange
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import numpy as np
@@ -117,47 +119,125 @@ def _read_csv(path: Path, label: str):
 # GloFAS extraction
 # =============================================================================
 
-def _glofas_time_indices(nc_path: Path, year: int, month: int):
+# Fixed daily-record ceiling for every monthly source.nc.
+#
+# SCHISM's source/sink reader pre-reads one record ahead, exactly like the
+# nudging and *.th.nc readers: at model time t it needs source record index
+# (t/step + 2). For a full 31-day month with daily (86400 s) forcing the last
+# timestep needs record index 33, so a source.nc containing only the 31
+# calendar days runs out and SCHISM aborts with 'ABORT: STEP: vsource'.
+#
+# To always satisfy the read-ahead we build every monthly source.nc to a FIXED
+# ceiling of 34 daily records: the month's own days plus the first few days of
+# the following month(s). This mirrors aggregate_hycom.STACK_CEILING.
+SOURCE_CEILING = 34
+
+
+def _glofas_dates_for_stack(year: int, month: int):
     """
-    Return the integer indices into the valid_time axis of nc_path that
-    correspond to the given year/month.
+    Return a list of SOURCE_CEILING consecutive `date` objects starting on
+    day 1 of (year, month). The tail spills into the following month(s) and,
+    for December, into the following year.
+    """
+    d = date(year, month, 1)
+    return [d + timedelta(days=i) for i in range(SOURCE_CEILING)]
+
+
+def _glofas_index_for_date(nc_path: Path, target: date):
+    """
+    Return the integer index into the valid_time axis of nc_path whose UTC
+    calendar date equals `target`, or None if the file has no such day.
     """
     import netCDF4 as nc4
     with nc4.Dataset(nc_path) as ds:
         vt = ds.variables["valid_time"][:]
-    times = [datetime.fromtimestamp(int(t), tz=timezone.utc) for t in vt]
-    return [i for i, t in enumerate(times) if t.year == year and t.month == month]
+    for i, t in enumerate(vt):
+        dt = datetime.fromtimestamp(int(t), tz=timezone.utc)
+        if dt.year == target.year and dt.month == target.month and dt.day == target.day:
+            return i
+    return None
 
 
-def _extract_discharge(nc_path: Path, lon_target: float, lat_target: float,
-                       time_idx: list, ndays: int) -> np.ndarray:
+def _build_stack_time_map(mdir: Path, pid: str, year: int, month: int):
     """
-    Extract avg_dis time series for the GloFAS cell nearest to
-    (lon_target, lat_target), returning exactly ndays values.
-    If fewer than ndays timesteps are available in the file, the last
-    available value is repeated to pad to ndays.
-    NaN → 0, negatives clamped to 0.
+    Build the ordered list of (glofas_nc_path, time_index) for the
+    SOURCE_CEILING-day window starting on day 1 of (year, month).
+
+    Days are looked up in the annual GloFAS file for their OWN year, so the
+    window can span a year boundary (December -> January of the next year)
+    when that next-year file has been downloaded (option A). If a needed day
+    is not available in any present file, its slot is left as None and the
+    caller pads it by repeating the previous day's value (option B).
+
+    Returns (time_map, npad) where:
+        time_map : list of length SOURCE_CEILING; each entry is either
+                   (Path, int) or None (missing -> to be pad-repeated)
+        npad     : number of trailing days that had to be pad-repeated
+    """
+    dates = _glofas_dates_for_stack(year, month)
+    time_map = []
+    npad = 0
+    for d in dates:
+        gnc = mdir / "raw" / "glofas" / str(d.year) / f"glofas_{d.year}.nc"
+        if gnc.exists() and gnc.stat().st_size > 0:
+            idx = _glofas_index_for_date(gnc, d)
+            if idx is not None:
+                time_map.append((gnc, idx))
+                continue
+        # Day not available (file missing or day not in file) -> pad marker.
+        time_map.append(None)
+        npad += 1
+    return time_map, npad
+
+
+def _extract_discharge(time_map: list, lon_target: float,
+                       lat_target: float) -> np.ndarray:
+    """
+    Extract the avg_dis time series for the GloFAS cell nearest to
+    (lon_target, lat_target) over the SOURCE_CEILING-day window described by
+    `time_map` (a list of (nc_path, time_index) or None entries).
+
+    For present days the value is read from the corresponding annual file.
+    For None entries (option B: file/day not available) the previous day's
+    value is repeated; if the very first day is missing the series starts at 0.
+
+    NaN -> 0, negatives clamped to 0. Returns exactly len(time_map) values.
     """
     import netCDF4 as nc4
-    with nc4.Dataset(nc_path) as ds:
-        lon = ds.variables["longitude"][:]
-        lat = ds.variables["latitude"][:]
 
-        ilon = int(np.argmin(np.abs(lon - lon_target)))
-        ilat = int(np.argmin(np.abs(lat - lat_target)))
+    # Cache nearest-cell (ilon, ilat) per opened file to avoid re-searching.
+    _cell_cache = {}
 
-        v  = ds.variables["avg_dis"]
-        ts = np.ma.filled(v[time_idx, ilat, ilon], fill_value=np.nan)
+    def _cell(nc_path):
+        key = str(nc_path)
+        if key not in _cell_cache:
+            with nc4.Dataset(nc_path) as ds:
+                lon = ds.variables["longitude"][:]
+                lat = ds.variables["latitude"][:]
+                ilon = int(np.argmin(np.abs(lon - lon_target)))
+                ilat = int(np.argmin(np.abs(lat - lat_target)))
+            _cell_cache[key] = (ilon, ilat)
+        return _cell_cache[key]
 
-    ts = np.where(np.isnan(ts), 0.0, ts)
-    ts = np.maximum(ts, 0.0)
-    ts = ts.astype(np.float64)
+    out = np.zeros(len(time_map), dtype=np.float64)
+    last = 0.0
+    for k, entry in enumerate(time_map):
+        if entry is None:
+            # Option B: repeat previous day's discharge.
+            out[k] = last
+            continue
+        nc_path, t_idx = entry
+        ilon, ilat = _cell(nc_path)
+        with nc4.Dataset(nc_path) as ds:
+            val = np.ma.filled(ds.variables["avg_dis"][t_idx, ilat, ilon],
+                               fill_value=np.nan)
+        val = float(val)
+        if np.isnan(val) or val < 0.0:
+            val = 0.0
+        out[k] = val
+        last = val
 
-    # Pad to ndays by repeating the last available value if needed
-    if len(ts) < ndays:
-        ts = np.concatenate([ts, np.full(ndays - len(ts), ts[-1])])
-
-    return ts
+    return out
 
 
 # =============================================================================
@@ -222,18 +302,30 @@ def _process_month(ym: str, cfg: dict, rivers: list,
         print(f"  ERROR {ym}: {glofas_nc.name} not found — run download_glofas first.")
         return False
 
-    # Which timesteps in the annual file belong to this month?
-    time_idx = _glofas_time_indices(glofas_nc, year, month)
-    if not time_idx:
+    # Build the SOURCE_CEILING-day window (this month's days + spill into the
+    # following month/year). Days are read from each day's OWN annual GloFAS
+    # file when present (option A); days with no available file are pad-repeated
+    # from the previous day (option B).
+    time_map, npad = _build_stack_time_map(mdir, pid, year, month)
+    n_real = sum(1 for e in time_map if e is not None)
+    if n_real == 0:
         print(f"  ERROR {ym}: no GloFAS timesteps found for {year}-{month:02d}.")
         return False
 
-    n_available = len(time_idx)
-    if n_available != ndays:
-        print(f"  WARNING {ym}: expected {ndays} days, found {n_available} "
-              f"in GloFAS — last available day will be repeated to fill the month.")
+    # How many of the SOURCE_CEILING slots come from the calendar month itself?
+    in_month = sum(
+        1 for d in _glofas_dates_for_stack(year, month)
+        if d.year == year and d.month == month
+    )
+    if n_real < in_month:
+        print(f"  WARNING {ym}: only {n_real} of {in_month} in-month GloFAS "
+              f"days were found; missing days pad-repeated.")
+    if npad > 0:
+        print(f"  {ym}: {SOURCE_CEILING}-day stack — {SOURCE_CEILING - npad} "
+              f"day(s) from GloFAS files, {npad} trailing day(s) pad-repeated "
+              f"(next-year GloFAS not downloaded).")
 
-    ntimesteps = ndays   # always write the full month
+    ntimesteps = SOURCE_CEILING   # always write a read-ahead-safe stack
 
     # Match source_schism points → nearest SCHISM element (KDTree on centroids)
     tree = KDTree(centroids)
@@ -258,11 +350,9 @@ def _process_month(ym: str, cfg: dict, rivers: list,
     elem_to_idx = {e: i for i, e in enumerate(unique_elems)}
     for r in rivers:
         s_idx = elem_to_idx[r["schism_elem"]]
-        ts    = _extract_discharge(glofas_nc,
+        ts    = _extract_discharge(time_map,
                                    r["glofas_lon"] % 360,
-                                   r["glofas_lat"],
-                                   time_idx,
-                                   ndays)
+                                   r["glofas_lat"])
         vsource[:, s_idx] += ts
 
     _write_source_nc(out_nc, unique_elems, vsource)

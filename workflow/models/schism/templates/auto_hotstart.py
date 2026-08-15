@@ -89,9 +89,10 @@ def log(msg):
 
 
 def sh(cmd):
-    """Run a shell command, return (rc, stdout)."""
+    """Run a shell command, return (rc, stdout+stderr combined)."""
     r = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-    return r.returncode, r.stdout.strip()
+    combined = (r.stdout.strip() + "\n" + r.stderr.strip()).strip()
+    return r.returncode, combined
 
 
 def squeue_line_for(jobname):
@@ -223,16 +224,19 @@ def dispatch_diag_plots(run_finished: bool = False):
         if not is_complete:
             continue
         # Submit the job array for stack n.
+        # Note: --array is already set in the rendered diag_run.sbatch header
+        # (#SBATCH --array=1-N). Do NOT pass --array on the command line too —
+        # SLURM rejects submissions where the same directive appears both in
+        # the script and on the command line.
         rc, out = sh(
             f"sbatch --export=ALL,DIAG_MONTH={MONTH},DIAG_STACK={n} "
-            f"--array=1-{DIAG_NVAR} "
             f"{DIAG_SBATCH}"
         )
         if rc == 0:
             log(f"diag_run_plots: submitted stack {n} array 1-{DIAG_NVAR}  ({out})")
             _diag_submitted.add(n)
         else:
-            log(f"diag_run_plots: sbatch failed for stack {n}: {out}")
+            log(f"diag_run_plots: sbatch FAILED for stack {n}: {out}")
 
 
 def job_exit_code(job_id: str) -> int:

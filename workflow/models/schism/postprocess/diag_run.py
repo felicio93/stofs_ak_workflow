@@ -5,20 +5,24 @@ Phase 5 "diag_run_plots" — per-output-file diagnostic frames DURING the run.
 
 This is dispatched from auto_hotstart.py (Phase 4): whenever a new SCHISM
 output stack file finishes being written (out2d_N.nc completes once
-out2d_{N+1}.nc appears, or the run ends), auto_hotstart sbatch-submits one
-diag_run job for stack N. This module then renders static diagnostic frames
-(no GIF) for every timestep in that stack, for each configured variable, and
-writes them to D{ID}/D{ID}_YYYYMM/diag/.
+out2d_{N+1}.nc appears, or the run ends), auto_hotstart sbatch-submits a
+SLURM job ARRAY for stack N — one array task per configured variable. Each
+task calls this module with --var <varname> and plots only that variable's
+frames, writing them to D{ID}/D{ID}_YYYYMM/diag/.
+
+This keeps each SLURM task short (~10 min) regardless of how many variables
+are configured, because variables are processed in parallel across cores.
+
+Sentinel per variable: diag_{stack}_{varname}.done
+The overall stack sentinel diag_{stack}.done is written only when ALL
+per-variable sentinels exist, so re-running a failed variable is safe.
 
 Configured in postprocess.yaml under `diag_run_vars`. Default set:
 SSH, SST, SSS, surface U, surface V. 200/2000 m isobaths overlaid.
 
-The intent is a quick health check of the running model — one image per
-timestep per variable, browsable as the run progresses.
-
 CLI (invoked by SLURM via diag_run.sbatch):
     python -m workflow.models.schism.postprocess.diag_run \
-        --config <cfg> --month YYYYMM --stack N
+        --config <cfg> --month YYYYMM --stack N --var VARNAME
 """
 
 import argparse
@@ -29,8 +33,8 @@ from workflow.core.config import load_config, model_dir
 from workflow.models.schism.postprocess import plot_common as pc
 
 
-def diag_stack(cfg, ym: str, stack: int):
-    """Render diagnostic frames for every configured variable in one stack."""
+def diag_stack_var(cfg, ym: str, stack: int, varname: str):
+    """Render diagnostic frames for ONE variable in one stack."""
     import numpy as np
     import xarray as xr
     from workflow.core.plot_style import read_mesh_boundaries
@@ -41,15 +45,24 @@ def diag_stack(cfg, ym: str, stack: int):
     ddir    = mdir / f"D{pid}" / f"D{pid}_{ym}" / "diag"
     ddir.mkdir(parents=True, exist_ok=True)
 
-    marker = ddir / f"diag_{stack}.done"
-    if marker.exists():
-        print(f"  diag {ym} stack {stack}: already done, skipping.")
+    # Per-variable sentinel.
+    var_marker   = ddir / f"diag_{stack}_{varname}.done"
+    # Overall stack sentinel (written when all variables are done).
+    stack_marker = ddir / f"diag_{stack}.done"
+
+    if var_marker.exists():
+        print(f"  diag {ym} stack {stack} [{varname}]: already done, skipping.")
+        _maybe_write_stack_marker(cfg, ym, stack, ddir)
         return
 
-    var_cfgs = [pc.var_spec(v) for v in cfg.get("diag_run_vars", [])]
-    if not var_cfgs:
-        print("  diag_run_plots: no diag_run_vars configured. Skipping.")
-        marker.touch()
+    # Find the var config for this variable name.
+    all_vars = [pc.var_spec(v) for v in cfg.get("diag_run_vars", [])]
+    vc = next((v for v in all_vars if v["var_name"] == varname), None)
+    if vc is None:
+        print(f"  diag {ym} stack {stack}: '{varname}' not found in "
+              f"diag_run_vars config. Skipping.")
+        var_marker.touch()
+        _maybe_write_stack_marker(cfg, ym, stack, ddir)
         return
 
     dpi      = int(cfg.get("diag_run_dpi", 150))
@@ -57,10 +70,9 @@ def diag_stack(cfg, ym: str, stack: int):
     if isobaths:
         isobaths = [float(v) for v in isobaths]
 
-    # Mesh from this month's out2d (must exist before any 3D var is plotted).
+    # Mesh from this month's out2d.
     out2d = outputs / f"out2d_{stack}.nc"
     if not out2d.exists():
-        # fall back to any out2d in this month
         stacks = pc.list_output_stacks(outputs, "out2d")
         if not stacks:
             print(f"  diag {ym} stack {stack}: no out2d file for mesh, skipping.")
@@ -77,56 +89,72 @@ def diag_stack(cfg, ym: str, stack: int):
                 boundaries = None
             break
 
-    made = 0
-    for vc in var_cfgs:
-        prefix = vc["file_prefix"]
-        name   = vc["var_name"]
-        nc_path = outputs / f"{prefix}_{stack}.nc"
-        if not nc_path.exists():
-            print(f"    WARNING: {prefix}_{stack}.nc not found, skipping {name}.")
-            continue
+    prefix  = vc["file_prefix"]
+    name    = vc["var_name"]
+    nc_path = outputs / f"{prefix}_{stack}.nc"
+    if not nc_path.exists():
+        print(f"    WARNING: {prefix}_{stack}.nc not found, skipping {name}.")
+        var_marker.touch()
+        _maybe_write_stack_marker(cfg, ym, stack, ddir)
+        return
 
-        ds = xr.open_dataset(str(nc_path), drop_variables=pc.SAFE_DROP)
-        if name not in ds:
-            ds.close()
-            print(f"    WARNING: '{name}' not in {nc_path.name}, skipping "
-                  f"(check var_name / file_prefix in postprocess.yaml).")
-            continue
+    is_elem = (vc["loc"] == "elem")
 
-        is_elem = (vc["loc"] == "elem")
-
-        arr = pc.extract_layer(ds[name], vc["layer"]) if vc["is_3d"] \
-            else np.array(ds[name])
-        times = ds["time"].values
-        vmin, vmax = pc.robust_limits(arr, vc["vmin"], vc["vmax"])
-
-        for t_idx in range(arr.shape[0]):
-            vals = arr[t_idx]
-            if getattr(vals, "ndim", 1) > 1:
-                vals = vals.ravel()
-            if is_elem:
-                vals = pc.expand_elem_values(vals, is_tri)
-            else:
-                vals = vals[:len(x)]
-            t = times[t_idx]
-            ts = np.datetime_as_string(t, unit="h").replace(":", "").replace("-", "")
-            fp = ddir / f"{name}__{ts}.jpg"
-            title = f"{vc['label']} — {np.datetime_as_string(t, unit='h')}"
-            if vc["is_3d"]:
-                title += f" (layer: {vc['layer']})"
-            pc.render_frame(
-                triang, vals, title=title, out_path=fp,
-                cbar_label=vc["label"], cmap=vc["cmap"],
-                vmin=vmin, vmax=vmax,
-                depth=depth, isobaths=isobaths,
-                dpi=dpi, boundaries=boundaries, is_elem=is_elem,
-            )
-            made += 1
+    ds  = xr.open_dataset(str(nc_path), drop_variables=pc.SAFE_DROP)
+    if name not in ds:
         ds.close()
-        gc.collect()
+        print(f"    WARNING: '{name}' not in {nc_path.name}, skipping.")
+        var_marker.touch()
+        _maybe_write_stack_marker(cfg, ym, stack, ddir)
+        return
 
-    marker.touch()
-    print(f"  diag {ym} stack {stack}: {made} frame(s) -> {ddir}")
+    arr = pc.extract_layer(ds[name], vc["layer"]) if vc["is_3d"] \
+        else np.array(ds[name])
+    times = ds["time"].values
+    vmin, vmax = pc.robust_limits(arr, vc["vmin"], vc["vmax"])
+
+    made = 0
+    for t_idx in range(arr.shape[0]):
+        vals = arr[t_idx]
+        if getattr(vals, "ndim", 1) > 1:
+            vals = vals.ravel()
+        if is_elem:
+            vals = pc.expand_elem_values(vals, is_tri)
+        else:
+            vals = vals[:len(x)]
+        t  = times[t_idx]
+        ts = np.datetime_as_string(t, unit="h").replace(":", "").replace("-", "")
+        fp = ddir / f"{name}__{ts}.jpg"
+        title = f"{vc['label']} — {np.datetime_as_string(t, unit='h')}"
+        if vc["is_3d"]:
+            title += f" (layer: {vc['layer']})"
+        pc.render_frame(
+            triang, vals, title=title, out_path=fp,
+            cbar_label=vc["label"], cmap=vc["cmap"],
+            vmin=vmin, vmax=vmax,
+            depth=depth, isobaths=isobaths,
+            dpi=dpi, boundaries=boundaries, is_elem=is_elem,
+        )
+        made += 1
+    ds.close()
+    gc.collect()
+
+    var_marker.touch()
+    print(f"  diag {ym} stack {stack} [{varname}]: {made} frame(s) -> {ddir}")
+    _maybe_write_stack_marker(cfg, ym, stack, ddir)
+
+
+def _maybe_write_stack_marker(cfg, ym: str, stack: int, ddir: Path):
+    """Write diag_{stack}.done if all per-variable sentinels exist."""
+    all_vars  = [pc.var_spec(v) for v in cfg.get("diag_run_vars", [])]
+    varnames  = [v["var_name"] for v in all_vars]
+    all_done  = all((ddir / f"diag_{stack}_{vn}.done").exists()
+                    for vn in varnames)
+    stack_marker = ddir / f"diag_{stack}.done"
+    if all_done and not stack_marker.exists():
+        stack_marker.touch()
+        print(f"  diag {ym} stack {stack}: all variables complete -> "
+              f"{stack_marker.name}")
 
 
 def main():
@@ -134,9 +162,11 @@ def main():
     ap.add_argument("--config", required=True)
     ap.add_argument("--month",  required=True)
     ap.add_argument("--stack",  required=True, type=int)
+    ap.add_argument("--var",    required=True,
+                    help="Variable name to plot (one per SLURM array task)")
     args = ap.parse_args()
     cfg = load_config(Path(args.config))
-    diag_stack(cfg, args.month, args.stack)
+    diag_stack_var(cfg, args.month, args.stack, args.var)
 
 
 if __name__ == "__main__":

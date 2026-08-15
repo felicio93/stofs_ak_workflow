@@ -219,22 +219,36 @@ def _render_auto_hotstart(run_dir: Path, subs: dict):
 def _render_diag_sbatch(cfg: dict, mdir: Path, rdir: Path, config_dir: Path) -> Path:
     """Render diag_run.sbatch into the run dir and return its path.
 
-    auto_hotstart.py submits this once per newly-completed output stack,
-    passing DIAG_MONTH / DIAG_STACK via --export. Returns the written path.
+    auto_hotstart.py submits this once per newly-completed output stack as a
+    job array (one task per configured variable). DIAG_MONTH / DIAG_STACK are
+    passed at submit time via --export; DIAG_VARS_MANIFEST maps array index to
+    variable name. Returns the written path.
     """
-    slurm = cfg.get("slurm", {})
+    slurm    = cfg.get("slurm", {})
+    var_cfgs = cfg.get("diag_run_vars", [])
+    varnames = [v["var_name"] if isinstance(v, dict) else v
+                for v in var_cfgs]
+
+    # Write the variable manifest (one var_name per line, 1-indexed for SLURM).
+    manifest_path = rdir / "diag_vars.manifest"
+    manifest_path.write_text("\n".join(varnames) + "\n")
+
+    nvar = max(len(varnames), 1)   # array size; at least 1 to avoid #SBATCH error
+
     subs = {
-        "WORKDIR":    str(rdir),
-        "JOBNAME":    f"diag_{rdir.name}",
-        "ACCOUNT":    slurm.get("account",             "nos-surge"),
-        "PARTITION":  slurm.get("partition",            "hercules-2"),
-        "MEM":        slurm.get("diag_run_mem",         "16G"),
-        "WALLTIME":   slurm.get("diag_run_walltime",    "00:45:00"),
-        "LOGDIR":     str(mdir / "logs"),
-        "MAILUSER":   slurm.get("mail_user",            "felicio.cassalho@noaa.gov"),
-        "PY":         env_python(cfg, "diag_run_plots", default="swf_plot"),
-        "SCRIPT":     "-m workflow.models.schism.postprocess.diag_run",
-        "CONFIG_DIR": str(config_dir),
+        "WORKDIR":            str(rdir),
+        "JOBNAME":            f"diag_{rdir.name}",
+        "ACCOUNT":            slurm.get("account",             "nos-surge"),
+        "PARTITION":          slurm.get("partition",            "hercules-2"),
+        "NDIAG_VARS":         str(nvar),
+        "MEM":                slurm.get("diag_run_mem",         "16G"),
+        "WALLTIME":           slurm.get("diag_run_walltime",    "00:10:00"),
+        "LOGDIR":             str(mdir / "logs"),
+        "MAILUSER":           slurm.get("mail_user",            "felicio.cassalho@noaa.gov"),
+        "PY":                 env_python(cfg, "diag_run_plots", default="swf_plot"),
+        "SCRIPT":             "-m workflow.models.schism.postprocess.diag_run",
+        "CONFIG_DIR":         str(config_dir),
+        "DIAG_VARS_MANIFEST": str(manifest_path),
     }
     text = DIAG_SBATCH_TEMPLATE.read_text()
     for k, v in subs.items():
@@ -395,21 +409,27 @@ def _setup_month(cfg: dict, mdir: Path, ym: str, month_index: int,
     # --- diag_run_plots hook (Phase 5, dispatched during the run) ---
     diag_enabled = bool(cfg.get("diag_run_plots", False))
     diag_sbatch  = ""
+    diag_vars_manifest = ""
+    diag_nvar = 0
     if diag_enabled:
         diag_sbatch = str(_render_diag_sbatch(cfg, mdir, rdir, config_dir))
+        diag_vars_manifest = str(rdir / "diag_vars.manifest")
+        diag_nvar = max(len(cfg.get("diag_run_vars", [])), 1)
 
     # --- render auto_hotstart.py ---
     next_rdir = (mdir / f"R{pid}" / f"R{pid}_{next_ym}") if next_ym else None
     _render_auto_hotstart(rdir, {
-        "RUNDIR":         str(rdir),
-        "NEXT_RUNDIR":    f'r"{next_rdir}"' if next_rdir else "None",
-        "CHAIN_HOTSTART": bool(cfg.get("chain_hotstart", True)),
-        "IS_LAST_MONTH":  bool(is_last),
-        "NHOT_WRITE":     nhot_write,
-        "MONTH":          ym,
-        "RUN_JOBNAME":    run_jobname,
-        "DIAG_ENABLED":   diag_enabled,
-        "DIAG_SBATCH":    diag_sbatch,
+        "RUNDIR":              str(rdir),
+        "NEXT_RUNDIR":         f'r"{next_rdir}"' if next_rdir else "None",
+        "CHAIN_HOTSTART":      bool(cfg.get("chain_hotstart", True)),
+        "IS_LAST_MONTH":       bool(is_last),
+        "NHOT_WRITE":          nhot_write,
+        "MONTH":               ym,
+        "RUN_JOBNAME":         run_jobname,
+        "DIAG_ENABLED":        diag_enabled,
+        "DIAG_SBATCH":         diag_sbatch,
+        "DIAG_VARS_MANIFEST":  diag_vars_manifest,
+        "DIAG_NVAR":           diag_nvar,
     })
 
     (rdir / "setup_run.done").touch()

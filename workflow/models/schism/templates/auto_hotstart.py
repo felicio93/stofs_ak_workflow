@@ -49,8 +49,10 @@ MONTH          = r"{{MONTH}}"           # YYYYMM label (for messages)
 RUN_JOBNAME    = r"{{RUN_JOBNAME}}"     # e.g. R01_01  (matches run_test -J)
 
 # --- diagnostic-plot hook (Phase 5 diag_run_plots, dispatched during the run) ---
-DIAG_ENABLED   = {{DIAG_ENABLED}}       # True/False: submit diag_run jobs for new stacks
-DIAG_SBATCH    = r"{{DIAG_SBATCH}}"     # path to the rendered diag_run.sbatch (or "")
+DIAG_ENABLED        = {{DIAG_ENABLED}}       # True/False: submit diag_run jobs for new stacks
+DIAG_SBATCH         = r"{{DIAG_SBATCH}}"     # path to the rendered diag_run.sbatch (or "")
+DIAG_VARS_MANIFEST  = r"{{DIAG_VARS_MANIFEST}}"  # one var_name per line; used by the array
+DIAG_NVAR           = {{DIAG_NVAR}}          # number of variables (= array size)
 # =====================================================================================
 
 # Adaptive polling schedule (seconds between status checks).
@@ -192,13 +194,17 @@ _diag_submitted = set()   # stacks already handed to a diag_run job
 
 
 def dispatch_diag_plots(run_finished: bool = False):
-    """Submit diag_run jobs for newly-completed output stacks.
+    """Submit diag_run job arrays for newly-completed output stacks.
 
     A stack out2d_N.nc is 'complete' once out2d_{N+1}.nc exists (SCHISM writes
     stacks sequentially), or — for the final stack — once the run has finished.
     Called on each poll when DIAG_ENABLED. Idempotent: each stack is submitted
-    at most once (tracked in _diag_submitted; the diag job itself also writes a
-    diag_<N>.done marker so re-launches of auto_hotstart won't duplicate work).
+    at most once (tracked in _diag_submitted; each per-variable diag job also
+    writes its own diag_{N}_{varname}.done sentinel).
+
+    One SLURM job array is submitted per stack: array size = DIAG_NVAR (one
+    task per configured variable). Tasks run in parallel so the wall-time is
+    that of a single variable, not all variables combined.
     """
     if not DIAG_ENABLED or not DIAG_SBATCH:
         return
@@ -216,12 +222,14 @@ def dispatch_diag_plots(run_finished: bool = False):
         is_complete = (n < max_stack) or run_finished
         if not is_complete:
             continue
-        # Submit the diag job for stack n (the diag script is idempotent via
-        # its own diag_<n>.done marker under D{ID}).
-        rc, out = sh(f"sbatch --export=ALL,DIAG_MONTH={MONTH},DIAG_STACK={n} "
-                     f"{DIAG_SBATCH}")
+        # Submit the job array for stack n.
+        rc, out = sh(
+            f"sbatch --export=ALL,DIAG_MONTH={MONTH},DIAG_STACK={n} "
+            f"--array=1-{DIAG_NVAR} "
+            f"{DIAG_SBATCH}"
+        )
         if rc == 0:
-            log(f"diag_run_plots: submitted stack {n}  ({out})")
+            log(f"diag_run_plots: submitted stack {n} array 1-{DIAG_NVAR}  ({out})")
             _diag_submitted.add(n)
         else:
             log(f"diag_run_plots: sbatch failed for stack {n}: {out}")

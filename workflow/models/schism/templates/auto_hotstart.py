@@ -102,6 +102,48 @@ def squeue_line_for(jobname):
     return None
 
 
+def _clean_outputs():
+    """Delete stale output stacks and mirror.out before (re)submitting SCHISM.
+
+    When SCHISM restarts from hotstart.nc it always writes from stack 1.
+    Any *_N.nc output files left over from a previous run attempt (e.g. after
+    an HPC outage, wall-time kill, or hang) have a time axis that starts
+    mid-month, causing SCHISM to abort with 'fill_header_static: time dim'
+    when it tries to open those files at startup.
+
+    mirror.out is also removed so that run_completed() and mirror_time_step()
+    don't read stale state from the previous attempt.
+
+    hotstart_it=<N>.nc is explicitly preserved — it is the combined end-of-month
+    hotstart and must survive if it was already written.
+    """
+    outdir = Path(RUNDIR) / "outputs"
+    deleted = []
+
+    # Numbered output stacks: out2d_1.nc, temperature_2.nc, etc.
+    # Pattern: any file matching *_<digits>.nc that is NOT hotstart_it=*.nc
+    for f in sorted(outdir.glob("*_*.nc")):
+        if f.name.startswith("hotstart_it="):
+            continue
+        # Only match files whose stem ends with _<digits>
+        if re.search(r"_\d+$", f.stem):
+            f.unlink()
+            deleted.append(f.name)
+
+    # mirror.out — written by SCHISM, not overwritten by SLURM on resubmit
+    mirror = outdir / "mirror.out"
+    if mirror.exists():
+        mirror.unlink()
+        deleted.append("mirror.out")
+
+    if deleted:
+        log(f"Cleaned {len(deleted)} stale file(s) from outputs/ before submission:")
+        for name in deleted:
+            log(f"  deleted: {name}")
+    else:
+        log("outputs/ is clean (no stale stacks or mirror.out to remove).")
+
+
 def submit(script):
     """sbatch a script from RUNDIR; return the job id string."""
     rc, out = sh(f"sbatch {script}")
@@ -324,6 +366,7 @@ def main():
         sys.exit(1)
 
     # Submit the initial run.
+    _clean_outputs()
     job_id = submit("run_test")
     previous_step = -1
     poll_iter = 0
@@ -397,12 +440,14 @@ def main():
                 log("This is likely a time-limit, node failure, or OOM.")
                 log("Resubmitting from hotstart.nc (full month re-run).")
                 previous_step = -1
+                _clean_outputs()
                 submit("run_test")
                 continue
 
             previous_step = -1
             log(f"{RUN_JOBNAME}: not in queue and run incomplete — resubmitting "
                 f"from hotstart.nc (full month re-run).")
+            _clean_outputs()
             submit("run_test")
 
     log(f"{RUN_JOBNAME}: run completed successfully.")

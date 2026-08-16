@@ -4,10 +4,20 @@ models/schism/preprocess/gen_sflux.py
 SLURM worker — converts one month of raw ERA5 data into SCHISM sflux files.
 
 For month YYYYMM, reads raw/era5/YYYY/era5_YYYYMM.nc and writes:
-    I{ID}_YYYYMM/sflux/sflux_air_1.{N}.nc   (N = 1..ndays)
+    I{ID}_YYYYMM/sflux/sflux_air_1.{N}.nc   (N = 1..ndays+1)
     I{ID}_YYYYMM/sflux/sflux_prc_1.{N}.nc
     I{ID}_YYYYMM/sflux/sflux_rad_1.{N}.nc
     I{ID}_YYYYMM/sflux/sflux_inputs.txt
+
+One EXTRA daily stack (N = ndays+1) covering the first day of the following
+month is always written. SCHISM's sflux reader requires a bracket
+input_times(i) <= t <= input_times(i+1) at every timestep INCLUDING the last
+(t = run end = next month day 1 00Z). Without a record strictly after the run
+end, SCHISM aborts at the final step with "no appropriate time exists for:
+sflux_air_1 ... got_suitable_bracket = F". The extra day extends the combined
+sflux timeline past the run end so the final step always brackets.
+The extra day is read from the next month's ERA5 file when available
+(era5_{next}.nc); otherwise the current month's last day is repeated.
 
 Each daily file contains 25 hourly timesteps (00Z day N to 00Z day N+1),
 matching the pyschism convention for overlap between consecutive files.
@@ -32,7 +42,7 @@ Usage (called by SLURM via workflow.models.schism.preprocess.submit_era5):
 import argparse
 import sys
 from calendar import monthrange
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -156,6 +166,55 @@ def _next_month_first_step(mdir, year, month):
     return out
 
 
+def _read_next_month_extra_day(mdir, year, month):
+    """Read the FIRST day (25 hourly records: day 1 00Z -> day 2 00Z) of the
+    month following (year, month) from era5_{next}.nc.
+
+    Returns a dict of arrays keyed by sflux variable name
+    (uwind/vwind/prmsl/stmp/spfh derived vars are NOT computed here; raw ERA5
+    fields are returned so the caller derives spfh consistently), with lat
+    already flipped to ASCENDING order to match the main loop, and a matching
+    'day_date' for the extra stack. Returns None if the next-month ERA5 file
+    is unavailable (caller falls back to repeating the current last day).
+    """
+    ny = year + 1 if month == 12 else year
+    nm = 1 if month == 12 else month + 1
+    nxt_path = mdir / "raw" / "era5" / str(ny) / f"era5_{ny}{nm:02d}.nc"
+    if not (nxt_path.exists() and nxt_path.stat().st_size > 0):
+        return None
+
+    with nc4.Dataset(nxt_path) as ds:
+        times_nc  = ds.variables["valid_time"]
+        all_times = nc4.num2date(times_nc[:], units=times_nc.units,
+                                 only_use_cftime_datetimes=False)
+        # First record of the next month must be day 1 00Z.
+        idx_start = None
+        for i, t in enumerate(all_times):
+            if t.year == ny and t.month == nm and t.day == 1 and t.hour == 0:
+                idx_start = i
+                break
+        if idx_start is None:
+            return None
+        idx_end = min(idx_start + 25, len(all_times))
+        sl = slice(idx_start, idx_end)
+
+        def rd(name_opts):
+            for nm_ in name_opts:
+                if nm_ in ds.variables:
+                    return ds.variables[nm_][sl, ::-1, :].astype(np.float32)
+            return None
+
+        out = {
+            "u10": rd(["u10"]), "v10": rd(["v10"]),
+            "msl": rd(["msl"]), "t2m": rd(["t2m"]), "d2m": rd(["d2m"]),
+            "mtpr":  rd(["mtpr", "avg_tprate"]),
+            "dlwrf": rd(["msdwlwrf", "avg_sdlwrf"]),
+            "dswrf": rd(["msdwswrf", "avg_sdswrf"]),
+        }
+    out["day_date"] = date(ny, nm, 1)
+    return out
+
+
 def gen_sflux_month(cfg: dict, ym: str):
     pid   = cfg["project_id"]
     mdir  = model_dir(cfg)
@@ -178,6 +237,7 @@ def gen_sflux_month(cfg: dict, ym: str):
     sflux_dir.mkdir(parents=True, exist_ok=True)
     print(f"\n--- gen_sflux {ym} -> {sflux_dir} ---")
 
+    _last = None   # last day's fields, for the extra-stack pad fallback
     with nc4.Dataset(raw_path) as ds:
         # Coordinates — ERA5 returns lat in descending order; flip to ascending
         lons_1d = ds.variables["longitude"][:]   # 0..360
@@ -303,6 +363,69 @@ def gen_sflux_month(cfg: dict, ym: str):
                 {"dlwrf": dlwrf, "dswrf": dswrf})
 
             print(f"  {day_str}: air+prc+rad written (stack {stack})")
+
+            # Remember the LAST day's fields for the extra-stack pad fallback.
+            if iday == ndays:
+                _last = {
+                    "u10": u10, "v10": v10, "msl": msl, "t2m": t2m, "d2m": d2m,
+                    "mtpr": mtpr, "dlwrf": dlwrf, "dswrf": dswrf,
+                }
+
+        # -------------------------------------------------------------------
+        # EXTRA stack (ndays+1): first day of the NEXT month.
+        #
+        # SCHISM's sflux reader needs a bracket input_times(i) <= t <=
+        # input_times(i+1) at EVERY step, including the final one at the run
+        # end (next month day 1 00Z). Without a record strictly after the run
+        # end it aborts with "no appropriate time exists for: sflux_air_1".
+        # We write one more daily stack covering next-month day 1 00Z -> day 2
+        # 00Z, read from the next month's ERA5 file when available (option A),
+        # else by repeating the current month's last day (option B).
+        # -------------------------------------------------------------------
+        extra_stack = ndays + 1
+        nxt = _read_next_month_extra_day(mdir, year, month)
+        if nxt is not None and nxt.get("u10") is not None:
+            xd   = nxt["day_date"]
+            u10  = _pad_last(nxt["u10"], 25); v10 = _pad_last(nxt["v10"], 25)
+            msl  = _pad_last(nxt["msl"], 25); t2m = _pad_last(nxt["t2m"], 25)
+            d2m  = _pad_last(nxt["d2m"], 25)
+            mtpr = _pad_last(nxt["mtpr"], 25) if nxt["mtpr"] is not None else np.zeros_like(u10)
+            dlwrf = _pad_last(nxt["dlwrf"], 25) if nxt["dlwrf"] is not None else np.zeros_like(u10)
+            dswrf = _pad_last(nxt["dswrf"], 25) if nxt["dswrf"] is not None else np.zeros_like(u10)
+            src_note = f"from next month's ERA5 ({xd})"
+        elif _last is not None:
+            # Option B: repeat the current month's last day, shifted to the
+            # next calendar day for a correct base_date.
+            xd = date(year, month, ndays) + timedelta(days=1)
+            u10  = _last["u10"];  v10  = _last["v10"]
+            msl  = _last["msl"];  t2m  = _last["t2m"];  d2m = _last["d2m"]
+            mtpr = _last["mtpr"]; dlwrf = _last["dlwrf"]; dswrf = _last["dswrf"]
+            src_note = "pad-repeated from last day (next-month ERA5 unavailable)"
+        else:
+            xd = None
+            src_note = "SKIPPED (no next-month ERA5 and no last day available)"
+
+        if xd is not None:
+            spfh = dewpoint_to_spfh(d2m, msl)
+            times_days = np.array([h / 24.0 for h in range(25)], dtype=np.float32)
+            stack = str(extra_stack)
+
+            write_sflux_file(
+                sflux_dir / f"sflux_air_1.{stack}.nc", "air", xd,
+                lon2d, lat2d, times_days,
+                {"prmsl": msl, "spfh": spfh, "stmp": t2m,
+                 "uwind": u10, "vwind": v10})
+            write_sflux_file(
+                sflux_dir / f"sflux_prc_1.{stack}.nc", "prc", xd,
+                lon2d, lat2d, times_days,
+                {"prate": mtpr})
+            write_sflux_file(
+                sflux_dir / f"sflux_rad_1.{stack}.nc", "rad", xd,
+                lon2d, lat2d, times_days,
+                {"dlwrf": dlwrf, "dswrf": dswrf})
+            print(f"  {xd}: EXTRA read-ahead stack {stack} written ({src_note}).")
+        else:
+            print(f"  WARNING: extra read-ahead stack {extra_stack} {src_note}.")
 
     # Write sflux_inputs.txt as a minimal empty namelist.
     # SCHISM uses this file only to override defaults; an empty namelist

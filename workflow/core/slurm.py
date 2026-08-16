@@ -141,6 +141,10 @@ def wait_for_slurm_jobs(job_ids: list, poll_seconds: int = 30,
     user = os.environ.get("USER", os.environ.get("LOGNAME", ""))
     queue_cmd = f"squeue -u {user} -h -o '%i'"
 
+    # Normalise submitted IDs to their base job ID (parse_jobid already strips
+    # any array suffix, but be defensive in case a raw array ID is passed).
+    active_base = [j.split("_")[0] for j in active]
+
     print(f"\n  [--phase all] Waiting for {len(active)} {label} to complete "
           f"before starting the run phase ...")
     print(f"  Job IDs: {', '.join(active)}")
@@ -148,8 +152,14 @@ def wait_for_slurm_jobs(job_ids: list, poll_seconds: int = 30,
     while True:
         result = subprocess.run(queue_cmd, shell=True,
                                 capture_output=True, text=True)
-        queued = set(result.stdout.split())
-        still_running = [j for j in active if j in queued]
+        # squeue lists ARRAY TASKS as '<jobid>_<taskid>' (e.g. 9575586_2) while
+        # sbatch returns only the base '<jobid>' (9575586). Compare on the base
+        # ID so an array job is still considered "running" while any of its
+        # tasks remain queued/running. Matching the raw tokens would miss array
+        # tasks and return immediately, letting setup_run race ahead of the
+        # array outputs.
+        queued_base = {tok.split("_")[0] for tok in result.stdout.split()}
+        still_running = [j for j in active_base if j in queued_base]
         if not still_running:
             print(f"  All {label} have completed. Proceeding to run phase.")
             break

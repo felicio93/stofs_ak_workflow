@@ -125,18 +125,27 @@ keep_frames: true
 # month, into M{ID}/raw/coops/. CO-OPS 6-minute data is limited to one month
 # per request, hence monthly files (resume-safe: existing months are skipped).
 #
-# station_skill (interactive, swf_plot): reads raw/coops/ + model
+# download_ndbc (DTN): parses fix/station.in, downloads NOAA NDBC standard-met
+# observations for every NDBC station, one CSV per station/year into
+# M{ID}/raw/ndbc/. Past years use the annual historical file; the current year
+# is assembled from the completed-month files plus the realtime 45-day file.
+#
+# station_skill (interactive, swf_plot): reads raw/coops/ + raw/ndbc/ and model
 # R{ID}_YYYYMM/outputs/staout_*, plots obs vs model with skill metrics, and
-# writes P{ID}/P{ID}_station_skill/skill_metrics.csv. Re-run with different
+# writes P{ID}/P{ID}_station_skill/skill_metrics.csv. Only the variables named
+# in each station's station.in VARS bracket are assessed. Re-run with different
 # station_skill_start/end to assess different sub-periods (no re-download).
 
 # Water-level datum for the CO-OPS water_level product (mandatory for that
 # product). Common choices: MSL, MLLW, MHHW, NAVD, STND.
 coops_datum: MSL
 
-# Which variables to download / assess. Supported this release:
+# Which variables to download for CO-OPS. Supported this release:
 #   WL (water level), T (water temperature), air_pressure, wind.
 # (Currents and salinity are parsed from station.in but not yet handled.)
+# NDBC always downloads the full stdmet table; station_skill selects only the
+# variables listed in each station's VARS bracket (T->WTMP, air_pressure->PRES,
+# wind->WSPD/WDIR). NDBC has no water level.
 coops_variables: [WL, T, air_pressure, wind]
 
 # Skill-assessment comparison window (null = use the run's start_date/end_date).

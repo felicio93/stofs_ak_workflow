@@ -3,14 +3,22 @@ models/schism/postprocess/station_skill.py
 ===========================================
 Phase 5 step "station_skill" (interactive; runs in the swf_plot env).
 
-Compares SCHISM station output (outputs/staout_*) against downloaded CO-OPS
-observations (raw/coops/, produced by the download_coops step), for every
-valid CO-OPS station in fix/station.in and every supported variable, then:
+Compares SCHISM station output (outputs/staout_*) against downloaded station
+observations for every valid station in fix/station.in and every variable
+named in its VARS bracket, then:
 
   * plots observed vs. modeled time series (skill metrics in the legend), one
     JPEG per station/variable, and
   * writes a single skill_metrics.csv summarising bias / RMSE / R^2 per
     station/variable.
+
+Observation sources (selected by the station's SOURCE field in station.in):
+  * CO-OPS -> raw/coops/  (download_coops): water_level, water_temperature,
+              air_pressure, wind (speed/dir -> u/v).
+  * NDBC   -> raw/ndbc/   (download_ndbc): WTMP -> T, PRES -> air_pressure,
+              WSPD/WDIR -> wind (u/v). NDBC has no water level.
+
+Only the variables listed in each station's VARS bracket are assessed.
 
 Outputs go to:
     M{ID}/P{ID}/P{ID}_station_skill/{station_id}_{var}.jpg
@@ -172,6 +180,40 @@ def _wind_uv(speed, direction):
     return u, v
 
 
+# NDBC stdmet column mapping: which stdmet column supplies each variable.
+#   T (water temperature)  -> WTMP
+#   air_pressure           -> PRES
+#   wind speed / direction -> WSPD / WDIR  (converted to u/v)
+# NDBC does not provide water level.
+def _load_ndbc_frame(cfg, station_id, start_str, end_str):
+    """Load + concat per-year NDBC CSVs for one station into a DataFrame
+    indexed by UTC datetime with the stdmet columns. Returns None if none found.
+    """
+    import pandas as pd
+
+    mdir = model_dir(cfg)
+    ndbc_dir = mdir / "raw" / "ndbc"
+    start_year = int(str(start_str)[:4])
+    end_year   = int(str(end_str)[:4])
+
+    parts = []
+    for year in range(start_year, end_year + 1):
+        f = ndbc_dir / f"{station_id}_{year}.csv"
+        if f.exists() and f.stat().st_size > 0:
+            parts.append(pd.read_csv(f))
+    if not parts:
+        return None
+
+    df = pd.concat(parts, ignore_index=True)
+    if "datetime" not in df.columns:
+        return None
+    df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
+    df = df.dropna(subset=["datetime"]).set_index("datetime").sort_index()
+    df.index = df.index.tz_localize(None)
+    df = df[~df.index.duplicated(keep="first")]
+    return df.loc[start_str:end_str]
+
+
 def _metrics(obs_series, mod_series, rule):
     """Resample both to `rule`, align, and return (n, mean_obs, bias, rmse, r2).
     Returns None if fewer than 2 overlapping points."""
@@ -215,6 +257,136 @@ def _plot(obs_idx, obs_vals, mod_idx, mod_vals, title, ylabel, color,
     plt.close(fig)
 
 
+def _obs_for_variable(source, tok, cfg, sid, start_str, end_str):
+    """Return the observed series (or dict for wind) for a station/variable.
+
+    For CO-OPS: single-value products read the 'v' column; wind reads 's','d'.
+    For NDBC: reads the stdmet per-year frame; WTMP->T, PRES->air_pressure,
+    WSPD/WDIR->wind.
+
+    Returns one of:
+      ("single", pandas.Series)                        for scalar variables
+      ("wind",   {"u": Series, "v": Series})           for wind
+      None                                             if no obs
+    """
+    import pandas as pd
+
+    T = tok.strip().upper()
+
+    if source == "CO-OPS":
+        if T in WIND_TOKENS:
+            obs = _load_obs_series(cfg, sid, "wind", start_str, end_str)
+            if obs is None or obs.empty or "s" not in obs or "d" not in obs:
+                return None
+            spd = pd.to_numeric(obs["s"], errors="coerce")
+            drc = pd.to_numeric(obs["d"], errors="coerce")
+            u, v = _wind_uv(spd, drc)
+            return ("wind", {"u": u.dropna(), "v": v.dropna()})
+        plan = VAR_PLAN.get(T)
+        if plan is None:
+            return None
+        obs = _load_obs_series(cfg, sid, plan["product"], start_str, end_str)
+        if obs is None or obs.empty or "v" not in obs:
+            return None
+        return ("single", pd.to_numeric(obs["v"], errors="coerce").dropna())
+
+    # --- NDBC ---
+    frame = _load_ndbc_frame(cfg, sid, start_str, end_str)
+    if frame is None or frame.empty:
+        return None
+    if T in WIND_TOKENS:
+        if "WSPD" not in frame or "WDIR" not in frame:
+            return None
+        spd = pd.to_numeric(frame["WSPD"], errors="coerce")
+        drc = pd.to_numeric(frame["WDIR"], errors="coerce")
+        u, v = _wind_uv(spd, drc)
+        return ("wind", {"u": u.dropna(), "v": v.dropna()})
+    # scalar: map token -> NDBC stdmet column
+    ndbc_col = {"T": "WTMP", "TEMP": "WTMP",
+                "AIR_PRESSURE": "PRES", "AIRPRESSURE": "PRES",
+                "PATM": "PRES", "PRESSURE": "PRES"}.get(T)
+    if ndbc_col is None or ndbc_col not in frame:
+        return None
+    return ("single", pd.to_numeric(frame[ndbc_col], errors="coerce").dropna())
+
+
+def _assess_station(st, source, cfg, model_frame, rule,
+                    start_str, end_str, out_dir, rows):
+    """Assess one station (all its VARS) against the model and append rows."""
+    sid  = st["station_id"]
+    name = st["name"]
+    src_tag = source
+
+    for tok in st["vars"]:
+        T = tok.strip().upper()
+        obs = _obs_for_variable(source, tok, cfg, sid, start_str, end_str)
+        if obs is None:
+            # WL is not available from NDBC; unsupported tokens (CU/S) skipped.
+            if not (source == "NDBC" and T in ("WL", "ELEV")):
+                print(f"  {src_tag} {sid} {T}: no obs, skipping.")
+            continue
+        kind, payload = obs
+
+        if kind == "wind":
+            for comp_label, staout_num, key in WIND_COMPONENTS:
+                mdl = model_frame(staout_num)
+                if mdl.empty or sid not in mdl.columns:
+                    print(f"  {src_tag} {sid} {comp_label}: no model column, skipping.")
+                    continue
+                o = payload[key]
+                m = mdl[sid]
+                res = _metrics(o, m, rule)
+                if res is None:
+                    print(f"  {src_tag} {sid} {comp_label}: <2 overlapping points, skipping.")
+                    continue
+                n, mean_obs, bias, rmse, r2 = res
+                mod_label = (f"Model [R\u00b2: {r2:.2f}; RMSE: {rmse:.2f} m/s; "
+                             f"Bias: {bias:.2f} m/s]")
+                _plot(o.index, o.values, m.index, m.values,
+                      f"{src_tag} ({sid}): {name} \u2014 Wind {comp_label} (m/s)",
+                      f"{comp_label} (m/s)", "purple", mod_label,
+                      out_dir / f"{sid}_{comp_label}.jpg")
+                rows.append(dict(station_id=sid, name=name, source=src_tag,
+                                 variable=comp_label, n_points=n,
+                                 mean_obs=mean_obs, bias=bias, rmse=rmse,
+                                 r2=r2, start=start_str, end=end_str))
+                print(f"  {src_tag} {sid} {comp_label}: n={n} bias={bias:.3f} "
+                      f"rmse={rmse:.3f} r2={r2:.3f}")
+            continue
+
+        # --- single-value variable ---
+        plan = VAR_PLAN.get(T)
+        if plan is None:
+            continue
+        o = payload
+        mdl = model_frame(plan["staout"])
+        if mdl.empty or sid not in mdl.columns:
+            print(f"  {src_tag} {sid} {T}: no model column "
+                  f"(staout_{plan['staout']}), skipping.")
+            continue
+        m = mdl[sid]
+        if m.std() < 1e-3:
+            print(f"  WARNING: {src_tag} {sid} {T} model series is flat (dry node?).")
+        res = _metrics(o, m, rule)
+        if res is None:
+            print(f"  {src_tag} {sid} {T}: <2 overlapping points, skipping.")
+            continue
+        n, mean_obs, bias, rmse, r2 = res
+        unit = plan["unit"]
+        mod_label = (f"Model [R\u00b2: {r2:.2f}; RMSE: {rmse:.2f} {unit}; "
+                     f"Bias: {bias:.2f} {unit}]")
+        _plot(o.index, o.values, m.index, m.values,
+              f"{src_tag} ({sid}): {name} \u2014 {plan['label']}",
+              f"{plan['label']} ({unit})", plan["color"], mod_label,
+              out_dir / f"{sid}_{plan['product']}.jpg")
+        rows.append(dict(station_id=sid, name=name, source=src_tag,
+                         variable=plan["product"], n_points=n,
+                         mean_obs=mean_obs, bias=bias, rmse=rmse, r2=r2,
+                         start=start_str, end=end_str))
+        print(f"  {src_tag} {sid} {T}: n={n} bias={bias:.3f} "
+              f"rmse={rmse:.3f} r2={r2:.3f}")
+
+
 def run_station_skill(cfg: dict, config_dir=None):
     import pandas as pd
 
@@ -230,14 +402,15 @@ def run_station_skill(cfg: dict, config_dir=None):
 
     stations = parse_station_in(station_in)
     coops = [s for s in stations if s["source"] == "CO-OPS"]
+    ndbc  = [s for s in stations if s["source"] == "NDBC"]
 
     out_dir = mdir / f"P{pid}" / f"P{pid}_station_skill"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"\n{'='*60}")
-    print(f"  Station skill assessment (CO-OPS)")
+    print(f"  Station skill assessment")
     print(f"  Window: {start_str} -> {end_str}   resample: {rule}")
-    print(f"  {len(coops)} CO-OPS station(s)   Output: {out_dir}")
+    print(f"  {len(coops)} CO-OPS + {len(ndbc)} NDBC station(s)   Output: {out_dir}")
     print(f"{'='*60}\n")
 
     # Cache model staout frames by staout number (loaded on demand).
@@ -251,97 +424,28 @@ def run_station_skill(cfg: dict, config_dir=None):
 
     rows = []   # skill_metrics.csv rows
 
+    # --- CO-OPS stations ---
     for st in coops:
-        sid  = st["station_id"]
-        name = st["name"]
-        for tok in st["vars"]:
-            T = tok.strip().upper()
+        _assess_station(st, "CO-OPS", cfg, model_frame, rule,
+                        start_str, end_str, out_dir, rows)
 
-            # --- WIND: two components vs staout_3/4 ---
-            if T in WIND_TOKENS:
-                obs = _load_obs_series(cfg, sid, "wind", start_str, end_str)
-                if obs is None or obs.empty or "s" not in obs or "d" not in obs:
-                    print(f"  {sid} wind: no obs, skipping.")
-                    continue
-                spd = pd.to_numeric(obs["s"], errors="coerce")
-                drc = pd.to_numeric(obs["d"], errors="coerce")
-                u_obs, v_obs = _wind_uv(spd, drc)
-                obs_uv = {"u": u_obs.dropna(), "v": v_obs.dropna()}
-                for comp_label, staout_num, key in WIND_COMPONENTS:
-                    mdl = model_frame(staout_num)
-                    if mdl.empty or sid not in mdl.columns:
-                        print(f"  {sid} {comp_label}: no model column, skipping.")
-                        continue
-                    o = obs_uv[key]
-                    m = mdl[sid]
-                    res = _metrics(o, m, rule)
-                    if res is None:
-                        print(f"  {sid} {comp_label}: <2 overlapping points, skipping.")
-                        continue
-                    n, mean_obs, bias, rmse, r2 = res
-                    mod_label = (f"Model [R²: {r2:.2f}; RMSE: {rmse:.2f} m/s; "
-                                 f"Bias: {bias:.2f} m/s]")
-                    _plot(o.index, o.values, m.index, m.values,
-                          f"CO-OPS ({sid}): {name} — Wind {comp_label} (m/s)",
-                          f"{comp_label} (m/s)", "purple", mod_label,
-                          out_dir / f"{sid}_{comp_label}.jpg")
-                    rows.append(dict(station_id=sid, name=name,
-                                     variable=comp_label, n_points=n,
-                                     mean_obs=mean_obs, bias=bias, rmse=rmse,
-                                     r2=r2, start=start_str, end=end_str))
-                    print(f"  {sid} {comp_label}: n={n} bias={bias:.3f} "
-                          f"rmse={rmse:.3f} r2={r2:.3f}")
-                continue
-
-            # --- single-value variables ---
-            plan = VAR_PLAN.get(T)
-            if plan is None:
-                # Unsupported token (e.g. CU/S) — skip silently for CO-OPS pass.
-                continue
-            product = plan["product"]
-            obs = _load_obs_series(cfg, sid, product, start_str, end_str)
-            if obs is None or obs.empty or "v" not in obs:
-                print(f"  {sid} {T}: no obs ({product}), skipping.")
-                continue
-            o = pd.to_numeric(obs["v"], errors="coerce").dropna()
-
-            mdl = model_frame(plan["staout"])
-            if mdl.empty or sid not in mdl.columns:
-                print(f"  {sid} {T}: no model column (staout_{plan['staout']}), skipping.")
-                continue
-            m = mdl[sid]
-
-            if m.std() < 1e-3:
-                print(f"  WARNING: {sid} {T} model series is flat (dry node?).")
-
-            res = _metrics(o, m, rule)
-            if res is None:
-                print(f"  {sid} {T}: <2 overlapping points, skipping.")
-                continue
-            n, mean_obs, bias, rmse, r2 = res
-            unit = plan["unit"]
-            mod_label = (f"Model [R²: {r2:.2f}; RMSE: {rmse:.2f} {unit}; "
-                         f"Bias: {bias:.2f} {unit}]")
-            _plot(o.index, o.values, m.index, m.values,
-                  f"CO-OPS ({sid}): {name} — {plan['label']}",
-                  f"{plan['label']} ({unit})", plan["color"], mod_label,
-                  out_dir / f"{sid}_{plan['product']}.jpg")
-            rows.append(dict(station_id=sid, name=name, variable=plan["product"],
-                             n_points=n, mean_obs=mean_obs, bias=bias,
-                             rmse=rmse, r2=r2, start=start_str, end=end_str))
-            print(f"  {sid} {T}: n={n} bias={bias:.3f} rmse={rmse:.3f} r2={r2:.3f}")
+    # --- NDBC stations ---
+    for st in ndbc:
+        _assess_station(st, "NDBC", cfg, model_frame, rule,
+                        start_str, end_str, out_dir, rows)
 
     # --- write skill_metrics.csv ---
     if rows:
         df = pd.DataFrame(rows, columns=[
-            "station_id", "name", "variable", "n_points",
+            "station_id", "name", "source", "variable", "n_points",
             "mean_obs", "bias", "rmse", "r2", "start", "end"])
         csv_path = out_dir / "skill_metrics.csv"
         df.to_csv(csv_path, index=False)
         print(f"\n  Wrote {len(rows)} skill row(s) -> {csv_path}")
     else:
         print("\n  No station/variable pairs produced metrics "
-              "(check download_coops ran and the window overlaps the data).")
+              "(check download_coops/download_ndbc ran and the window overlaps "
+              "the data).")
 
     print(f"\n{'='*60}")
     print(f"  Station skill assessment complete. Plots + CSV in {out_dir}")

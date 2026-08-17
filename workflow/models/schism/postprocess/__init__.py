@@ -14,19 +14,20 @@ Implemented steps
   download_coops DTN download of NOAA CO-OPS station observations (water level,
                  water temperature, air pressure, wind) into M{ID}/raw/coops/
                  (one CSV per station / product / month), based on fix/station.in.
+  download_ndbc  DTN download of NOAA NDBC buoy observations (WTMP, wind, PRES,
+                 ...) into M{ID}/raw/ndbc/ (one CSV per station / year:
+                 historical annual file for past years; monthly + realtime for
+                 the current year), based on fix/station.in.
   compare_sst    Model (daily-mean SST) vs. satellite two-panel GIF.
-  station_skill  Interactive obs-vs-model comparison at CO-OPS stations: time-
-                 series plots (bias/RMSE/R^2 in the legend) + a skill_metrics.csv
-                 under P{ID}/P{ID}_station_skill/. Re-runnable for any sub-period
-                 via station_skill_start/end in postprocess.yaml.
+  station_skill  Interactive obs-vs-model comparison at CO-OPS and NDBC stations:
+                 time-series plots (bias/RMSE/R^2 in the legend) + a
+                 skill_metrics.csv under P{ID}/P{ID}_station_skill/. Re-runnable
+                 for any sub-period via station_skill_start/end in
+                 postprocess.yaml.
   diag_run_plots Per-output-stack diagnostic frames written DURING the run.
                  NOT dispatched here — it is baked into auto_hotstart.py by
                  setup_run and fires from the Phase-4 monitoring loop. Its
                  flag/config still live with Phase 5.
-
-Placeholder steps (not yet implemented)
-----------------------------------------
-  download_ndbc    Download NDBC buoy observations (planned).
 
 Config for all of the above lives in postprocess.yaml (loaded by
 core.config.load_config).
@@ -65,6 +66,16 @@ def postprocess_phase(cfg: dict, config_dir, only: str = None):
     else:
         print("[SKIP] download_coops")
 
+    # --- download_ndbc (DTN): NDBC buoy observations -> raw/ndbc/ ---
+    if enabled("download_ndbc"):
+        print("[STEP] download_ndbc")
+        from workflow.models.schism.postprocess.downloaders.ndbc import (
+            run_download_ndbc,
+        )
+        run_download_ndbc(cfg)
+    else:
+        print("[SKIP] download_ndbc")
+
     # --- plot_outputs (full-run field GIFs) ---
     if enabled("plot_outputs"):
         print("[STEP] plot_outputs")
@@ -100,11 +111,3 @@ def postprocess_phase(cfg: dict, config_dir, only: str = None):
         print("[NOTE] diag_run_plots runs DURING the run (Phase 4), dispatched")
         print("       by auto_hotstart.py — not in the postprocess phase.")
         print("       Enable it before setup_run so it is baked into the run dirs.")
-
-    # --- placeholder steps ---
-    for step in ("download_ndbc",):
-        if enabled(step):
-            print(f"[STEP] {step}")
-            print(f"  NOTE: '{step}' is not yet implemented.")
-        else:
-            print(f"[SKIP] {step}")

@@ -471,12 +471,17 @@ frame retention). All plots overlay the 200 m and 2000 m isobaths.
     station observations (water level, water temperature, air pressure, wind)
     into `M{ID}/raw/coops/` — one CSV per station/product/month (CO-OPS 6-min
     data is capped at one month per request). Resume-safe.
- 6. **`station_skill`** (interactive): compare CO-OPS observations against the
-    model `outputs/staout_*` at each station, write obs-vs-model time-series
-    plots (bias/RMSE/R² in the legend) and a `skill_metrics.csv` under
-    `P{ID}/P{ID}_station_skill/`. Re-run for any sub-period via
+ 6. **`download_ndbc`** (DTN): parse `fix/station.in`, download NOAA NDBC buoy
+    observations (WTMP, wind, PRES, ...) into `M{ID}/raw/ndbc/` — one CSV per
+    station/year. Past years come from the annual historical file; the current
+    year is assembled from completed-month files + the realtime 45-day file.
+ 7. **`station_skill`** (interactive): compare CO-OPS and NDBC observations
+    against the model `outputs/staout_*` at each station, write obs-vs-model
+    time-series plots (bias/RMSE/R² in the legend) and a `skill_metrics.csv`
+    under `P{ID}/P{ID}_station_skill/`. Only the variables named in each
+    station's VARS bracket are assessed. Re-run for any sub-period via
     `station_skill_start`/`station_skill_end` in `postprocess.yaml` without
-    re-downloading. Needs `download_coops` first.
+    re-downloading. Needs `download_coops` and/or `download_ndbc` first.
 
 ```bash
 # Diagnostics: enable diag_run_plots in steps.yaml BEFORE setup_run.
@@ -485,19 +490,21 @@ stofs-ak --run --phase postprocess --only download_sst   --config <cfg>   # DTN
 stofs-ak --run --phase postprocess --only plot_outputs   --config <cfg>
 stofs-ak --run --phase postprocess --only compare_sst    --config <cfg>
 stofs-ak --run --phase postprocess --only download_coops --config <cfg>   # DTN
+stofs-ak --run --phase postprocess --only download_ndbc  --config <cfg>   # DTN
 stofs-ak --run --phase postprocess --only station_skill  --config <cfg>
 ```
 
-> **station.in convention.** `download_coops` and `station_skill` read the
-> per-station comment in `fix/station.in`. A station is used only when its
-> comment is exactly `![VARS],<id>,<SOURCE>,<name>` — e.g.
-> `1 199.496 55.332 0.0 ![WL,T],9459450,CO-OPS,Sand Point`. Lines without a
+> **station.in convention.** `download_coops`, `download_ndbc`, and
+> `station_skill` read the per-station comment in `fix/station.in`. A station
+> is used only when its comment is exactly `![VARS],<id>,<SOURCE>,<name>` —
+> e.g. `1 199.496 55.332 0.0 ![WL,T],9459450,CO-OPS,Sand Point` or
+> `10 182.532 57.034 0.0 ![T],46035,NDBC,Central Bering Sea`. Lines without a
 > bracket, or missing the id/source/name triplet, are ignored. VARS tokens:
-> `WL`/`elev` (water level), `T` (water temperature), `air_pressure`/`PATM`,
-> `wind`. Only `CO-OPS` stations are handled in this release (NDBC planned).
-> The station's model value comes from the `staout_*` column matching its
-> line position in `station.in` (SCHISM order: staout_1=elev, 2=air pressure,
-> 3=windx, 4=windy, 5=T).
+> `WL`/`elev` (water level, CO-OPS only), `T` (water temperature),
+> `air_pressure`/`PATM`, `wind`. `SOURCE` is `CO-OPS` or `NDBC`. The station's
+> model value comes from the `staout_*` column matching its line position in
+> `station.in` (SCHISM order: staout_1=elev, 2=air pressure, 3=windx, 4=windy,
+> 5=T). NDBC maps WTMP→T, PRES→air_pressure, WSPD/WDIR→wind (u/v).
 
 ---
 
@@ -540,8 +547,8 @@ stofs-ak --run --phase postprocess --only station_skill  --config <cfg>
 | `plot_outputs` (full-run field GIFs) | 5 | ✅ Done |
 | `compare_sst` (model vs satellite SST GIF) | 5 | ✅ Done |
 | `download_coops` (CO-OPS station obs download) | 5 | ✅ Done |
-| `station_skill` (CO-OPS obs vs model plots + skill CSV) | 5 | ✅ Done |
-| `download_ndbc` (NDBC buoy obs) | 5 | 🚧 Planned |
+| `download_ndbc` (NDBC buoy obs download) | 5 | ✅ Done |
+| `station_skill` (CO-OPS/NDBC obs vs model plots + skill CSV) | 5 | ✅ Done |
 | SCHISM+WWM / SCHISM+MICE / UFS-Coastal drivers | — | 🚧 Placeholder |
 
 ---

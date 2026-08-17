@@ -8,12 +8,12 @@ observations (raw/coops/, produced by the download_coops step), for every
 valid CO-OPS station in fix/station.in and every supported variable, then:
 
   * plots observed vs. modeled time series (skill metrics in the legend), one
-    PNG per station/variable, and
+    JPEG per station/variable, and
   * writes a single skill_metrics.csv summarising bias / RMSE / R^2 per
     station/variable.
 
 Outputs go to:
-    M{ID}/P{ID}/P{ID}_station_skill/{station_id}_{var}.png
+    M{ID}/P{ID}/P{ID}_station_skill/{station_id}_{var}.jpg
     M{ID}/P{ID}/P{ID}_station_skill/skill_metrics.csv
 
 The comparison window defaults to the run's [start_date, end_date] but can be
@@ -196,7 +196,7 @@ def _metrics(obs_series, mod_series, rule):
 
 
 def _plot(obs_idx, obs_vals, mod_idx, mod_vals, title, ylabel, color,
-          mod_label, out_png):
+          mod_label, out_jpg):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -211,7 +211,7 @@ def _plot(obs_idx, obs_vals, mod_idx, mod_vals, title, ylabel, color,
     ax.legend(loc="best")
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%d-%b"))
     fig.tight_layout()
-    fig.savefig(out_png, dpi=150)
+    fig.savefig(out_jpg, dpi=150)
     plt.close(fig)
 
 
@@ -284,7 +284,7 @@ def run_station_skill(cfg: dict, config_dir=None):
                     _plot(o.index, o.values, m.index, m.values,
                           f"CO-OPS ({sid}): {name} — Wind {comp_label} (m/s)",
                           f"{comp_label} (m/s)", "purple", mod_label,
-                          out_dir / f"{sid}_{comp_label}.png")
+                          out_dir / f"{sid}_{comp_label}.jpg")
                     rows.append(dict(station_id=sid, name=name,
                                      variable=comp_label, n_points=n,
                                      mean_obs=mean_obs, bias=bias, rmse=rmse,
@@ -325,7 +325,7 @@ def run_station_skill(cfg: dict, config_dir=None):
             _plot(o.index, o.values, m.index, m.values,
                   f"CO-OPS ({sid}): {name} — {plan['label']}",
                   f"{plan['label']} ({unit})", plan["color"], mod_label,
-                  out_dir / f"{sid}_{plan['product']}.png")
+                  out_dir / f"{sid}_{plan['product']}.jpg")
             rows.append(dict(station_id=sid, name=name, variable=plan["product"],
                              n_points=n, mean_obs=mean_obs, bias=bias,
                              rmse=rmse, r2=r2, start=start_str, end=end_str))

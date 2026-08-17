@@ -11,7 +11,14 @@ Implemented steps
                  cadence. Two-stage SLURM (parallel frames -> serial GIF).
   download_sst   DTN download + domain subset of LEO L3S-DY satellite SST
                  into M{ID}/obs/sst_leo/ (one file per day).
+  download_coops DTN download of NOAA CO-OPS station observations (water level,
+                 water temperature, air pressure, wind) into M{ID}/raw/coops/
+                 (one CSV per station / product / month), based on fix/station.in.
   compare_sst    Model (daily-mean SST) vs. satellite two-panel GIF.
+  station_skill  Interactive obs-vs-model comparison at CO-OPS stations: time-
+                 series plots (bias/RMSE/R^2 in the legend) + a skill_metrics.csv
+                 under P{ID}/P{ID}_station_skill/. Re-runnable for any sub-period
+                 via station_skill_start/end in postprocess.yaml.
   diag_run_plots Per-output-stack diagnostic frames written DURING the run.
                  NOT dispatched here — it is baked into auto_hotstart.py by
                  setup_run and fires from the Phase-4 monitoring loop. Its
@@ -19,8 +26,7 @@ Implemented steps
 
 Placeholder steps (not yet implemented)
 ----------------------------------------
-  station_extract  Extract modeled time series at CO-OPS / NDBC stations.
-  skill_metrics    RMSE, bias, correlation, skill scores vs observations.
+  download_ndbc    Download NDBC buoy observations (planned).
 
 Config for all of the above lives in postprocess.yaml (loaded by
 core.config.load_config).
@@ -49,6 +55,16 @@ def postprocess_phase(cfg: dict, config_dir, only: str = None):
     else:
         print("[SKIP] download_sst")
 
+    # --- download_coops (DTN): station observations -> raw/coops/ ---
+    if enabled("download_coops"):
+        print("[STEP] download_coops")
+        from workflow.models.schism.postprocess.downloaders.coops import (
+            run_download_coops,
+        )
+        run_download_coops(cfg)
+    else:
+        print("[SKIP] download_coops")
+
     # --- plot_outputs (full-run field GIFs) ---
     if enabled("plot_outputs"):
         print("[STEP] plot_outputs")
@@ -69,6 +85,16 @@ def postprocess_phase(cfg: dict, config_dir, only: str = None):
     else:
         print("[SKIP] compare_sst")
 
+    # --- station_skill (interactive): CO-OPS obs vs model staout_* ---
+    if enabled("station_skill"):
+        print("[STEP] station_skill")
+        from workflow.models.schism.postprocess.station_skill import (
+            run_station_skill,
+        )
+        run_station_skill(cfg, config_dir)
+    else:
+        print("[SKIP] station_skill")
+
     # --- diag_run_plots: runs during Phase 4 (auto_hotstart), not here ---
     if enabled("diag_run_plots"):
         print("[NOTE] diag_run_plots runs DURING the run (Phase 4), dispatched")
@@ -76,7 +102,7 @@ def postprocess_phase(cfg: dict, config_dir, only: str = None):
         print("       Enable it before setup_run so it is baked into the run dirs.")
 
     # --- placeholder steps ---
-    for step in ("station_extract", "skill_metrics"):
+    for step in ("download_ndbc",):
         if enabled(step):
             print(f"[STEP] {step}")
             print(f"  NOTE: '{step}' is not yet implemented.")

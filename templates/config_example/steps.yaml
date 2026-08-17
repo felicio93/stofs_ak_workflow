@@ -56,7 +56,10 @@ diag_run_plots:  false   # Per-output-stack diagnostic frames -> D{ID} DURING th
                          # run (dispatched by auto_hotstart.py). Enable BEFORE
                          # setup_run so it is baked into the run directories.
 download_sst:    false   # DTN: download LEO L3S-DY satellite SST + subset -> M{ID}/obs/
+download_coops:  false   # DTN: download NOAA CO-OPS station obs (WL, water temp, air
+                         # pressure, wind) -> M{ID}/raw/coops/ (based on fix/station.in)
 plot_outputs:    false   # Full-run field GIFs -> P{ID} (SLURM: parallel frames + GIF)
 compare_sst:     false   # Model vs satellite SST GIF -> P{ID} (needs download_sst first)
-station_extract: false   # Extract model time series at CO-OPS/NDBC stations (planned)
-skill_metrics:   false   # RMSE, bias, correlation, skill vs observations (planned)
+station_skill:   false   # Interactive: CO-OPS obs vs model staout_* time-series plots
+                         # + skill_metrics.csv -> P{ID} (needs download_coops first)
+download_ndbc:   false   # DTN: download NDBC buoy observations (planned)

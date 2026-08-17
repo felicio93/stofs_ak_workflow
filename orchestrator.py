@@ -97,8 +97,8 @@ def validate_config(cfg: dict):
 # Phase 4 steps in steps.yaml — if any are enabled but --phase preprocess
 # is active (the default), warn the user so they know to pass --phase run.
 RUN_PHASE_STEPS      = {"setup_run", "submit_run"}
-POSTPROCESS_STEPS    = {"plot_outputs", "station_extract",
-                        "skill_metrics", "compare_sst",
+POSTPROCESS_STEPS    = {"plot_outputs", "station_skill",
+                        "download_coops", "download_ndbc", "compare_sst",
                         "download_sst", "diag_run_plots"}
 
 

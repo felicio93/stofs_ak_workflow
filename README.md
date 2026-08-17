@@ -465,16 +465,39 @@ frame retention). All plots overlay the 200 m and 2000 m isobaths.
 3. **`plot_outputs`**: full-run field GIFs (any configured variable/layer,
    every-X-hours cadence). Two-stage SLURM — parallel per-file frames, then a
    serial GIF-assembly job (`--dependency=afterok`). Output in `P{ID}/`.
-4. **`compare_sst`**: model (daily-mean SST) vs satellite two-panel GIF over a
-   date range. Same two-stage SLURM pattern. Needs `download_sst` first.
+ 4. **`compare_sst`**: model (daily-mean SST) vs satellite two-panel GIF over a
+    date range. Same two-stage SLURM pattern. Needs `download_sst` first.
+ 5. **`download_coops`** (DTN): parse `fix/station.in`, download NOAA CO-OPS
+    station observations (water level, water temperature, air pressure, wind)
+    into `M{ID}/raw/coops/` — one CSV per station/product/month (CO-OPS 6-min
+    data is capped at one month per request). Resume-safe.
+ 6. **`station_skill`** (interactive): compare CO-OPS observations against the
+    model `outputs/staout_*` at each station, write obs-vs-model time-series
+    plots (bias/RMSE/R² in the legend) and a `skill_metrics.csv` under
+    `P{ID}/P{ID}_station_skill/`. Re-run for any sub-period via
+    `station_skill_start`/`station_skill_end` in `postprocess.yaml` without
+    re-downloading. Needs `download_coops` first.
 
 ```bash
 # Diagnostics: enable diag_run_plots in steps.yaml BEFORE setup_run.
 # Then the standard Phase 5 steps:
-stofs-ak --run --phase postprocess --only download_sst  --config <cfg>   # DTN
-stofs-ak --run --phase postprocess --only plot_outputs  --config <cfg>
-stofs-ak --run --phase postprocess --only compare_sst   --config <cfg>
+stofs-ak --run --phase postprocess --only download_sst   --config <cfg>   # DTN
+stofs-ak --run --phase postprocess --only plot_outputs   --config <cfg>
+stofs-ak --run --phase postprocess --only compare_sst    --config <cfg>
+stofs-ak --run --phase postprocess --only download_coops --config <cfg>   # DTN
+stofs-ak --run --phase postprocess --only station_skill  --config <cfg>
 ```
+
+> **station.in convention.** `download_coops` and `station_skill` read the
+> per-station comment in `fix/station.in`. A station is used only when its
+> comment is exactly `![VARS],<id>,<SOURCE>,<name>` — e.g.
+> `1 199.496 55.332 0.0 ![WL,T],9459450,CO-OPS,Sand Point`. Lines without a
+> bracket, or missing the id/source/name triplet, are ignored. VARS tokens:
+> `WL`/`elev` (water level), `T` (water temperature), `air_pressure`/`PATM`,
+> `wind`. Only `CO-OPS` stations are handled in this release (NDBC planned).
+> The station's model value comes from the `staout_*` column matching its
+> line position in `station.in` (SCHISM order: staout_1=elev, 2=air pressure,
+> 3=windx, 4=windy, 5=T).
 
 ---
 
@@ -516,7 +539,9 @@ stofs-ak --run --phase postprocess --only compare_sst   --config <cfg>
 | `download_sst` (LEO L3S-DY satellite SST download + subset) | 5 | ✅ Done |
 | `plot_outputs` (full-run field GIFs) | 5 | ✅ Done |
 | `compare_sst` (model vs satellite SST GIF) | 5 | ✅ Done |
-| `station_extract` / `skill_metrics` | 5 | 🚧 Planned |
+| `download_coops` (CO-OPS station obs download) | 5 | ✅ Done |
+| `station_skill` (CO-OPS obs vs model plots + skill CSV) | 5 | ✅ Done |
+| `download_ndbc` (NDBC buoy obs) | 5 | 🚧 Planned |
 | SCHISM+WWM / SCHISM+MICE / UFS-Coastal drivers | — | 🚧 Placeholder |
 
 ---

@@ -684,6 +684,52 @@ ls $SWF_PROJ/M01/P01/P01_compare_sst/compare_sst.gif
 > (`sst_match: daily_mean`). Switch to `nearest` in `postprocess.yaml` to use
 > the model timestep closest to 12:00Z instead.
 
+### Step 10e — download_coops (DTN, CO-OPS station observations)
+
+Parses `fix/station.in`, downloads NOAA CO-OPS observations for every valid
+CO-OPS station (water level, water temperature, air pressure, wind), one CSV
+per station/product/month into `M01/raw/coops/`. Resume-safe (existing months
+skipped). CO-OPS 6-minute data is capped at one month per request.
+
+```bash
+ssh hercules-dtn.hpc.msstate.edu
+conda activate swf_main
+# In steps.yaml: download_coops: true
+stofs-ak --run --phase postprocess --only download_coops --config $CFG \
+    2>&1 | tee $SWF_PROJ/M01/logs/download_coops_$(date +%Y%m%d_%H%M%S).log
+# Verify:
+ls $SWF_PROJ/M01/raw/coops/ | head
+# e.g. 9459450_water_level_202509.csv  9459450_water_temperature_202509.csv
+```
+
+> **station.in convention.** Only lines whose comment is exactly
+> `![VARS],<id>,<SOURCE>,<name>` are used, e.g.
+> `1 199.496 55.332 0.0 ![WL,T],9459450,CO-OPS,Sand Point`. Lines without a
+> bracket (`! modulation1`) or missing the id (`![CU],CO-OPS,UNI1901`) are
+> ignored. Datum for water level is set by `coops_datum` in postprocess.yaml
+> (default MSL). Restrict variables with `coops_variables`.
+
+### Step 10f — station_skill (interactive, obs vs model + skill CSV)
+
+Requires `download_coops` to have run. Reads `raw/coops/` and the model
+`R01_YYYYMM/outputs/staout_*`, produces obs-vs-model time-series plots (with
+bias/RMSE/R² in the legend) and a `skill_metrics.csv`, into
+`P01/P01_station_skill/`.
+
+```bash
+conda activate swf_plot   # (or swf_main; matplotlib is in swf_plot)
+# In steps.yaml: station_skill: true
+stofs-ak --run --phase postprocess --only station_skill --config $CFG
+ls $SWF_PROJ/M01/P01/P01_station_skill/
+cat $SWF_PROJ/M01/P01/P01_station_skill/skill_metrics.csv
+```
+
+> **Re-running for a sub-period.** Set `station_skill_start` /
+> `station_skill_end` in `postprocess.yaml` (format YYYY-MM-DD; null = whole
+> run) and re-run `station_skill`. No re-download is needed — it just re-slices
+> the already-downloaded observations and model output. `station_skill_resample`
+> (default `1H`) sets the cadence for the skill metrics.
+
 ---
 
 ## Single-step override
@@ -780,6 +826,8 @@ stofs-ak --run --phase all --config $CFG
 | `plot_outputs` GIF assembly | 5 | compute | swf_plot (auto) | no |
 | `compare_sst` frames | 5 | compute | swf_plot (auto) | no |
 | `compare_sst` GIF assembly | 5 | compute | swf_plot (auto) | no |
+| `download_coops` | 5 | DTN | swf_main | yes |
+| `station_skill` | 5 | login/any | swf_plot | no |
 
 ---
 
@@ -807,6 +855,8 @@ stofs-ak --run --phase all --config $CFG
 | `download_sst` | Skips days where `obs/sst_leo/leosst_YYYYMMDD.nc` exists |
 | `plot_outputs` | Re-submit; frames named by variable + timestamp; GIF in `P01_plot_outputs/` |
 | `compare_sst` | Re-submit; frames in `P01_compare_sst/frames/`; GIF in `P01_compare_sst/` |
+| `download_coops` | Skips months where `raw/coops/{id}_{product}_{YYYYMM}.csv` exists |
+| `station_skill` | Re-run any time; re-slices obs+model to station_skill_start/end; overwrites plots + skill_metrics.csv |
 
 ---
 

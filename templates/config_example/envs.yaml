@@ -34,3 +34,5 @@ conda_envs:
   compare_sst:    swf_plot   # Phase 5 model-vs-satellite SST
   diag_run_plots: swf_plot   # Phase 5 per-stack diagnostics (during run)
   download_sst:   swf_main   # Phase 5 satellite SST download (DTN + NCO)
+  download_coops: swf_main   # Phase 5 CO-OPS station obs download (DTN)
+  station_skill:  swf_plot   # Phase 5 CO-OPS obs vs model skill plots + metrics

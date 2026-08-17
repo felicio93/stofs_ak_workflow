@@ -118,6 +118,38 @@ compare_sst_dpi:  150
 keep_frames: true
 
 # =============================================================================
+# CO-OPS station observations (download_coops) + skill assessment (station_skill)
+# =============================================================================
+# download_coops (DTN): parses fix/station.in, downloads NOAA CO-OPS
+# observations for every valid CO-OPS station, one CSV per station/product/
+# month, into M{ID}/raw/coops/. CO-OPS 6-minute data is limited to one month
+# per request, hence monthly files (resume-safe: existing months are skipped).
+#
+# station_skill (interactive, swf_plot): reads raw/coops/ + model
+# R{ID}_YYYYMM/outputs/staout_*, plots obs vs model with skill metrics, and
+# writes P{ID}/P{ID}_station_skill/skill_metrics.csv. Re-run with different
+# station_skill_start/end to assess different sub-periods (no re-download).
+
+# Water-level datum for the CO-OPS water_level product (mandatory for that
+# product). Common choices: MSL, MLLW, MHHW, NAVD, STND.
+coops_datum: MSL
+
+# Which variables to download / assess. Supported this release:
+#   WL (water level), T (water temperature), air_pressure, wind.
+# (Currents and salinity are parsed from station.in but not yet handled.)
+coops_variables: [WL, T, air_pressure, wind]
+
+# Skill-assessment comparison window (null = use the run's start_date/end_date).
+# Narrow these to focus the plots/metrics on a sub-period; format YYYY-MM-DD.
+station_skill_start: null
+station_skill_end:   null
+
+# Resample interval used when computing skill metrics (pandas offset alias),
+# e.g. "1H" hourly, "6H", "1D". Both obs and model are averaged to this cadence
+# before bias/RMSE/R^2 are computed.
+station_skill_resample: "1H"
+
+# =============================================================================
 # Optional SLURM overrides for Phase 5 jobs (else defaults from the code).
 # Add to the slurm: block in project.yaml:
 #   diag_run_mem / diag_run_walltime

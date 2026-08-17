@@ -69,7 +69,7 @@ _POLL_SCHEDULE = [
     1200,    # +30 min
     1800,    # +60 min
 ]
-_POLL_STEADY = 3600  # 1 hour between checks once schedule is exhausted
+_POLL_STEADY = 1800  # 30 min between checks once schedule is exhausted
 
 # Seconds between checks while waiting for the run_comb (combine_hotstart) job
 # to leave the queue.

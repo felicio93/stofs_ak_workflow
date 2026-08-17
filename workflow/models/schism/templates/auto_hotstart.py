@@ -328,6 +328,40 @@ def diagnose_failure(job_id: str) -> str:
     return ""
 
 
+def _clean_partition_hotstarts():
+    """Delete per-rank (partition-based) hotstart files after the combined
+    hotstart has been built.
+
+    combine_hotstart7 merges the per-rank files
+    (hotstart_<6-digit-rank>_<step>.nc, e.g. hotstart_003186_44640.nc) into a
+    single hotstart_it=<step>.nc. Once that combined file exists, the per-rank
+    files are no longer needed and consume a lot of disk (one per MPI rank).
+
+    Deletes every outputs/hotstart_<digits>_<digits>.nc while explicitly
+    preserving the combined hotstart_it=*.nc. MUST be called only after the
+    combined file has been verified to exist.
+    """
+    outdir = Path(RUNDIR) / "outputs"
+    # rank files look like hotstart_000000_44640.nc ; the combined file is
+    # hotstart_it=44640.nc (won't match \d+_\d+).
+    pat = re.compile(r"^hotstart_\d+_\d+\.nc$")
+    deleted = 0
+    freed = 0
+    for f in sorted(outdir.glob("hotstart_*.nc")):
+        if f.name.startswith("hotstart_it="):
+            continue
+        if pat.match(f.name):
+            try:
+                freed += f.stat().st_size
+            except OSError:
+                pass
+            f.unlink(missing_ok=True)
+            deleted += 1
+    if deleted:
+        log(f"Deleted {deleted} per-rank hotstart file(s) "
+            f"(~{freed / 1e9:.1f} GB freed); kept the combined hotstart.")
+
+
 def combine_and_chain():
     """Submit run_comb, wait, verify the combined hotstart, then chain."""
     combined = Path(RUNDIR) / "outputs" / f"hotstart_it={NHOT_WRITE}.nc"
@@ -348,6 +382,11 @@ def combine_and_chain():
         log(f"{combined.name} already exists; skipping combine.")
 
     log(f"End-of-month hotstart ready: {combined}")
+
+    # The combined hotstart exists and is verified — the per-rank hotstart
+    # files that combine_hotstart7 consumed are no longer needed. Delete them
+    # to reclaim disk (one file per MPI rank).
+    _clean_partition_hotstarts()
 
     # Chain to the next month.
     if IS_LAST_MONTH:

@@ -71,6 +71,10 @@ _POLL_SCHEDULE = [
 ]
 _POLL_STEADY = 3600  # 1 hour between checks once schedule is exhausted
 
+# Seconds between checks while waiting for the run_comb (combine_hotstart) job
+# to leave the queue.
+_COMBINE_POLL_SECONDS = 60
+
 
 def _poll_sleep(poll_iter: int):
     """Sleep the appropriate amount for this poll iteration."""
@@ -186,8 +190,24 @@ def mirror_time_step():
 
 
 def run_completed():
-    last = mirror_last_line()
-    return last is not None and "Run completed successfully" in last
+    """True if mirror.out contains SCHISM's completion banner.
+
+    SCHISM (schism_finalize.F90) writes 'Run completed successfully at ...'
+    near the very end of fort.16/mirror.out. Under scribe I/O a few trailing
+    lines may follow it, so scan the LAST several lines rather than only the
+    final one.
+    """
+    mo = Path(RUNDIR) / "outputs" / "mirror.out"
+    if not mo.exists():
+        return False
+    try:
+        lines = mo.read_text(errors="ignore").splitlines()
+    except Exception:
+        return False
+    for line in reversed(lines[-25:]):
+        if "Run completed successfully" in line:
+            return True
+    return False
 
 
 # --- diagnostic-plot dispatch (diag_run_plots) --------------------------------
@@ -319,7 +339,7 @@ def combine_and_chain():
         # Wait for the combine job to leave the queue.
         while squeue_line_for(comb_jobname) is not None:
             log("  waiting for combine job to finish ...")
-            time.sleep(POLL_SECONDS)
+            time.sleep(_COMBINE_POLL_SECONDS)
         time.sleep(10)
         if not combined.exists():
             log(f"ERROR: combine finished but {combined} was not created.")
@@ -376,6 +396,21 @@ def main():
         log("  Month 1 expects a symlink to I{ID}_{first}/hotstart.nc (created by")
         log("  setup_run); later months expect the previous month to have chained it.")
         sys.exit(1)
+
+    # Short-circuit: if the SCHISM run already completed AND the combined
+    # end-of-month hotstart already exists, skip re-running the whole month
+    # and go straight to combine_and_chain(). This handles the case where a
+    # previous invocation finished the run and built the hotstart but crashed
+    # before writing run.done / chaining (e.g. an interrupted combine/chain
+    # stage). combine_and_chain() is idempotent: it detects the existing
+    # hotstart, symlinks it into the next month, writes run.done, and chains.
+    combined = Path(RUNDIR) / "outputs" / f"hotstart_it={NHOT_WRITE}.nc"
+    if combined.exists() and run_completed():
+        log(f"Run already complete and {combined.name} exists; "
+            f"skipping SCHISM re-run and proceeding to combine/chain.")
+        combine_and_chain()
+        log(f"=== auto_hotstart for {MONTH} done ===")
+        return
 
     # Submit the initial run.
     _clean_outputs()

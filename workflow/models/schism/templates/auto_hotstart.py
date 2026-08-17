@@ -408,6 +408,11 @@ def main():
     if combined.exists() and run_completed():
         log(f"Run already complete and {combined.name} exists; "
             f"skipping SCHISM re-run and proceeding to combine/chain.")
+        # The run finished, so the final output stack is complete too. Dispatch
+        # diagnostic plots for any stacks not yet submitted (in particular the
+        # LAST stack, which only becomes 'complete' once the run has finished
+        # and would otherwise be missed on this short-circuit path).
+        dispatch_diag_plots(run_finished=True)
         combine_and_chain()
         log(f"=== auto_hotstart for {MONTH} done ===")
         return

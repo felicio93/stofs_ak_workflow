@@ -72,14 +72,13 @@ def submit_plot_outputs(cfg: dict, config_dir: Path) -> str:
     ntasks = min(ntasks, max_tasks)
     nnodes = math.ceil(ntasks / _RANKS_PER_NODE)
 
-    # plot_outputs uses the debug QOS by default (high priority, short
-    # queue wait). Each rank processes one output file (~15 min); debug QOS
-    # allows up to 30 min. Override with slurm.plot_outputs_qos if needed.
+    # plot_outputs uses windfall QOS by default — 55 nodes for 1092 files
+    # exceeds the debug QOS node limit. Override with slurm.plot_outputs_qos.
     common = {
         "ACCOUNT":    slurm.get("account",   "nos-surge"),
         "PARTITION":  slurm.get("plot_outputs_partition",
                                 slurm.get("partition", "hercules-2")),
-        "QOS":        slurm.get("plot_outputs_qos", "debug"),
+        "QOS":        slurm.get("plot_outputs_qos", "windfall"),
         "MAILUSER":   slurm.get("mail_user", "felicio.cassalho@noaa.gov"),
         "WORKDIR":    str(mdir),
         "LOGDIR":     str(logdir),
@@ -97,7 +96,7 @@ def submit_plot_outputs(cfg: dict, config_dir: Path) -> str:
         "NNODES":   str(nnodes),
         "NTASKS":   str(ntasks),
         "MEM":      slurm.get("plot_outputs_mem",      "16G"),
-        "WALLTIME": slurm.get("plot_outputs_walltime", "00:29:00"),
+        "WALLTIME": slurm.get("plot_outputs_walltime", "02:00:00"),
     })
     print(f"  Submitting plot_outputs MPI frames: {ntasks} rank(s) on "
           f"{nnodes} node(s)  ({ntasks} output files)")

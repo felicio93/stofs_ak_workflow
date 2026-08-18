@@ -49,11 +49,11 @@ slurm:
   plot_sflux_walltime: "00:30:00"
   plot_sflux_mem: "16G"      # memory per plot_sflux task
   # Phase 5 postprocessing:
-  plot_outputs_qos: debug        # debug QOS = high scheduling priority,
-                                   # 30 min wall limit (fits ~15 min/rank).
-                                   # Override to windfall/batch if jobs exceed
-                                   # 30 min or the mesh/variable set is larger.
-  plot_outputs_walltime: "00:29:00"  # just under debug's 30-min wall
+  plot_outputs_qos: windfall      # windfall QOS supports large node counts
+                                   # (55 nodes for 1092 files). debug QOS has
+                                   # node limits that prevent large MPI jobs.
+                                   # Override to 'debug' only for small runs.
+  plot_outputs_walltime: "02:00:00"
   plot_outputs_mem: "16G"    # memory per MPI rank (one output file per rank;
                              # 20 ranks/node → ~25 GB headroom on 512 GB nodes)
   plot_outputs_max_ntasks:   # optional cap on MPI ranks (default: one per file)

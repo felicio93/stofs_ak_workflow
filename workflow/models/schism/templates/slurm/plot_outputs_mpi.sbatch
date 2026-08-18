@@ -21,7 +21,8 @@
 set -e
 
 # Load Intel MPI so mpi4py finds the correct PMI interface (pmi2) at runtime.
-source /etc/profile.d/modules.sh
+# #!/bin/bash --login ensures the module system is initialised without needing
+# to source /etc/profile.d/modules.sh explicitly.
 module load intel-oneapi-compilers/2022.2.1
 module load intel-oneapi-mpi/2021.7.1
 

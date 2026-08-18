@@ -253,8 +253,17 @@ def frame_for_day(cfg, d: date):
     lon_min = float(cfg["lon_min"]); lon_max = float(cfg["lon_max"])
     lat_min = float(cfg["lat_min"]); lat_max = float(cfg["lat_max"])
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(6, 10),
-                                   constrained_layout=True)
+    # Size the figure to the domain aspect ratio to avoid whitespace.
+    # Each panel is set_aspect("equal") so matplotlib needs the figure width
+    # to match the lon/lat ratio.  Add 15% for the colorbar column.
+    lon_range = lon_max - lon_min
+    lat_range = lat_max - lat_min
+    panel_w = 10.0                         # base width (inches)
+    panel_h = panel_w * lat_range / lon_range
+    fig_h   = panel_h * 2 + 0.8           # two panels + title/gap room
+    fig = plt.figure(figsize=(panel_w, fig_h))
+    ax1 = fig.add_subplot(2, 1, 1)
+    ax2 = fig.add_subplot(2, 1, 2)
 
     # --- model panel ---
     tp1 = ax1.tripcolor(triang, np.asarray(model_vals), shading="flat",
@@ -265,9 +274,12 @@ def frame_for_day(cfg, d: date):
                            colors="k", linewidths=0.4, alpha=0.6)
         except Exception:
             pass
+    if boundaries is not None:
+        for seg in boundaries:
+            ax1.plot(seg[:, 0], seg[:, 1], "k-", linewidth=0.3, alpha=0.7)
     div1 = make_axes_locatable(ax1)
-    cax1 = div1.append_axes("right", size="4%", pad=0.15)
-    fig.colorbar(tp1, cax=cax1).set_label("Model SST (°C)")
+    cax1 = div1.append_axes("right", size="3%", pad=0.1)
+    fig.colorbar(tp1, cax=cax1).set_label("Model SST (°C)", fontsize=9)
     ax1.set_title(f"SCHISM SST — {d:%Y-%m-%d}  ({model_desc})", fontsize=10)
     ax1.set_xlim(lon_min, lon_max); ax1.set_ylim(lat_min, lat_max)
     ax1.set_aspect("equal")
@@ -275,12 +287,25 @@ def frame_for_day(cfg, d: date):
     # --- satellite panel ---
     tp2 = ax2.pcolormesh(lon2d, lat2d, sat_sst, cmap=cmap,
                          vmin=vmin, vmax=vmax, rasterized=True)
+    # Overlay the same isobaths and mesh boundaries on the satellite panel
+    # so it has the same geographic reference as the model panel.
+    if isobaths:
+        try:
+            ax2.tricontour(triang, np.asarray(depth), levels=isobaths,
+                           colors="k", linewidths=0.4, alpha=0.6)
+        except Exception:
+            pass
+    if boundaries is not None:
+        for seg in boundaries:
+            ax2.plot(seg[:, 0], seg[:, 1], "k-", linewidth=0.3, alpha=0.7)
     div2 = make_axes_locatable(ax2)
-    cax2 = div2.append_axes("right", size="4%", pad=0.15)
-    fig.colorbar(tp2, cax=cax2).set_label("Satellite SST (°C)")
+    cax2 = div2.append_axes("right", size="3%", pad=0.1)
+    fig.colorbar(tp2, cax=cax2).set_label("Satellite SST (°C)", fontsize=9)
     ax2.set_title(f"LEO L3S-DY SST — {d:%Y-%m-%d}", fontsize=10)
     ax2.set_xlim(lon_min, lon_max); ax2.set_ylim(lat_min, lat_max)
     ax2.set_aspect("equal")
+
+    fig.tight_layout(pad=0.5, h_pad=0.8)
 
     fig.savefig(str(out), dpi=dpi, format="jpeg",
                 bbox_inches="tight", pil_kwargs={"quality": 90})

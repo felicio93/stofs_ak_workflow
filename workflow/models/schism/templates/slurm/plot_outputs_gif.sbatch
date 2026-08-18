@@ -19,5 +19,5 @@
 set -e
 
 echo "=== plot_outputs GIF assembly ==="
-{{PY}} {{SCRIPT}} assemble --config {{CONFIG_DIR}}
+{{PY}} {{SCRIPT}} --config {{CONFIG_DIR}} assemble
 echo "=== plot_outputs GIF assembly complete ==="

@@ -19,5 +19,5 @@
 set -e
 
 echo "=== compare_sst GIF assembly ==="
-{{PY}} {{SCRIPT}} assemble --config {{CONFIG_DIR}}
+{{PY}} {{SCRIPT}} --config {{CONFIG_DIR}} assemble
 echo "=== compare_sst GIF assembly complete ==="

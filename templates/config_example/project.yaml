@@ -49,7 +49,10 @@ slurm:
   plot_sflux_walltime: "00:30:00"
   plot_sflux_mem: "16G"      # memory per plot_sflux task
   # Phase 5 postprocessing:
-  plot_outputs_walltime: "02:00:00"
+  plot_outputs_partition: debug    # debug = high priority, 30 min limit (fits
+                                   # ~15 min/rank at 1 file/rank). Use windfall
+                                   # or hercules-2 if jobs exceed 30 min.
+  plot_outputs_walltime: "00:29:00"  # just under debug's 30-min wall
   plot_outputs_mem: "4G"     # memory per MPI rank (one output file per rank)
   plot_outputs_max_ntasks:   # optional cap on MPI ranks (default: one per file)
   plot_outputs_gif_walltime: "00:30:00"

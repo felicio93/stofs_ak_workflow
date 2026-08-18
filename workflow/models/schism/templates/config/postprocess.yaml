@@ -156,7 +156,7 @@ station_skill_end:   null
 # Resample interval used when computing skill metrics (pandas offset alias),
 # e.g. "1H" hourly, "6H", "1D". Both obs and model are averaged to this cadence
 # before bias/RMSE/R^2 are computed.
-station_skill_resample: "1H"
+station_skill_resample: "1h"
 
 # =============================================================================
 # Optional SLURM overrides for Phase 5 jobs (else defaults from the code).

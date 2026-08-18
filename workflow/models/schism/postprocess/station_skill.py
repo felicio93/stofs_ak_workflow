@@ -77,7 +77,21 @@ WIND_COMPONENTS = [
 
 
 def _resample_rule(cfg: dict) -> str:
-    return str(cfg.get("station_skill_resample", "1H"))
+    """Return the pandas resample rule, normalising deprecated uppercase aliases.
+
+    Pandas 2.2+ requires lowercase offset aliases (h, min, s, ...).
+    Older configs may use uppercase (H, T, S). Map the common ones so
+    station_skill works on both pandas <2.2 and >=2.2.
+    """
+    import re
+    rule = str(cfg.get("station_skill_resample", "1h"))
+    # H -> h  (hours)
+    rule = re.sub(r'^(\d*)H$', lambda m: (m.group(1) or '1') + 'h', rule)
+    # T -> min (minutes)
+    rule = re.sub(r'^(\d*)T$', lambda m: (m.group(1) or '1') + 'min', rule)
+    # S -> s  (seconds)
+    rule = re.sub(r'^(\d*)S$', lambda m: (m.group(1) or '1') + 's', rule)
+    return rule
 
 
 def _skill_window(cfg: dict):

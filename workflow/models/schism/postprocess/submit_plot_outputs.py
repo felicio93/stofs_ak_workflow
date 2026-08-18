@@ -69,12 +69,14 @@ def submit_plot_outputs(cfg: dict, config_dir: Path) -> str:
     ntasks = min(ntasks, max_tasks)
     nnodes = math.ceil(ntasks / _CORES_PER_NODE)
 
-    # plot_outputs uses the debug partition by default (high priority, short
-    # queue wait). Each rank processes one output file (~15 min); debug allows
-    # up to 30 min. Override with slurm.plot_outputs_partition if needed.
+    # plot_outputs uses the debug QOS by default (high priority, short
+    # queue wait). Each rank processes one output file (~15 min); debug QOS
+    # allows up to 30 min. Override with slurm.plot_outputs_qos if needed.
     common = {
         "ACCOUNT":    slurm.get("account",   "nos-surge"),
-        "PARTITION":  slurm.get("plot_outputs_partition", "debug"),
+        "PARTITION":  slurm.get("plot_outputs_partition",
+                                slurm.get("partition", "hercules-2")),
+        "QOS":        slurm.get("plot_outputs_qos", "debug"),
         "MAILUSER":   slurm.get("mail_user", "felicio.cassalho@noaa.gov"),
         "WORKDIR":    str(mdir),
         "LOGDIR":     str(logdir),

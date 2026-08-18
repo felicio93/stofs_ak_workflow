@@ -20,9 +20,14 @@
 
 set -e
 
+# Load Intel MPI so mpi4py finds the correct PMI interface (pmi2) at runtime.
+source /etc/profile.d/modules.sh
+module load intel-oneapi-compilers/2022.2.1
+module load intel-oneapi-mpi/2021.7.1
+
 echo "=== plot_outputs MPI frames: $(date) ==="
 echo "  Nodes: ${SLURM_JOB_NUM_NODES}  Ranks: ${SLURM_NTASKS}"
 
-srun --mpi=pmix {{PY}} {{SCRIPT}} --config {{CONFIG_DIR}} mpi-frames
+srun --mpi=pmi2 {{PY}} {{SCRIPT}} --config {{CONFIG_DIR}} mpi-frames
 
 echo "=== plot_outputs MPI frames complete: $(date) ==="

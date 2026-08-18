@@ -192,9 +192,11 @@ def init_project(cfg: dict):
     print(f"\n  Generating {len(months)} monthly time groups "
           f"({months[0]} -> {months[-1]})\n")
 
-    # --- I, R, P, D directories with monthly subdirectories ---
-    for prefix, label in [("I", "Inputs"), ("R", "Run"),
-                          ("P", "Postprocessing"), ("D", "Debug plots")]:
+    # --- I, R, D directories with monthly subdirectories ---
+    # Note: P{ID}/ (postprocessing output) uses topic-based subdirectories
+    # (P{ID}_plot_outputs/, P{ID}_station_skill/, etc.) created on-demand by
+    # each postprocessing step — not pre-created monthly subdirectories.
+    for prefix, label in [("I", "Inputs"), ("R", "Run"), ("D", "Debug plots")]:
         parent = model_dir / f"{prefix}{pid}"
         parent.mkdir(parents=True, exist_ok=True)
         print(f"  Created: {parent}  ({label})")
@@ -202,6 +204,10 @@ def init_project(cfg: dict):
             sub = parent / f"{prefix}{pid}_{ym}"
             sub.mkdir(parents=True, exist_ok=True)
             print(f"    {sub.name}/")
+
+    # P{ID} top-level directory only (subdirs created by postprocessing steps).
+    (model_dir / f"P{pid}").mkdir(parents=True, exist_ok=True)
+    print(f"  Created: {model_dir / f'P{pid}'}  (Postprocessing)")
 
     # --- SLURM log directory for debug plotting jobs ---
     (model_dir / f"D{pid}" / "logs").mkdir(parents=True, exist_ok=True)

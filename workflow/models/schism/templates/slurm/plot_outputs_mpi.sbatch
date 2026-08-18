@@ -11,7 +11,7 @@
 #SBATCH -q {{QOS}}
 #SBATCH -N {{NNODES}}
 #SBATCH -n {{NTASKS}}
-#SBATCH --mem={{MEM}}
+#SBATCH --mem-per-cpu={{MEM}}
 #SBATCH -t {{WALLTIME}}
 #SBATCH -o {{LOGDIR}}/plot_outputs_mpi.out
 #SBATCH -e {{LOGDIR}}/plot_outputs_mpi.err

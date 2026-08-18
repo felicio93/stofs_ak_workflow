@@ -23,7 +23,9 @@ from workflow.core.slurm import SlurmSubmitter
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates" / "slurm"
 
-_CORES_PER_NODE = 80
+# Ranks per node for MPI plotting jobs — limited to 20 to give each rank
+# sufficient memory headroom (~25 GB on a 512 GB node).
+_RANKS_PER_NODE = 20
 
 
 def _date_range(cfg):
@@ -54,7 +56,7 @@ def submit_compare_sst(cfg: dict, config_dir: Path) -> str:
     ntasks = len(days)
     max_tasks = int(slurm.get("compare_sst_max_ntasks", ntasks))
     ntasks = min(ntasks, max_tasks)
-    nnodes = math.ceil(ntasks / _CORES_PER_NODE)
+    nnodes = math.ceil(ntasks / _RANKS_PER_NODE)
 
     common = {
         "ACCOUNT":    slurm.get("account",   "nos-surge"),
@@ -75,7 +77,7 @@ def submit_compare_sst(cfg: dict, config_dir: Path) -> str:
         "JOBNAME":  f"cmpsst_frm_M{pid}",
         "NNODES":   str(nnodes),
         "NTASKS":   str(ntasks),
-        "MEM":      slurm.get("compare_sst_mem",      "4G"),
+        "MEM":      slurm.get("compare_sst_mem",      "8G"),
         "WALLTIME": slurm.get("compare_sst_walltime", "01:00:00"),
     })
     print(f"  Submitting compare_sst MPI frames: {ntasks} rank(s) on "

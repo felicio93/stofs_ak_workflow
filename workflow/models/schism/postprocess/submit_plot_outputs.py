@@ -26,8 +26,11 @@ from workflow.models.schism.postprocess import plot_common as pc
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates" / "slurm"
 
-# Hercules has 80 cores per node (based on project hardware config).
-_CORES_PER_NODE = 80
+# Ranks per node for MPI plotting jobs.  Plotting is memory-intensive: each
+# rank reads one ~6 GB output NetCDF plus builds mesh triangulation and renders
+# matplotlib frames.  Using all 80 cores per node (512 GB / 80 = 6.4 GB each)
+# causes OOM kills.  Limiting to 20 ranks/node gives ~25 GB headroom per rank.
+_RANKS_PER_NODE = 20
 
 
 def _unique_prefixes(cfg) -> list:
@@ -67,7 +70,7 @@ def submit_plot_outputs(cfg: dict, config_dir: Path) -> str:
     slurm = cfg.get("slurm", {})
     max_tasks = int(slurm.get("plot_outputs_max_ntasks", ntasks))
     ntasks = min(ntasks, max_tasks)
-    nnodes = math.ceil(ntasks / _CORES_PER_NODE)
+    nnodes = math.ceil(ntasks / _RANKS_PER_NODE)
 
     # plot_outputs uses the debug QOS by default (high priority, short
     # queue wait). Each rank processes one output file (~15 min); debug QOS
@@ -93,8 +96,8 @@ def submit_plot_outputs(cfg: dict, config_dir: Path) -> str:
         "JOBNAME":  f"plotout_frm_M{pid}",
         "NNODES":   str(nnodes),
         "NTASKS":   str(ntasks),
-        "MEM":      slurm.get("plot_outputs_mem",      "4G"),
-        "WALLTIME": slurm.get("plot_outputs_walltime", "02:00:00"),
+        "MEM":      slurm.get("plot_outputs_mem",      "16G"),
+        "WALLTIME": slurm.get("plot_outputs_walltime", "00:29:00"),
     })
     print(f"  Submitting plot_outputs MPI frames: {ntasks} rank(s) on "
           f"{nnodes} node(s)  ({ntasks} output files)")

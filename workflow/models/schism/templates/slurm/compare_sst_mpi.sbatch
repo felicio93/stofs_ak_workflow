@@ -10,7 +10,7 @@
 #SBATCH -p {{PARTITION}}
 #SBATCH -N {{NNODES}}
 #SBATCH -n {{NTASKS}}
-#SBATCH --mem={{MEM}}
+#SBATCH --mem-per-cpu={{MEM}}
 #SBATCH -t {{WALLTIME}}
 #SBATCH -o {{LOGDIR}}/compare_sst_mpi.out
 #SBATCH -e {{LOGDIR}}/compare_sst_mpi.err

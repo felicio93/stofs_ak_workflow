@@ -362,10 +362,26 @@ def _clean_partition_hotstarts():
             f"(~{freed / 1e9:.1f} GB freed); kept the combined hotstart.")
 
 
+def _partition_hotstarts_exist():
+    """True if per-rank end-of-month hotstart files are present.
+
+    combine_hotstart7 consumes per-rank files named
+    ``hotstart_<6-digit-rank>_<NHOT_WRITE>.nc`` to build the combined
+    ``hotstart_it=<NHOT_WRITE>.nc``. If SCHISM finished and wrote these
+    per-rank files but the combine step never ran (e.g. auto_hotstart.py
+    was killed before combine_and_chain), the combined file is missing but
+    the per-rank inputs are still on disk. Detecting them lets us combine
+    instead of pointlessly re-running the whole month.
+    """
+    outdir = Path(RUNDIR) / "outputs"
+    pat = re.compile(rf"^hotstart_\d+_{NHOT_WRITE}\.nc$")
+    return any(pat.match(f.name)
+               for f in outdir.glob(f"hotstart_*_{NHOT_WRITE}.nc"))
+
+
 def combine_and_chain():
     """Submit run_comb, wait, verify the combined hotstart, then chain."""
     combined = Path(RUNDIR) / "outputs" / f"hotstart_it={NHOT_WRITE}.nc"
-
     if not combined.exists():
         comb_jobname = "C" + RUN_JOBNAME[1:]  # R01_01 -> C01_01
         log(f"Submitting run_comb to build {combined.name} ...")
@@ -436,17 +452,22 @@ def main():
         log("  setup_run); later months expect the previous month to have chained it.")
         sys.exit(1)
 
-    # Short-circuit: if the SCHISM run already completed AND the combined
-    # end-of-month hotstart already exists, skip re-running the whole month
-    # and go straight to combine_and_chain(). This handles the case where a
-    # previous invocation finished the run and built the hotstart but crashed
-    # before writing run.done / chaining (e.g. an interrupted combine/chain
-    # stage). combine_and_chain() is idempotent: it detects the existing
-    # hotstart, symlinks it into the next month, writes run.done, and chains.
+    # Short-circuit: if the SCHISM run already completed, skip re-running the
+    # whole month and go straight to combine_and_chain(). This fires in TWO
+    # recovery cases, both of which combine_and_chain() handles idempotently:
+    #   (a) the combined hotstart_it=<N>.nc already exists (combine ran, but
+    #       run.done / chaining was interrupted), OR
+    #   (b) the per-rank hotstart_<rank>_<N>.nc files exist but were never
+    #       combined (auto_hotstart.py was killed after SCHISM finished but
+    #       before the combine step). This is the common "run succeeded, no
+    #       hotstart_it file" case — we must NOT re-run the month (which would
+    #       _clean_outputs() and destroy those per-rank files); we just combine.
     combined = Path(RUNDIR) / "outputs" / f"hotstart_it={NHOT_WRITE}.nc"
-    if combined.exists() and run_completed():
-        log(f"Run already complete and {combined.name} exists; "
-            f"skipping SCHISM re-run and proceeding to combine/chain.")
+    if run_completed() and (combined.exists() or _partition_hotstarts_exist()):
+        log(f"Run already complete; end-of-month hotstart present "
+            f"(combined={combined.exists()}, "
+            f"per-rank={_partition_hotstarts_exist()}). "
+            f"Skipping SCHISM re-run and proceeding to combine/chain.")
         # The run finished, so the final output stack is complete too. Dispatch
         # diagnostic plots for any stacks not yet submitted (in particular the
         # LAST stack, which only becomes 'complete' once the run has finished

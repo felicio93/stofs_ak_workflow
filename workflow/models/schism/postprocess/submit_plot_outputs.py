@@ -64,6 +64,12 @@ def submit_plot_outputs(cfg: dict, config_dir: Path) -> str:
     manifest.write_text("\n".join(tasks) + "\n")
 
     slurm = cfg.get("slurm", {})
+    # Throttle: limit how many array tasks run concurrently to stay under the
+    # QOS MaxSubmitJobsPerUser limit. The QOS cap on Hercules is 400 submitted
+    # jobs; a 1000+ task array with no throttle exceeds this. %K in the SLURM
+    # array spec means "at most K tasks active (queued+running) at once", so the
+    # total submission stays small. Default 50 is well within the 400 cap.
+    throttle = str(slurm.get("plot_outputs_array_throttle", 50))
     common = {
         "ACCOUNT":    slurm.get("account",   "nos-surge"),
         "PARTITION":  slurm.get("partition", "hercules-2"),
@@ -80,11 +86,12 @@ def submit_plot_outputs(cfg: dict, config_dir: Path) -> str:
     # --- Stage 1: frame array ---
     stage1 = dict(common)
     stage1.update({
-        "JOBNAME":  f"plotout_frm_M{pid}",
-        "NTASKS":   str(len(tasks)),
-        "MEM":      slurm.get("plot_outputs_mem",      "32G"),
-        "WALLTIME": slurm.get("plot_outputs_walltime", "00:30:00"),
-        "MANIFEST": str(manifest),
+        "JOBNAME":        f"plotout_frm_M{pid}",
+        "NTASKS":         str(len(tasks)),
+        "ARRAY_THROTTLE": throttle,
+        "MEM":            slurm.get("plot_outputs_mem",      "32G"),
+        "WALLTIME":       slurm.get("plot_outputs_walltime", "00:30:00"),
+        "MANIFEST":       str(manifest),
     })
     print(f"  Submitting plot_outputs frames: {len(tasks)} output file(s)")
     out1 = submitter.render_and_submit(

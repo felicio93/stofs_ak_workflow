@@ -50,6 +50,7 @@ def submit_compare_sst(cfg: dict, config_dir: Path) -> str:
     manifest.write_text("\n".join(days) + "\n")
 
     slurm = cfg.get("slurm", {})
+    throttle = str(slurm.get("compare_sst_array_throttle", 50))
     common = {
         "ACCOUNT":    slurm.get("account",   "nos-surge"),
         "PARTITION":  slurm.get("partition", "hercules-2"),
@@ -66,11 +67,12 @@ def submit_compare_sst(cfg: dict, config_dir: Path) -> str:
     # --- Stage 1: per-day frames ---
     stage1 = dict(common)
     stage1.update({
-        "JOBNAME":  f"cmpsst_frm_M{pid}",
-        "NTASKS":   str(len(days)),
-        "MEM":      slurm.get("compare_sst_mem",      "32G"),
-        "WALLTIME": slurm.get("compare_sst_walltime", "00:30:00"),
-        "MANIFEST": str(manifest),
+        "JOBNAME":        f"cmpsst_frm_M{pid}",
+        "NTASKS":         str(len(days)),
+        "ARRAY_THROTTLE": throttle,
+        "MEM":            slurm.get("compare_sst_mem",      "32G"),
+        "WALLTIME":       slurm.get("compare_sst_walltime", "00:30:00"),
+        "MANIFEST":       str(manifest),
     })
     print(f"  Submitting compare_sst frames: {len(days)} day(s) "
           f"({days[0]} -> {days[-1]})")

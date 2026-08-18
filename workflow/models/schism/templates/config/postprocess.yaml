@@ -122,15 +122,15 @@ keep_frames: true
 # =============================================================================
 # download_coops (DTN): parses fix/station.in, downloads NOAA CO-OPS
 # observations for every valid CO-OPS station, one CSV per station/product/
-# month, into M{ID}/raw/coops/. CO-OPS 6-minute data is limited to one month
+# month, into M{ID}/obs/coops/. CO-OPS 6-minute data is limited to one month
 # per request, hence monthly files (resume-safe: existing months are skipped).
 #
 # download_ndbc (DTN): parses fix/station.in, downloads NOAA NDBC standard-met
 # observations for every NDBC station, one CSV per station/year into
-# M{ID}/raw/ndbc/. Past years use the annual historical file; the current year
+# M{ID}/obs/ndbc/. Past years use the annual historical file; the current year
 # is assembled from the completed-month files plus the realtime 45-day file.
 #
-# station_skill (interactive, swf_plot): reads raw/coops/ + raw/ndbc/ and model
+# station_skill (interactive, swf_plot): reads obs/coops/ + obs/ndbc/ and model
 # R{ID}_YYYYMM/outputs/staout_*, plots obs vs model with skill metrics, and
 # writes P{ID}/P{ID}_station_skill/skill_metrics.csv. Only the variables named
 # in each station's station.in VARS bracket are assessed. Re-run with different

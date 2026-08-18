@@ -12,10 +12,10 @@ Implemented steps
   download_sst   DTN download + domain subset of LEO L3S-DY satellite SST
                  into M{ID}/obs/sst_leo/ (one file per day).
   download_coops DTN download of NOAA CO-OPS station observations (water level,
-                 water temperature, air pressure, wind) into M{ID}/raw/coops/
+                 water temperature, air pressure, wind) into M{ID}/obs/coops/
                  (one CSV per station / product / month), based on fix/station.in.
   download_ndbc  DTN download of NOAA NDBC buoy observations (WTMP, wind, PRES,
-                 ...) into M{ID}/raw/ndbc/ (one CSV per station / year:
+                 ...) into M{ID}/obs/ndbc/ (one CSV per station / year:
                  historical annual file for past years; monthly + realtime for
                  the current year), based on fix/station.in.
   compare_sst    Model (daily-mean SST) vs. satellite two-panel GIF.
@@ -56,7 +56,7 @@ def postprocess_phase(cfg: dict, config_dir, only: str = None):
     else:
         print("[SKIP] download_sst")
 
-    # --- download_coops (DTN): station observations -> raw/coops/ ---
+    # --- download_coops (DTN): station observations -> obs/coops/ ---
     if enabled("download_coops"):
         print("[STEP] download_coops")
         from workflow.models.schism.postprocess.downloaders.coops import (
@@ -66,7 +66,7 @@ def postprocess_phase(cfg: dict, config_dir, only: str = None):
     else:
         print("[SKIP] download_coops")
 
-    # --- download_ndbc (DTN): NDBC buoy observations -> raw/ndbc/ ---
+    # --- download_ndbc (DTN): NDBC buoy observations -> obs/ndbc/ ---
     if enabled("download_ndbc"):
         print("[STEP] download_ndbc")
         from workflow.models.schism.postprocess.downloaders.ndbc import (

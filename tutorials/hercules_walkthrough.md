@@ -688,7 +688,7 @@ ls $SWF_PROJ/M01/P01/P01_compare_sst/compare_sst.gif
 
 Parses `fix/station.in`, downloads NOAA CO-OPS observations for every valid
 CO-OPS station (water level, water temperature, air pressure, wind), one CSV
-per station/product/month into `M01/raw/coops/`. Resume-safe (existing months
+per station/product/month into `M01/obs/coops/`. Resume-safe (existing months
 skipped). CO-OPS 6-minute data is capped at one month per request.
 
 ```bash
@@ -698,7 +698,7 @@ conda activate swf_main
 stofs-ak --run --phase postprocess --only download_coops --config $CFG \
     2>&1 | tee $SWF_PROJ/M01/logs/download_coops_$(date +%Y%m%d_%H%M%S).log
 # Verify:
-ls $SWF_PROJ/M01/raw/coops/ | head
+ls $SWF_PROJ/M01/obs/coops/ | head
 # e.g. 9459450_water_level_202509.csv  9459450_water_temperature_202509.csv
 ```
 
@@ -712,7 +712,7 @@ ls $SWF_PROJ/M01/raw/coops/ | head
 ### Step 10e.2 — download_ndbc (DTN, NDBC buoy observations)
 
 Parses `fix/station.in`, downloads NOAA NDBC standard-met observations for
-every valid NDBC station, one CSV per station/year into `M01/raw/ndbc/`. Past
+every valid NDBC station, one CSV per station/year into `M01/obs/ndbc/`. Past
 years use the annual historical file; the current year is assembled from the
 completed-month files plus the realtime 45-day file (so there are no gaps).
 Resume-safe for past years (immutable); the current year is always refreshed.
@@ -724,7 +724,7 @@ conda activate swf_main
 stofs-ak --run --phase postprocess --only download_ndbc --config $CFG \
     2>&1 | tee $SWF_PROJ/M01/logs/download_ndbc_$(date +%Y%m%d_%H%M%S).log
 # Verify:
-ls $SWF_PROJ/M01/raw/ndbc/     # e.g. 46035_2025.csv
+ls $SWF_PROJ/M01/obs/ndbc/     # e.g. 46035_2025.csv
 ```
 
 > **NDBC variable mapping.** NDBC stdmet columns map to the model as
@@ -735,7 +735,7 @@ ls $SWF_PROJ/M01/raw/ndbc/     # e.g. 46035_2025.csv
 ### Step 10f — station_skill (interactive, obs vs model + skill CSV)
 
 Requires `download_coops` and/or `download_ndbc` to have run. Reads
-`raw/coops/` + `raw/ndbc/` and the model `R01_YYYYMM/outputs/staout_*`,
+`obs/coops/` + `obs/ndbc/` and the model `R01_YYYYMM/outputs/staout_*`,
 produces obs-vs-model time-series plots (with bias/RMSE/R² in the legend) and a
 `skill_metrics.csv`, into `P01/P01_station_skill/`. Only the variables named in
 each station's VARS bracket are assessed.
@@ -880,7 +880,7 @@ stofs-ak --run --phase all --config $CFG
 | `download_sst` | Skips days where `obs/sst_leo/leosst_YYYYMMDD.nc` exists |
 | `plot_outputs` | Re-submit; frames named by variable + timestamp; GIF in `P01_plot_outputs/` |
 | `compare_sst` | Re-submit; frames in `P01_compare_sst/frames/`; GIF in `P01_compare_sst/` |
-| `download_coops` | Skips months where `raw/coops/{id}_{product}_{YYYYMM}.csv` exists |
+| `download_coops` | Skips months where `obs/coops/{id}_{product}_{YYYYMM}.csv` exists |
 | `download_ndbc` | Skips past-year files (immutable); always refreshes the current year |
 | `station_skill` | Re-run any time; re-slices obs+model to station_skill_start/end; overwrites plots + skill_metrics.csv |
 

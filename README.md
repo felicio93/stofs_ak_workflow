@@ -469,10 +469,10 @@ frame retention). All plots overlay the 200 m and 2000 m isobaths.
     date range. Same two-stage SLURM pattern. Needs `download_sst` first.
  5. **`download_coops`** (DTN): parse `fix/station.in`, download NOAA CO-OPS
     station observations (water level, water temperature, air pressure, wind)
-    into `M{ID}/raw/coops/` — one CSV per station/product/month (CO-OPS 6-min
+    into `M{ID}/obs/coops/` — one CSV per station/product/month (CO-OPS 6-min
     data is capped at one month per request). Resume-safe.
  6. **`download_ndbc`** (DTN): parse `fix/station.in`, download NOAA NDBC buoy
-    observations (WTMP, wind, PRES, ...) into `M{ID}/raw/ndbc/` — one CSV per
+    observations (WTMP, wind, PRES, ...) into `M{ID}/obs/ndbc/` — one CSV per
     station/year. Past years come from the annual historical file; the current
     year is assembled from completed-month files + the realtime 45-day file.
  7. **`station_skill`** (interactive): compare CO-OPS and NDBC observations

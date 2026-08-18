@@ -22,6 +22,6 @@ set -e
 echo "=== plot_outputs MPI frames: $(date) ==="
 echo "  Nodes: ${SLURM_JOB_NUM_NODES}  Ranks: ${SLURM_NTASKS}"
 
-srun --mpi=pmix {{PY}} {{SCRIPT}} mpi-frames --config {{CONFIG_DIR}}
+srun --mpi=pmix {{PY}} {{SCRIPT}} --config {{CONFIG_DIR}} mpi-frames
 
 echo "=== plot_outputs MPI frames complete: $(date) ==="

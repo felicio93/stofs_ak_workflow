@@ -13,9 +13,9 @@ named in its VARS bracket, then:
     station/variable.
 
 Observation sources (selected by the station's SOURCE field in station.in):
-  * CO-OPS -> raw/coops/  (download_coops): water_level, water_temperature,
+  * CO-OPS -> obs/coops/  (download_coops): water_level, water_temperature,
               air_pressure, wind (speed/dir -> u/v).
-  * NDBC   -> raw/ndbc/   (download_ndbc): WTMP -> T, PRES -> air_pressure,
+  * NDBC   -> obs/ndbc/   (download_ndbc): WTMP -> T, PRES -> air_pressure,
               WSPD/WDIR -> wind (u/v). NDBC has no water level.
 
 Only the variables listed in each station's VARS bracket are assessed.
@@ -163,7 +163,7 @@ def _load_obs_series(cfg, station_id, product, start_str, end_str):
     import pandas as pd
 
     mdir = model_dir(cfg)
-    coops_dir = mdir / "raw" / "coops"
+    coops_dir = mdir / "obs" / "coops"
     months = list_months(cfg)
 
     parts = []
@@ -206,7 +206,7 @@ def _load_ndbc_frame(cfg, station_id, start_str, end_str):
     import pandas as pd
 
     mdir = model_dir(cfg)
-    ndbc_dir = mdir / "raw" / "ndbc"
+    ndbc_dir = mdir / "obs" / "ndbc"
     start_year = int(str(start_str)[:4])
     end_year   = int(str(end_str)[:4])
 

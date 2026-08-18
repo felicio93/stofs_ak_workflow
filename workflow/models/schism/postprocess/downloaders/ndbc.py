@@ -7,7 +7,7 @@ Downloads NOAA NDBC standard-meteorological (stdmet) observations for the
 NDBC stations listed in the SCHISM ``fix/station.in`` file and stores them,
 one CSV per station per year, under:
 
-    M{ID}/raw/ndbc/{station_id}_{YYYY}.csv
+    M{ID}/obs/ndbc/{station_id}_{YYYY}.csv
 
 NDBC's "weird" storage layout (all stdmet, times UTC, units metric):
   * Past complete years  -> a single gzipped ANNUAL file:
@@ -238,7 +238,7 @@ def run_download_ndbc(cfg: dict):
     stations = parse_station_in(station_in)
     ndbc = [s for s in stations if s["source"] == "NDBC"]
 
-    ndbc_dir = mdir / "raw" / "ndbc"
+    ndbc_dir = mdir / "obs" / "ndbc"
     ndbc_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"\n{'='*60}")

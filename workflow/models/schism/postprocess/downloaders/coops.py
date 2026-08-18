@@ -7,7 +7,7 @@ Downloads NOAA CO-OPS observations for the stations listed in the SCHISM
 ``fix/station.in`` file and stores them, one CSV per station / product / month,
 under:
 
-    M{ID}/raw/coops/{station_id}_{product}_{YYYYMM}.csv
+    M{ID}/obs/coops/{station_id}_{product}_{YYYYMM}.csv
 
 CO-OPS 6-minute data is limited to one month per API request, so the natural
 storage granularity is monthly. Months already present are skipped
@@ -192,7 +192,7 @@ def run_download_coops(cfg: dict):
     stations = parse_station_in(station_in)
     coops_stations = [s for s in stations if s["source"] == "CO-OPS"]
 
-    coops_dir = mdir / "raw" / "coops"
+    coops_dir = mdir / "obs" / "coops"
     coops_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"\n{'='*60}")

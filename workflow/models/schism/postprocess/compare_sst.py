@@ -3,34 +3,30 @@ models/schism/postprocess/compare_sst.py
 ========================================
 Phase 5 step "compare_sst" — model vs. satellite SST.
 
-Two-stage SLURM design (see submit_compare_sst.py), one array task per day:
+Two-stage SLURM design (see submit_compare_sst.py):
 
-  Stage 1 (parallel array, one task per day):
-      For day D, compute the model SST field to compare against the daily
-      satellite field:
-        sst_match: daily_mean (default) -> arithmetic daily mean of SCHISM
-                   surface temperature across all timesteps that fall on D
-        sst_match: nearest              -> SCHISM surface temperature at the
-                   timestep nearest 12:00Z on D (the satellite timestamp)
-      Render a two-panel frame (top: model, bottom: satellite) with a shared
-      color scale and 200/2000 m isobaths, saved to
+  Stage 1 (MPI parallel, one rank per day):
+      `mpi_frames()` distributes the full list of comparison days across all
+      MPI ranks.  Each rank calls `frame_for_day()` for its assigned days.
+      No inter-rank communication is needed; a Barrier() at the end
+      synchronises before the job exits.  Frames go to
       P{ID}/P{ID}_compare_sst/frames/sst__YYYYMMDD.jpg.
 
   Stage 2 (serial, afterok):
-      Assemble the daily frames into one GIF over compare_sst_start/end.
-
-The LEO L3S-DY product is a daily collated field, so daily_mean matching is
-the physically appropriate default.
+      `assemble()` stitches the daily frames into one GIF.  Kept as a
+      separate step so the user can re-run with different parameters (fps,
+      date range, etc.) without re-rendering all frames.
 
 CLI:
-    python -m workflow.models.schism.postprocess.compare_sst frames \
-        --config <cfg> --date YYYYMMDD
-    python -m workflow.models.schism.postprocess.compare_sst assemble \
+    srun -n <N> python -m workflow.models.schism.postprocess.compare_sst \\
+        mpi-frames --config <cfg>
+    python -m workflow.models.schism.postprocess.compare_sst assemble \\
         --config <cfg>
 """
 
 import argparse
 import gc
+import sys
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -149,7 +145,57 @@ def _sat_sst_for_day(cfg, d: date):
 
 
 # =============================================================================
-# Stage 1 — one two-panel frame for one day
+# Stage 1 — MPI parallel frame generation
+# =============================================================================
+
+def _date_range(cfg) -> list:
+    """Return the sorted list of dates to compare (compare_sst_start/end)."""
+    start = cfg.get("compare_sst_start") or cfg["start_date"]
+    end   = cfg.get("compare_sst_end")   or cfg["end_date"]
+    s = date.fromisoformat(str(start))
+    e = date.fromisoformat(str(end))
+    out = []
+    d = s
+    while d <= e:
+        out.append(d)
+        d += timedelta(days=1)
+    return out
+
+
+def mpi_frames(cfg):
+    """MPI parallel frame generation — one rank per day."""
+    from mpi4py import MPI
+
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+    size = comm.Get_size()
+
+    if rank == 0:
+        days = _date_range(cfg)
+        print(f"  [rank 0] {len(days)} day(s) distributed across {size} rank(s).")
+        sys.stdout.flush()
+    else:
+        days = None
+    days = comm.bcast(days, root=0)
+
+    if not days:
+        if rank == 0:
+            print("  compare_sst: empty date range.")
+        comm.Barrier()
+        return
+
+    my_days = days[rank::size]
+    for d in my_days:
+        frame_for_day(cfg, d)
+
+    comm.Barrier()
+    if rank == 0:
+        print("  compare_sst MPI frames complete.")
+        sys.stdout.flush()
+
+
+# =============================================================================
+# Stage 1 legacy — single-day entry point (kept for backward compatibility)
 # =============================================================================
 
 def frame_for_day(cfg, d: date):
@@ -279,17 +325,22 @@ def main():
     ap  = argparse.ArgumentParser(description="Model vs satellite SST")
     sub = ap.add_subparsers(dest="stage", required=True)
 
-    pf = sub.add_parser("frames")
-    pf.add_argument("--config", required=True)
-    pf.add_argument("--date",   required=True, help="YYYYMMDD")
+    sub.add_parser("mpi-frames", help="MPI parallel frame generation "
+                   "(invoked via srun -n N)")
 
-    pa = sub.add_parser("assemble")
-    pa.add_argument("--config", required=True)
+    pf = sub.add_parser("frames", help="render frame for one day "
+                        "(legacy array path)")
+    pf.add_argument("--date", required=True, help="YYYYMMDD")
 
+    sub.add_parser("assemble", help="assemble daily frames into a GIF")
+
+    ap.add_argument("--config", required=True)
     args = ap.parse_args()
-    cfg = load_config(Path(args.config))
+    cfg  = load_config(Path(args.config))
 
-    if args.stage == "frames":
+    if args.stage == "mpi-frames":
+        mpi_frames(cfg)
+    elif args.stage == "frames":
         d = date(int(args.date[:4]), int(args.date[4:6]), int(args.date[6:8]))
         frame_for_day(cfg, d)
     elif args.stage == "assemble":

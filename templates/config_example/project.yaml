@@ -49,15 +49,14 @@ slurm:
   plot_sflux_walltime: "00:30:00"
   plot_sflux_mem: "16G"      # memory per plot_sflux task
   # Phase 5 postprocessing:
-  plot_outputs_walltime: "00:30:00"
-  plot_outputs_mem: "32G"    # per output-file frame task (reads model NetCDFs)
-  plot_outputs_array_throttle: 50  # max concurrent tasks in the frame array
-                                   # (avoids QOSMaxSubmitJobPerUserLimit = 400)
+  plot_outputs_walltime: "02:00:00"
+  plot_outputs_mem: "4G"     # memory per MPI rank (one output file per rank)
+  plot_outputs_max_ntasks:   # optional cap on MPI ranks (default: one per file)
   plot_outputs_gif_walltime: "00:30:00"
   plot_outputs_gif_mem: "32G"    # serial GIF assembly (loads all frames)
-  compare_sst_walltime: "00:30:00"
-  compare_sst_mem: "32G"     # per-day model daily-mean + satellite frame
-  compare_sst_array_throttle: 50  # max concurrent tasks in the frame array
+  compare_sst_walltime: "01:00:00"
+  compare_sst_mem: "4G"      # memory per MPI rank (one day per rank)
+  compare_sst_max_ntasks:    # optional cap on MPI ranks (default: one per day)
   compare_sst_gif_walltime: "00:30:00"
   compare_sst_gif_mem: "16G"
   diag_run_walltime: "00:10:00"

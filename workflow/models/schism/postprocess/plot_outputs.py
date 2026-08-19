@@ -241,6 +241,9 @@ def mpi_frames(cfg):
     comm.Barrier()
     if rank == 0:
         print("  plot_outputs MPI frames complete.")
+        # Write sentinel so submit_plot_outputs can detect completed frames
+        # and skip re-submission on future runs.
+        (_frames_dir(cfg).parent / ".frames_done").touch()
         sys.stdout.flush()
 
 

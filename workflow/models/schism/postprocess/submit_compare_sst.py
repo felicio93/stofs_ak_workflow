@@ -47,10 +47,49 @@ def submit_compare_sst(cfg: dict, config_dir: Path) -> str:
     logdir = mdir / "logs"
     logdir.mkdir(parents=True, exist_ok=True)
 
+    gif_dir     = mdir / f"P{pid}" / f"P{pid}_compare_sst"
+    done_gif    = gif_dir / "compare_sst.done"
+    done_frames = gif_dir / ".frames_done"
+
+    # --- Skip entirely if GIFs are already assembled ---
+    if done_gif.exists():
+        print("  compare_sst: compare_sst.done exists — already complete, skipping.")
+        return ""
+
     days = _date_range(cfg)
     if not days:
         print("  compare_sst: empty date range. Nothing to do.")
         return ""
+
+    slurm = cfg.get("slurm", {})
+
+    # --- If frames are done but GIF is missing, submit only GIF assembly ---
+    if done_frames.exists():
+        print("  compare_sst: frames already complete (.frames_done exists). "
+              "Submitting GIF assembly only.")
+        gif_dir.mkdir(parents=True, exist_ok=True)
+        common = {
+            "ACCOUNT":    slurm.get("account",   "nos-surge"),
+            "PARTITION":  slurm.get("partition", "hercules-2"),
+            "MAILUSER":   slurm.get("mail_user", "felicio.cassalho@noaa.gov"),
+            "WORKDIR":    str(mdir),
+            "LOGDIR":     str(logdir),
+            "PY":         env_python(cfg, "compare_sst", default="swf_plot"),
+            "SCRIPT":     "-m workflow.models.schism.postprocess.compare_sst",
+            "CONFIG_DIR": str(config_dir),
+        }
+        stage2 = dict(common)
+        stage2.update({
+            "JOBNAME":  f"cmpsst_gif_M{pid}",
+            "MEM":      slurm.get("compare_sst_gif_mem",      "16G"),
+            "WALLTIME": slurm.get("compare_sst_gif_walltime", "00:30:00"),
+        })
+        submitter = SlurmSubmitter(TEMPLATES_DIR)
+        print("  Submitting compare_sst GIF assembly (frames already done)")
+        out2 = submitter.render_and_submit(
+            "compare_sst_gif.sbatch", stage2,
+            logdir / "compare_sst_gif.sbatch")
+        return SlurmSubmitter.parse_jobid(out2)
 
     slurm = cfg.get("slurm", {})
     ntasks = len(days)

@@ -374,6 +374,16 @@ def reset_sentinels(cfg: dict):
     for name in _TOP_LEVEL_SENTINELS:
         _remove(fix_ddir / name)
 
+    # --- Postprocessing sentinels (in P{pid}/ topic subdirs) ---
+    pdir = mdir / f"P{pid}"
+    for subdir, sentinels in [
+        (f"P{pid}_plot_outputs",  ["plot_outputs.done", ".frames_done"]),
+        (f"P{pid}_compare_sst",   ["compare_sst.done",  ".frames_done"]),
+        (f"P{pid}_station_skill", ["skill_metrics.csv"]),   # not a sentinel but re-runs are harmless
+    ]:
+        for name in sentinels:
+            _remove(pdir / subdir / name)
+
     # --- Summary ---
     print(f"\n{'='*60}")
     print(f"  --refresh: sentinel reset for M{pid}")

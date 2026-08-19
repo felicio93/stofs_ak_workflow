@@ -52,6 +52,47 @@ def submit_plot_outputs(cfg: dict, config_dir: Path) -> str:
         print("  plot_outputs: no plot_outputs_vars configured. Nothing to do.")
         return ""
 
+    gif_dir      = mdir / f"P{pid}" / f"P{pid}_plot_outputs"
+    done_gif     = gif_dir / "plot_outputs.done"
+    done_frames  = gif_dir / ".frames_done"
+
+    # --- Skip entirely if GIFs are already assembled ---
+    if done_gif.exists():
+        print("  plot_outputs: plot_outputs.done exists — already complete, skipping.")
+        return ""
+
+    slurm = cfg.get("slurm", {})
+
+    # --- If frames are done but GIF is missing, submit only GIF assembly ---
+    if done_frames.exists():
+        print("  plot_outputs: frames already complete (.frames_done exists). "
+              "Submitting GIF assembly only.")
+        gif_dir.mkdir(parents=True, exist_ok=True)
+        common = {
+            "ACCOUNT":    slurm.get("account",   "nos-surge"),
+            "PARTITION":  slurm.get("plot_outputs_partition",
+                                    slurm.get("partition", "hercules-2")),
+            "QOS":        slurm.get("plot_outputs_qos", "windfall"),
+            "MAILUSER":   slurm.get("mail_user", "felicio.cassalho@noaa.gov"),
+            "WORKDIR":    str(mdir),
+            "LOGDIR":     str(logdir),
+            "PY":         env_python(cfg, "plot_outputs", default="swf_plot"),
+            "SCRIPT":     "-m workflow.models.schism.postprocess.plot_outputs",
+            "CONFIG_DIR": str(config_dir),
+        }
+        stage2 = dict(common)
+        stage2.update({
+            "JOBNAME":  f"plotout_gif_M{pid}",
+            "MEM":      slurm.get("plot_outputs_gif_mem",      "32G"),
+            "WALLTIME": slurm.get("plot_outputs_gif_walltime", "00:30:00"),
+        })
+        submitter = SlurmSubmitter(TEMPLATES_DIR)
+        print("  Submitting plot_outputs GIF assembly (frames already done)")
+        out2 = submitter.render_and_submit(
+            "plot_outputs_gif.sbatch", stage2,
+            logdir / "plot_outputs_gif.sbatch")
+        return SlurmSubmitter.parse_jobid(out2)
+
     # Count the total number of output files to size the MPI job.
     prefixes = _unique_prefixes(cfg)
     ntasks = 0
@@ -67,7 +108,6 @@ def submit_plot_outputs(cfg: dict, config_dir: Path) -> str:
         return ""
 
     # Cap ntasks at a user-configurable maximum (default: unlimited = ntasks).
-    slurm = cfg.get("slurm", {})
     max_tasks = int(slurm.get("plot_outputs_max_ntasks", ntasks))
     ntasks = min(ntasks, max_tasks)
     nnodes = math.ceil(ntasks / _RANKS_PER_NODE)

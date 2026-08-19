@@ -191,6 +191,9 @@ def mpi_frames(cfg):
     comm.Barrier()
     if rank == 0:
         print("  compare_sst MPI frames complete.")
+        # Write sentinel so submit_compare_sst can detect completed frames
+        # and skip re-submission on future runs.
+        (_frames_dir(cfg).parent / ".frames_done").touch()
         sys.stdout.flush()
 
 
@@ -275,8 +278,10 @@ def frame_for_day(cfg, d: date):
         except Exception:
             pass
     if boundaries is not None:
-        for seg in boundaries:
-            ax1.plot(seg[:, 0], seg[:, 1], "k-", linewidth=0.3, alpha=0.7)
+        for lo, la in boundaries.get("land",   []):
+            ax1.plot(lo, la, "k-", linewidth=0.3, alpha=0.7)
+        for lo, la in boundaries.get("island", []):
+            ax1.plot(lo, la, "k-", linewidth=0.3, alpha=0.7)
     div1 = make_axes_locatable(ax1)
     cax1 = div1.append_axes("right", size="3%", pad=0.1)
     fig.colorbar(tp1, cax=cax1).set_label("Model SST (°C)", fontsize=9)
@@ -296,8 +301,10 @@ def frame_for_day(cfg, d: date):
         except Exception:
             pass
     if boundaries is not None:
-        for seg in boundaries:
-            ax2.plot(seg[:, 0], seg[:, 1], "k-", linewidth=0.3, alpha=0.7)
+        for lo, la in boundaries.get("land",   []):
+            ax2.plot(lo, la, "k-", linewidth=0.3, alpha=0.7)
+        for lo, la in boundaries.get("island", []):
+            ax2.plot(lo, la, "k-", linewidth=0.3, alpha=0.7)
     div2 = make_axes_locatable(ax2)
     cax2 = div2.append_axes("right", size="3%", pad=0.1)
     fig.colorbar(tp2, cax=cax2).set_label("Satellite SST (°C)", fontsize=9)

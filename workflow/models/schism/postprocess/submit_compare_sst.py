@@ -3,14 +3,17 @@ models/schism/postprocess/submit_compare_sst.py
 ===============================================
 Two-stage SLURM launcher for the model vs. satellite SST comparison.
 
-Stage 1 — MPI parallel frame generation:
-    A single multi-rank SLURM job (srun -N X -n Y) where each MPI rank
-    processes a subset of the comparison days. One rank per day; nodes
-    computed automatically: ceil(ndays / cores_per_node).
+Stage 1 — SLURM array, one task per day (throttled):
+    A manifest lists every day in [compare_sst_start, compare_sst_end]
+    (default: the whole run). Each array task renders one two-panel
+    model-vs-satellite frame for its day. Using a throttled array
+    (--array=1-N%K) avoids MPI entirely and stays within the QOS
+    MaxSubmitJobsPerUser limit.
 
 Stage 2 — GIF assembly (single serial job, --dependency=afterok):
-    Stitches the daily frames into one GIF. Kept separate so the user can
-    re-run with different parameters without re-rendering frames.
+    Stitches the daily frames into one GIF and keeps/deletes frames.
+    Kept separate so the user can re-run with different parameters
+    (fps, date range, etc.) without re-rendering frames.
 """
 
 import math
@@ -22,13 +25,6 @@ from workflow.core.environment import env_python
 from workflow.core.slurm import SlurmSubmitter
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates" / "slurm"
-
-# Ranks per node for compare_sst MPI frame job.  Deliberately lower than
-# plot_outputs (which uses 20) because each rank loads the full SCHISM mesh
-# + a day's satellite SST field + tripcolor rendering, and the satellite
-# data causes larger memory spikes.  10 ranks/node gives ~51 GB headroom on
-# a 512 GB node.
-_RANKS_PER_NODE = 10
 
 
 def _date_range(cfg):
@@ -94,11 +90,14 @@ def submit_compare_sst(cfg: dict, config_dir: Path) -> str:
             logdir / "compare_sst_gif.sbatch")
         return SlurmSubmitter.parse_jobid(out2)
 
-    slurm = cfg.get("slurm", {})
-    ntasks = len(days)
-    max_tasks = int(slurm.get("compare_sst_max_ntasks", ntasks))
-    ntasks = min(ntasks, max_tasks)
-    nnodes = math.ceil(ntasks / _RANKS_PER_NODE)
+    # --- Full pipeline: SLURM array for frames + GIF assembly ---
+    # Write day manifest for the array.
+    manifest = logdir / "compare_sst_days.manifest"
+    manifest.write_text("\n".join(days) + "\n")
+
+    # Throttle keeps active tasks ≤ limit to stay within QOS cap (400).
+    ntasks   = len(days)
+    throttle = str(slurm.get("compare_sst_array_throttle", 50))
 
     common = {
         "ACCOUNT":    slurm.get("account",   "nos-surge"),
@@ -113,20 +112,21 @@ def submit_compare_sst(cfg: dict, config_dir: Path) -> str:
 
     submitter = SlurmSubmitter(TEMPLATES_DIR)
 
-    # --- Stage 1: MPI frame generation ---
+    # --- Stage 1: per-day array frames ---
     stage1 = dict(common)
     stage1.update({
-        "JOBNAME":  f"cmpsst_frm_M{pid}",
-        "NNODES":   str(nnodes),
-        "NTASKS":   str(ntasks),
-        "MEM":      slurm.get("compare_sst_mem",      "8G"),
-        "WALLTIME": slurm.get("compare_sst_walltime", "01:00:00"),
+        "JOBNAME":        f"cmpsst_frm_M{pid}",
+        "NTASKS":         str(ntasks),
+        "ARRAY_THROTTLE": throttle,
+        "MEM":            slurm.get("compare_sst_mem",      "24G"),
+        "WALLTIME":       slurm.get("compare_sst_walltime", "00:30:00"),
+        "MANIFEST":       str(manifest),
     })
-    print(f"  Submitting compare_sst MPI frames: {ntasks} rank(s) on "
-          f"{nnodes} node(s)  ({len(days)} day(s): {days[0]} -> {days[-1]})")
+    print(f"  Submitting compare_sst frames: {ntasks} day(s) "
+          f"({days[0]} -> {days[-1]})  throttle={throttle}")
     out1 = submitter.render_and_submit(
-        "compare_sst_mpi.sbatch", stage1,
-        logdir / "compare_sst_mpi.sbatch")
+        "compare_sst_frames.sbatch", stage1,
+        logdir / "compare_sst_frames.sbatch")
     jid1 = SlurmSubmitter.parse_jobid(out1)
 
     # --- Stage 2: serial GIF assembly ---

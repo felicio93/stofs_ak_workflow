@@ -22,5 +22,5 @@ set -e
 DAY=$(sed -n "${SLURM_ARRAY_TASK_ID}p" {{MANIFEST}})
 echo "=== compare_sst frames: task ${SLURM_ARRAY_TASK_ID} -> ${DAY} ==="
 
-{{PY}} {{SCRIPT}} frames --config {{CONFIG_DIR}} --date "${DAY}"
+{{PY}} {{SCRIPT}} --config {{CONFIG_DIR}} frames --date "${DAY}"
 echo "=== done ${DAY} ==="

@@ -23,9 +23,12 @@ from workflow.core.slurm import SlurmSubmitter
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates" / "slurm"
 
-# Ranks per node for MPI plotting jobs — limited to 20 to give each rank
-# sufficient memory headroom (~25 GB on a 512 GB node).
-_RANKS_PER_NODE = 20
+# Ranks per node for compare_sst MPI frame job.  Deliberately lower than
+# plot_outputs (which uses 20) because each rank loads the full SCHISM mesh
+# + a day's satellite SST field + tripcolor rendering, and the satellite
+# data causes larger memory spikes.  10 ranks/node gives ~51 GB headroom on
+# a 512 GB node.
+_RANKS_PER_NODE = 10
 
 
 def _date_range(cfg):

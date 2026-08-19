@@ -60,8 +60,8 @@ slurm:
   plot_outputs_gif_walltime: "00:30:00"
   plot_outputs_gif_mem: "32G"    # serial GIF assembly (loads all frames)
   compare_sst_walltime: "01:00:00"
-  compare_sst_mem: "8G"      # memory per MPI rank (one day per rank;
-                             # 20 ranks/node → ~25 GB headroom on 512 GB nodes)
+  compare_sst_mem: "24G"     # memory per MPI rank (one day per rank;
+                             # 10 ranks/node → ~51 GB headroom on 512 GB nodes)
   compare_sst_max_ntasks:    # optional cap on MPI ranks (default: one per day)
   compare_sst_gif_walltime: "00:30:00"
   compare_sst_gif_mem: "16G"

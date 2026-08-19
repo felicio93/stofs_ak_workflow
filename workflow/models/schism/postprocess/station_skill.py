@@ -461,6 +461,7 @@ def run_station_skill(cfg: dict, config_dir=None):
               "(check download_coops/download_ndbc ran and the window overlaps "
               "the data).")
 
+    (out_dir / "station_skill.done").touch()
     print(f"\n{'='*60}")
     print(f"  Station skill assessment complete. Plots + CSV in {out_dir}")
     print(f"{'='*60}\n")

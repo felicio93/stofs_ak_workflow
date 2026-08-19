@@ -75,6 +75,11 @@ _POLL_STEADY = 1800  # 30 min between checks once schedule is exhausted
 # to leave the queue.
 _COMBINE_POLL_SECONDS = 60
 
+# Maximum number of times the SCHISM job will be automatically resubmitted
+# for a given month before the script exits with an error.  Prevents infinite
+# resubmission loops caused by persistent node / configuration problems.
+_MAX_RESUBMITS = 5
+
 
 def _poll_sleep(poll_iter: int):
     """Sleep the appropriate amount for this poll iteration."""
@@ -482,6 +487,7 @@ def main():
     job_id = submit("run_test")
     previous_step = -1
     poll_iter = 0
+    resubmit_count = 0
 
     while not run_completed():
         _poll_sleep(poll_iter)
@@ -550,15 +556,23 @@ def main():
                 log(f"WARNING: job {job_id} exited with code {exit_code} and "
                     f"no diagnostic detail was found.")
                 log("This is likely a time-limit, node failure, or OOM.")
-                log("Resubmitting from hotstart.nc (full month re-run).")
+                resubmit_count += 1
+                if resubmit_count > _MAX_RESUBMITS:
+                    log(f"ERROR: max resubmit limit ({_MAX_RESUBMITS}) reached for {RUN_JOBNAME}. Exiting.")
+                    sys.exit(1)
+                log(f"Resubmitting from hotstart.nc (attempt {resubmit_count}/{_MAX_RESUBMITS}).")
                 previous_step = -1
                 _clean_outputs()
                 submit("run_test")
                 continue
 
             previous_step = -1
+            resubmit_count += 1
+            if resubmit_count > _MAX_RESUBMITS:
+                log(f"ERROR: max resubmit limit ({_MAX_RESUBMITS}) reached for {RUN_JOBNAME}. Exiting.")
+                sys.exit(1)
             log(f"{RUN_JOBNAME}: not in queue and run incomplete — resubmitting "
-                f"from hotstart.nc (full month re-run).")
+                f"from hotstart.nc (attempt {resubmit_count}/{_MAX_RESUBMITS}).")
             _clean_outputs()
             submit("run_test")
 

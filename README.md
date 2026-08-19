@@ -575,10 +575,12 @@ stofs-ak --run --phase all --config <config_dir>
 ```
 
 `--refresh` prints every sentinel it deletes, then exits. It clears sentinels
-in `I{ID}`, `R{ID}`, and `D{ID}` for all months, as well as the top-level
-`inspect_mesh.done`. Raw downloaded files and generated NetCDF inputs are
-**not** deleted — steps with output-presence checks (e.g. `aggregate_hycom`,
-`gen_sflux`) will skip regenerating files that already exist.
+in `I{ID}`, `R{ID}`, and `D{ID}` for all months, the top-level
+`inspect_mesh.done`, and the postprocessing sentinels in `P{ID}` (including
+`plot_outputs.done`, `.frames_done`, `compare_sst.done`, `station_skill.done`).
+Raw downloaded files and generated NetCDF inputs are **not** deleted — steps
+with output-presence checks (e.g. `aggregate_hycom`, `gen_sflux`) will skip
+regenerating files that already exist.
 
 ---
 

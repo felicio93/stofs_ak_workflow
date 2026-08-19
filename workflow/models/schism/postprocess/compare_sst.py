@@ -279,11 +279,11 @@ def frame_for_day(cfg, d: date):
             pass
     if boundaries is not None:
         for lo, la in boundaries.get("open",   []):
-            ax1.plot(lo, la, color="blue",  linewidth=0.5, alpha=0.8)
+            ax1.plot(lo, la, color="blue",  linewidth=1.0, alpha=0.8)
         for lo, la in boundaries.get("land",   []):
-            ax1.plot(lo, la, color="red",   linewidth=0.3, alpha=0.7)
+            ax1.plot(lo, la, color="red",   linewidth=0.6, alpha=0.7)
         for lo, la in boundaries.get("island", []):
-            ax1.plot(lo, la, color="green", linewidth=0.3, alpha=0.7)
+            ax1.plot(lo, la, color="green", linewidth=0.6, alpha=0.7)
     div1 = make_axes_locatable(ax1)
     cax1 = div1.append_axes("right", size="3%", pad=0.1)
     fig.colorbar(tp1, cax=cax1).set_label("Model SST (°C)", fontsize=9)
@@ -304,11 +304,11 @@ def frame_for_day(cfg, d: date):
             pass
     if boundaries is not None:
         for lo, la in boundaries.get("open",   []):
-            ax2.plot(lo, la, color="blue",  linewidth=0.5, alpha=0.8)
+            ax2.plot(lo, la, color="blue",  linewidth=1.0, alpha=0.8)
         for lo, la in boundaries.get("land",   []):
-            ax2.plot(lo, la, color="red",   linewidth=0.3, alpha=0.7)
+            ax2.plot(lo, la, color="red",   linewidth=0.6, alpha=0.7)
         for lo, la in boundaries.get("island", []):
-            ax2.plot(lo, la, color="green", linewidth=0.3, alpha=0.7)
+            ax2.plot(lo, la, color="green", linewidth=0.6, alpha=0.7)
     div2 = make_axes_locatable(ax2)
     cax2 = div2.append_axes("right", size="3%", pad=0.1)
     fig.colorbar(tp2, cax=cax2).set_label("Satellite SST (°C)", fontsize=9)

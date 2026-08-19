@@ -878,11 +878,11 @@ stofs-ak --run --phase all --config $CFG
 | `submit_run` | Skips months where `run.done` exists; resumes from first pending month |
 | `diag_run_plots` | Skips stacks where `D01_YYYYMM/diag/diag_<N>.done` exists |
 | `download_sst` | Skips days where `obs/sst_leo/leosst_YYYYMMDD.nc` exists |
-| `plot_outputs` | Re-submit; frames named by variable + timestamp; GIF in `P01_plot_outputs/` |
-| `compare_sst` | Re-submit; frames in `P01_compare_sst/frames/`; GIF in `P01_compare_sst/` |
+| `plot_outputs` | Skips entirely if `P01_plot_outputs/plot_outputs.done` exists. If `P01_plot_outputs/.frames_done` exists (frames done, no GIF), submits GIF assembly only. Otherwise re-renders all frames + GIF. |
+| `compare_sst` | Skips entirely if `P01_compare_sst/compare_sst.done` exists. If `P01_compare_sst/.frames_done` exists, submits GIF assembly only. Otherwise re-renders all frames (one array task per day, throttled %50) + GIF. |
 | `download_coops` | Skips months where `obs/coops/{id}_{product}_{YYYYMM}.csv` exists |
 | `download_ndbc` | Skips past-year files (immutable); always refreshes the current year |
-| `station_skill` | Re-run any time; re-slices obs+model to station_skill_start/end; overwrites plots + skill_metrics.csv |
+| `station_skill` | Skips if `P01_station_skill/station_skill.done` exists. Re-run by deleting that file (or `--refresh`); re-slices obs+model to station_skill_start/end, overwrites plots + skill_metrics.csv |
 
 ---
 

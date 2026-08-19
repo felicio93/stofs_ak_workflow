@@ -352,7 +352,7 @@ def reset_sentinels(cfg: dict):
 
     def _remove(path: Path):
         if path.exists():
-            path.unlink()
+            path.unlink(missing_ok=True)
             deleted.append(path)
         else:
             missing.append(path)
@@ -379,7 +379,7 @@ def reset_sentinels(cfg: dict):
     for subdir, sentinels in [
         (f"P{pid}_plot_outputs",  ["plot_outputs.done", ".frames_done"]),
         (f"P{pid}_compare_sst",   ["compare_sst.done",  ".frames_done"]),
-        (f"P{pid}_station_skill", ["skill_metrics.csv"]),   # not a sentinel but re-runs are harmless
+        (f"P{pid}_station_skill", ["station_skill.done"]),  # written after successful skill assessment
     ]:
         for name in sentinels:
             _remove(pdir / subdir / name)

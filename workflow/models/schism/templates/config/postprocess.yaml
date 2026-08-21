@@ -192,6 +192,15 @@ collocate_argo_n_nearest: 3
 # (true) vs. nearest model timestep (false).
 collocate_argo_temporal_interp: true
 
+# Distance threshold for cleaning the collocated dataset. After the full
+# collocation is saved, a companion collocated_{var}_clean.nc is written that
+# contains only profiles whose nearest mesh node is within this distance.
+# The threshold is applied in 3-D geocentric (WGS-84) metres, so it is
+# latitude-independent (5 km is 5 km even at 78°N). The clean file is what
+# plot_argo reads automatically.
+# Default: 5 km — adjust upward if your mesh is coarser than ~5 km.
+collocate_argo_dist_threshold_km: 5
+
 # Collocation window (null = use the run's start_date/end_date). Format
 # YYYY-MM-DD. Narrow to focus on a sub-period without re-downloading Argo.
 collocate_argo_start: null

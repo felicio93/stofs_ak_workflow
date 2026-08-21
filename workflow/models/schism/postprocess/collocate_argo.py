@@ -242,6 +242,64 @@ def _concat_months(var, per_month_files, out_dir):
     return combined
 
 
+def _write_clean(combined_path: Path, dist_threshold_m: float) -> Path:
+    """Filter the concatenated collocated NetCDF to keep only profiles whose
+    nearest mesh node is within ``dist_threshold_m`` metres, and write a
+    companion ``collocated_{var}_clean.nc`` file.
+
+    The ``dist_deltas`` variable has shape (time, nearest_nodes) and stores
+    the distance (metres) from each Argo profile to each of the k-nearest
+    mesh nodes.  We keep a profile when its **minimum** across the
+    ``nearest_nodes`` dimension is below the threshold.
+
+    Parameters
+    ----------
+    combined_path : Path
+        Path to the full concatenated file (``collocated_{var}.nc``).
+    dist_threshold_m : float
+        Maximum allowed distance in metres (default: 5 000 m = 5 km).
+
+    Returns
+    -------
+    Path
+        Path to the written clean file, or None if no profiles passed.
+    """
+    import xarray as xr
+
+    clean_path = combined_path.parent / (
+        combined_path.stem + "_clean" + combined_path.suffix
+    )
+
+    ds = xr.open_dataset(str(combined_path), engine="netcdf4")
+    nearest_dist = ds["dist_deltas"].min(dim="nearest_nodes")
+    mask = (nearest_dist.values < dist_threshold_m)
+
+    n_total = int(ds.sizes["time"])
+    n_keep  = int(mask.sum())
+    n_drop  = n_total - n_keep
+
+    if n_keep == 0:
+        print(f"  [clean {combined_path.name}] WARNING: distance threshold "
+              f"{dist_threshold_m/1000:.1f} km removes ALL {n_total} profiles. "
+              f"Clean file not written.")
+        ds.close()
+        return None
+
+    ds_clean = ds.isel(time=mask)
+    ds_clean.attrs["distance_filter_m"] = dist_threshold_m
+    ds_clean.attrs["profiles_total"]    = n_total
+    ds_clean.attrs["profiles_kept"]     = n_keep
+    ds_clean.attrs["profiles_dropped"]  = n_drop
+    ds_clean.to_netcdf(str(clean_path))
+    ds.close()
+
+    print(f"  [clean {combined_path.name}] kept {n_keep}/{n_total} profiles "
+          f"(dropped {n_drop} > {dist_threshold_m/1000:.1f} km) "
+          f"-> {clean_path.name}")
+    return clean_path
+
+
+
 def run_collocate_argo(cfg: dict, config_dir=None):
     pid  = cfg["project_id"]
     mdir = model_dir(cfg)
@@ -289,6 +347,9 @@ def run_collocate_argo(cfg: dict, config_dir=None):
         combined = _concat_months(var, per_month, out_dir)
         if combined is not None:
             any_output = True
+            # Write a distance-filtered clean file alongside the full one.
+            dist_thresh = float(cfg.get("collocate_argo_dist_threshold_km", 5)) * 1000.0
+            _write_clean(combined, dist_threshold_m=dist_thresh)
 
     if any_output:
         (out_dir / "collocate_argo.done").touch()

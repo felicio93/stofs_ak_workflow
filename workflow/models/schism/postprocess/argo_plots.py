@@ -23,7 +23,8 @@ written by the ``collocate_argo`` step:
 
 Inputs
 ------
-  P{ID}/P{ID}_collocate_argo/collocated_{var}.nc   (from collocate_argo)
+  P{ID}/P{ID}_collocate_argo/collocated_{var}_clean.nc  (preferred; distance-filtered)
+  P{ID}/P{ID}_collocate_argo/collocated_{var}.nc        (fallback if clean file absent)
   fix/hgrid.gr3                                     (for mesh boundaries)
 
 Outputs
@@ -136,13 +137,28 @@ def _load_boundaries(cfg):
 
 
 def _load_collocated(out_dir: Path, var: str):
-    """Open collocated_{var}.nc. Returns (ds, path) or (None, None)."""
+    """Open the distance-filtered collocated_{var}_clean.nc if it exists,
+    otherwise fall back to collocated_{var}.nc.
+
+    Returns (ds, path) or (None, None) if neither file is found.
+    """
     import xarray as xr
-    nc = out_dir / f"collocated_{var}.nc"
-    if not nc.exists() or nc.stat().st_size == 0:
-        print(f"  [plot_argo] {nc.name} not found — run collocate_argo first.")
+    clean_nc = out_dir / f"collocated_{var}_clean.nc"
+    full_nc  = out_dir / f"collocated_{var}.nc"
+
+    if clean_nc.exists() and clean_nc.stat().st_size > 0:
+        nc = clean_nc
+    elif full_nc.exists() and full_nc.stat().st_size > 0:
+        print(f"  [plot_argo] {clean_nc.name} not found — "
+              f"falling back to {full_nc.name} (no distance filter applied).")
+        nc = full_nc
+    else:
+        print(f"  [plot_argo] neither {clean_nc.name} nor {full_nc.name} found "
+              f"— run collocate_argo first.")
         return None, None
+
     ds = xr.open_dataset(str(nc), engine="netcdf4")
+    print(f"  [plot_argo] loading {nc.name}  ({ds.sizes.get('time', '?')} profiles)")
     return ds, nc
 
 
@@ -567,9 +583,13 @@ def run_plot_argo(cfg: dict, config_dir=None):
         ds, _ = _load_collocated(out_dir, var)
         if ds is None:
             continue
+        # The clean file is already distance-filtered by collocate_argo.
+        # collocate_argo_plot_max_dist_km can apply an additional tighter
+        # in-memory filter if set; otherwise all loaded profiles are used.
         ds = _apply_dist_filter(ds, max_dist_km)
         if ds.sizes.get("time", 0) == 0:
-            print(f"  [plot_argo] {var}: no profiles after distance filter, skipping.")
+            print(f"  [plot_argo] {var}: no profiles remain after optional "
+                  f"secondary distance filter, skipping.")
             continue
         datasets[var] = ds
 

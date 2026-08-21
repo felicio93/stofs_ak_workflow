@@ -33,6 +33,11 @@ Implemented steps
                  (var_type='3D_Profile'), and concatenates the per-month
                  NetCDFs into one file per variable under
                  P{ID}/P{ID}_collocate_argo/. Needs download_argo first.
+  plot_argo      Three Argo diagnostic plots using the collocated NetCDFs from
+                 collocate_argo: (1) profile location map coloured by date,
+                 (2) per-variable skill histograms (R², Bias, RMSE), and
+                 (3) per-variable profile matrix (obs | model | bias ± 1σ | RMSE).
+                 Output in P{ID}/P{ID}_collocate_argo/. Needs collocate_argo first.
   diag_run_plots Per-output-stack diagnostic frames written DURING the run.
                  NOT dispatched here — it is baked into auto_hotstart.py by
                  setup_run and fires from the Phase-4 monitoring loop. Its
@@ -134,6 +139,14 @@ def postprocess_phase(cfg: dict, config_dir, only: str = None):
         run_collocate_argo(cfg, config_dir)
     else:
         print("[SKIP] collocate_argo")
+
+    # --- plot_argo (interactive): location map + skill histograms + profile matrix ---
+    if enabled("plot_argo"):
+        print("[STEP] plot_argo")
+        from workflow.models.schism.postprocess.argo_plots import run_plot_argo
+        run_plot_argo(cfg, config_dir)
+    else:
+        print("[SKIP] plot_argo")
 
     # --- diag_run_plots: runs during Phase 4 (auto_hotstart), not here ---
     if enabled("diag_run_plots"):

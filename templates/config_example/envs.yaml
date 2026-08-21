@@ -39,3 +39,4 @@ conda_envs:
   station_skill:  swf_plot   # Phase 5 CO-OPS/NDBC obs vs model skill plots + metrics
   download_argo:  swf_plot   # Phase 5 Argo float download (DTN; needs ocstrack)
   collocate_argo: swf_plot   # Phase 5 SCHISM T/S vs Argo collocation (ocstrack)
+  plot_argo:      swf_plot   # Phase 5 Argo diagnostic plots (location map, histograms, profiles)

@@ -197,6 +197,15 @@ collocate_argo_temporal_interp: true
 collocate_argo_start: null
 collocate_argo_end:   null
 
+# plot_argo settings (used by the plot_argo step below).
+# Max depth for the histogram and profile matrix plots (metres).
+collocate_argo_plot_max_depth: 2000
+# Optional: only use profiles whose nearest mesh node is within X km.
+# null = no filter (use all collocated profiles).
+collocate_argo_plot_max_dist_km: null
+# DPI for all three Argo diagnostic plots.
+collocate_argo_plot_dpi: 150
+
 # =============================================================================
 # Optional SLURM overrides for Phase 5 jobs (else defaults from the code).
 # Add to the slurm: block in project.yaml:

@@ -68,3 +68,5 @@ station_skill:   false   # Interactive: CO-OPS/NDBC obs vs model staout_* time-s
                          # plots + skill_metrics.csv -> P{ID} (needs download_coops/ndbc first)
 collocate_argo:  false   # Interactive: OCSTrack 3-D collocation of SCHISM T/S profiles
                          # vs Argo floats -> P{ID}/P{ID}_collocate_argo/ (needs download_argo)
+plot_argo:       false   # Interactive: Argo diagnostic plots (location map, skill
+                         # histograms, profile matrix) -> P{ID}/P{ID}_collocate_argo/

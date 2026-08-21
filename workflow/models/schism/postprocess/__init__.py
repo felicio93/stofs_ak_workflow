@@ -18,12 +18,21 @@ Implemented steps
                  ...) into M{ID}/obs/ndbc/ (one CSV per station / year:
                  historical annual file for past years; monthly + realtime for
                  the current year), based on fix/station.in.
+  download_argo  DTN download of Argo float profiles from the IFREMER GDAC
+                 (via OCSTrack get_argo), cropped to the domain bounding box,
+                 into M{ID}/obs/argo/{region}/processed/.
   compare_sst    Model (daily-mean SST) vs. satellite two-panel GIF.
   station_skill  Interactive obs-vs-model comparison at CO-OPS and NDBC stations:
                  time-series plots (bias/RMSE/R^2 in the legend) + a
                  skill_metrics.csv under P{ID}/P{ID}_station_skill/. Re-runnable
                  for any sub-period via station_skill_start/end in
                  postprocess.yaml.
+  collocate_argo Interactive OCSTrack 3-D collocation of SCHISM temperature and
+                 salinity profiles against the downloaded Argo floats. Loops
+                 over run months, collocates each with ocstrack.Collocate
+                 (var_type='3D_Profile'), and concatenates the per-month
+                 NetCDFs into one file per variable under
+                 P{ID}/P{ID}_collocate_argo/. Needs download_argo first.
   diag_run_plots Per-output-stack diagnostic frames written DURING the run.
                  NOT dispatched here — it is baked into auto_hotstart.py by
                  setup_run and fires from the Phase-4 monitoring loop. Its
@@ -76,6 +85,16 @@ def postprocess_phase(cfg: dict, config_dir, only: str = None):
     else:
         print("[SKIP] download_ndbc")
 
+    # --- download_argo (DTN): Argo float profiles -> obs/argo/ ---
+    if enabled("download_argo"):
+        print("[STEP] download_argo")
+        from workflow.models.schism.postprocess.downloaders.argo import (
+            run_download_argo,
+        )
+        run_download_argo(cfg)
+    else:
+        print("[SKIP] download_argo")
+
     # --- plot_outputs (full-run field GIFs) ---
     if enabled("plot_outputs"):
         print("[STEP] plot_outputs")
@@ -105,6 +124,16 @@ def postprocess_phase(cfg: dict, config_dir, only: str = None):
         run_station_skill(cfg, config_dir)
     else:
         print("[SKIP] station_skill")
+
+    # --- collocate_argo (interactive): SCHISM 3-D T/S vs Argo floats ---
+    if enabled("collocate_argo"):
+        print("[STEP] collocate_argo")
+        from workflow.models.schism.postprocess.collocate_argo import (
+            run_collocate_argo,
+        )
+        run_collocate_argo(cfg, config_dir)
+    else:
+        print("[SKIP] collocate_argo")
 
     # --- diag_run_plots: runs during Phase 4 (auto_hotstart), not here ---
     if enabled("diag_run_plots"):

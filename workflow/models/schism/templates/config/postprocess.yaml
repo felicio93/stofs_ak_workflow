@@ -159,6 +159,45 @@ station_skill_end:   null
 station_skill_resample: "1h"
 
 # =============================================================================
+# Argo float collocation (download_argo + collocate_argo)
+# =============================================================================
+# download_argo (DTN, swf_plot): downloads Argo float profiles from the IFREMER
+# GDAC via OCSTrack's get_argo, cropped to the domain bounding box (domain.yaml
+# lon/lat bounds, converted to the -180..180 GDAC frame; a "360" domain that
+# spans the 180 meridian is handled as a dateline-crossing box), into
+# M{ID}/obs/argo/{region}/processed/.
+#
+# collocate_argo (interactive, swf_plot): OCSTrack 3-D collocation of SCHISM
+# temperature/salinity profiles against those Argo profiles. Loops over the run
+# months (R{ID}_{YYYYMM}/outputs/{temperature,salinity,zCoordinates}_*.nc +
+# the run dir hgrid.gr3), collocates each month with ocstrack.Collocate
+# (var_type='3D_Profile'), and concatenates the per-month NetCDFs into one file
+# per variable under P{ID}/P{ID}_collocate_argo/.
+#
+# NOTE: collocate_argo requires SCHISM 3-D output for temperature, salinity, and
+# zCoordinates to be enabled in param.nml (iof_hydro). Argo coverage in the
+# Bering Sea is sparse; widen the window if no matches are found.
+
+# Argo GDAC ocean region for the domain. The Alaska/Bering Sea domain lives in
+# pacific_ocean. See https://data-argo.ifremer.fr/geo for the full list.
+argo_region: pacific_ocean
+
+# Which SCHISM variables to collocate against Argo (subset of the two below).
+collocate_argo_vars: [temperature, salinity]
+
+# Number of nearest mesh nodes used for horizontal inverse-distance weighting.
+collocate_argo_n_nearest: 3
+
+# Linear temporal interpolation of the model onto each Argo profile time
+# (true) vs. nearest model timestep (false).
+collocate_argo_temporal_interp: true
+
+# Collocation window (null = use the run's start_date/end_date). Format
+# YYYY-MM-DD. Narrow to focus on a sub-period without re-downloading Argo.
+collocate_argo_start: null
+collocate_argo_end:   null
+
+# =============================================================================
 # Optional SLURM overrides for Phase 5 jobs (else defaults from the code).
 # Add to the slurm: block in project.yaml:
 #   diag_run_mem / diag_run_walltime

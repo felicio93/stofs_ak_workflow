@@ -237,7 +237,8 @@ Two conda environments provide everything (created via `--setup-envs`):
 - `swf_main` — orchestrator + NCO/CDO + downloads (`cdsapi`, `netcdf4`,
   `xarray`) + TPXO bctides (`scipy`) + package deps (`pyyaml`, `python-dateutil`)
 - `swf_plot` — plotting (`matplotlib`, `cartopy`, `xarray`, `imageio`,
-  `pandas`, `numpy`)
+  `pandas`, `numpy`) + Argo collocation (`ocstrack`, `gsw`) for the
+  `download_argo` / `collocate_argo` Phase-5 steps
 
 ---
 
@@ -483,6 +484,20 @@ frame retention). All plots overlay the 200 m and 2000 m isobaths.
     `station_skill_start`/`station_skill_end` in `postprocess.yaml` without
     re-downloading. Needs `download_coops` and/or `download_ndbc` first.
 
+ 8. **`download_argo`** (DTN): download Argo float profiles from the IFREMER
+    GDAC (via OCSTrack `get_argo`), cropped to the domain bounding box, into
+    `M{ID}/obs/argo/{region}/processed/`. No credentials required.
+ 9. **`collocate_argo`** (interactive): OCSTrack 3-D collocation of SCHISM
+    temperature/salinity profiles against the Argo floats. Loops over the run
+    months (`R{ID}_{YYYYMM}/outputs/{temperature,salinity,zCoordinates}_*.nc`
+    plus the run-dir `hgrid.gr3`), collocates each with
+    `ocstrack.Collocate(var_type='3D_Profile')`, and concatenates the per-month
+    NetCDFs into one file per variable under `P{ID}/P{ID}_collocate_argo/`.
+    Requires SCHISM 3-D T/S/`zCoordinates` output (param.nml `iof_hydro`) and
+    `download_argo` first. Configured via `argo_region`, `collocate_argo_vars`,
+    `collocate_argo_n_nearest`, `collocate_argo_temporal_interp`, and
+    `collocate_argo_start`/`_end` in `postprocess.yaml`.
+
 ```bash
 # Diagnostics: enable diag_run_plots in steps.yaml BEFORE setup_run.
 # Then the standard Phase 5 steps:
@@ -492,6 +507,8 @@ stofs-ak --run --phase postprocess --only compare_sst    --config <cfg>
 stofs-ak --run --phase postprocess --only download_coops --config <cfg>   # DTN
 stofs-ak --run --phase postprocess --only download_ndbc  --config <cfg>   # DTN
 stofs-ak --run --phase postprocess --only station_skill  --config <cfg>
+stofs-ak --run --phase postprocess --only download_argo  --config <cfg>   # DTN
+stofs-ak --run --phase postprocess --only collocate_argo --config <cfg>
 ```
 
 > **station.in convention.** `download_coops`, `download_ndbc`, and
@@ -549,6 +566,8 @@ stofs-ak --run --phase postprocess --only station_skill  --config <cfg>
 | `download_coops` (CO-OPS station obs download) | 5 | ✅ Done |
 | `download_ndbc` (NDBC buoy obs download) | 5 | ✅ Done |
 | `station_skill` (CO-OPS/NDBC obs vs model plots + skill CSV) | 5 | ✅ Done |
+| `download_argo` (Argo float profile download from IFREMER GDAC) | 5 | ✅ Done |
+| `collocate_argo` (OCSTrack SCHISM T/S vs Argo 3-D collocation) | 5 | ✅ Done |
 | SCHISM+WWM / SCHISM+MICE / UFS-Coastal drivers | — | 🚧 Placeholder |
 
 ---
@@ -577,7 +596,8 @@ stofs-ak --run --phase all --config <config_dir>
 `--refresh` prints every sentinel it deletes, then exits. It clears sentinels
 in `I{ID}`, `R{ID}`, and `D{ID}` for all months, the top-level
 `inspect_mesh.done`, and the postprocessing sentinels in `P{ID}` (including
-`plot_outputs.done`, `.frames_done`, `compare_sst.done`, `station_skill.done`).
+`plot_outputs.done`, `.frames_done`, `compare_sst.done`, `station_skill.done`,
+and `collocate_argo.done`).
 Raw downloaded files and generated NetCDF inputs are **not** deleted — steps
 with output-presence checks (e.g. `aggregate_hycom`, `gen_sflux`) will skip
 regenerating files that already exist.

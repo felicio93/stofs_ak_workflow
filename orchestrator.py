@@ -99,7 +99,8 @@ def validate_config(cfg: dict):
 RUN_PHASE_STEPS      = {"setup_run", "submit_run"}
 POSTPROCESS_STEPS    = {"plot_outputs", "station_skill",
                         "download_coops", "download_ndbc", "compare_sst",
-                        "download_sst", "diag_run_plots"}
+                        "download_sst", "diag_run_plots",
+                        "download_argo", "collocate_argo"}
 
 
 def _phase_mismatch_warnings(cfg: dict, phase: str, only: str):
@@ -380,6 +381,7 @@ def reset_sentinels(cfg: dict):
         (f"P{pid}_plot_outputs",  ["plot_outputs.done", ".frames_done"]),
         (f"P{pid}_compare_sst",   ["compare_sst.done",  ".frames_done"]),
         (f"P{pid}_station_skill", ["station_skill.done"]),  # written after successful skill assessment
+        (f"P{pid}_collocate_argo", ["collocate_argo.done"]),  # Argo collocation
     ]:
         for name in sentinels:
             _remove(pdir / subdir / name)

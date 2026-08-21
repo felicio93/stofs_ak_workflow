@@ -137,10 +137,17 @@ ENV_SPECS = {
             "python=3.11", "xarray", "matplotlib", "cartopy", "imageio",
             "netcdf4", "h5netcdf", "pandas", "numpy", "pyyaml",
             "python-dateutil", "mpi4py",
+            # Argo/OCSTrack collocation (download_argo / collocate_argo).
+            # gsw (conda-forge) gives accurate pressure->depth; ocstrack is
+            # pip-installed after env creation (see the pip_packages note below).
+            "gsw", "tqdm", "requests", "dask", "scipy",
         ],
+        # Installed with pip after conda create (not on conda-forge under this
+        # name). setup_envs runs this automatically for swf_plot.
+        "pip_packages": ["ocstrack"],
         "verify_imports": ["xarray", "matplotlib", "cartopy", "imageio",
                            "netCDF4", "pandas", "numpy", "yaml", "dateutil",
-                           "mpi4py"],
+                           "mpi4py", "gsw", "ocstrack"],
         "verify_tools": [],
     },
 }
@@ -186,6 +193,29 @@ def create_env(conda: Path, name: str, packages):
         print(f"  ERROR: failed to create env '{name}'.")
         return False
     print(f"  Created env '{name}'.")
+    return True
+
+
+def pip_install(cfg: dict, name: str, packages) -> bool:
+    """pip-install `packages` into an existing conda env `name`.
+
+    Used for packages that are not on conda-forge under the same name
+    (e.g. ocstrack). Idempotent: pip skips already-satisfied requirements.
+    Returns True on success.
+    """
+    if not packages:
+        return True
+    py = _env_python_by_name(cfg, name)
+    if not py.exists():
+        print(f"  ERROR: interpreter not found for env '{name}': {py}")
+        return False
+    cmd = [str(py), "-m", "pip", "install", "--upgrade"] + list(packages)
+    print(f"  pip install into '{name}': {' '.join(packages)}")
+    print("  CMD:", " ".join(cmd))
+    result = subprocess.run(cmd)
+    if result.returncode != 0:
+        print(f"  ERROR: pip install into '{name}' failed for: {packages}")
+        return False
     return True
 
 
@@ -258,6 +288,11 @@ def setup_envs(cfg: dict):
         spec = ENV_SPECS[name]
         if name in have:
             print(f"\n  Env '{name}' exists -> verifying libraries...")
+            # Ensure any pip-only packages (e.g. ocstrack) are present/updated
+            # even for an already-existing env, so re-running --setup-envs adds
+            # newly-required pip packages.
+            if not pip_install(cfg, name, spec.get("pip_packages", [])):
+                all_ok = False
             if not verify_env(cfg, name, spec):
                 all_ok = False
                 print(f"  [{name}] verification found problems (see above).")
@@ -265,6 +300,8 @@ def setup_envs(cfg: dict):
             if not create_env(conda, name, spec["conda_packages"]):
                 all_ok = False
                 continue
+            if not pip_install(cfg, name, spec.get("pip_packages", [])):
+                all_ok = False
             verify_env(cfg, name, spec)
 
     print(f"\n{'='*60}")

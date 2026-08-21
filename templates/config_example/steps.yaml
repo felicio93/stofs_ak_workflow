@@ -60,7 +60,11 @@ download_coops:  false   # DTN: download NOAA CO-OPS station obs (WL, water temp
                          # pressure, wind) -> M{ID}/obs/coops/ (based on fix/station.in)
 download_ndbc:   false   # DTN: download NOAA NDBC buoy obs (WTMP, wind, PRES) ->
                          # M{ID}/obs/ndbc/ (annual + current-year monthly + realtime)
+download_argo:   false   # DTN: download Argo float profiles (IFREMER GDAC via OCSTrack)
+                         # -> M{ID}/obs/argo/{region}/processed/ (domain-cropped)
 plot_outputs:    false   # Full-run field GIFs -> P{ID} (SLURM: parallel frames + GIF)
 compare_sst:     false   # Model vs satellite SST GIF -> P{ID} (needs download_sst first)
 station_skill:   false   # Interactive: CO-OPS/NDBC obs vs model staout_* time-series
                          # plots + skill_metrics.csv -> P{ID} (needs download_coops/ndbc first)
+collocate_argo:  false   # Interactive: OCSTrack 3-D collocation of SCHISM T/S profiles
+                         # vs Argo floats -> P{ID}/P{ID}_collocate_argo/ (needs download_argo)

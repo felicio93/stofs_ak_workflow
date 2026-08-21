@@ -23,6 +23,9 @@ dependencies = [
 [project.optional-dependencies]
 download = ["cdsapi", "netCDF4", "xarray", "scipy", "numpy"]
 plot = ["xarray", "matplotlib", "cartopy", "imageio", "netCDF4", "pandas", "numpy"]
+# Argo profile collocation via OCSTrack (used by the download_argo /
+# collocate_argo Phase-5 steps). gsw gives accurate pressure->depth.
+collocate = ["ocstrack", "gsw", "xarray", "netCDF4", "numpy", "scipy"]
 
 [project.scripts]
 stofs-ak = "orchestrator:main"

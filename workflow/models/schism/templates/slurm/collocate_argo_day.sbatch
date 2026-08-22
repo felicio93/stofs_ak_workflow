@@ -24,6 +24,6 @@ set -e
 DAY=$(sed -n "${SLURM_ARRAY_TASK_ID}p" {{MANIFEST}})
 echo "=== collocate_argo day: task ${SLURM_ARRAY_TASK_ID} -> ${DAY} ==="
 
-{{PY}} {{SCRIPT}} day --date "${DAY}" --config {{CONFIG_DIR}}
+{{PY}} {{SCRIPT}} --config {{CONFIG_DIR}} day --date "${DAY}"
 
 echo "=== done ${DAY} ==="

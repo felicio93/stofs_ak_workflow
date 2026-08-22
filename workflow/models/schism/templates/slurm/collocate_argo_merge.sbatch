@@ -21,6 +21,6 @@ set -e
 
 echo "=== collocate_argo merge: $(date) ==="
 
-{{PY}} {{SCRIPT}} merge --config {{CONFIG_DIR}}
+{{PY}} {{SCRIPT}} --config {{CONFIG_DIR}} merge
 
 echo "=== collocate_argo merge complete: $(date) ==="

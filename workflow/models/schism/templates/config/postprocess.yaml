@@ -224,7 +224,8 @@ collocate_argo_end:   null
 # These go into the slurm: block of project.yaml, not here — listed here
 # for reference only.
 #   slurm.collocate_argo_array_throttle: 50
-#   slurm.collocate_argo_mem: 16G   (single-day Argo file + model stacks)
+#   slurm.collocate_argo_mem: 48G   (single-day Argo: ~1 MB; model stack
+#                                    pair: ~26 GB; KDTree + overhead ~6 GB)
 #   slurm.collocate_argo_walltime: "01:00:00"
 #   slurm.collocate_argo_merge_mem: 32G
 #   slurm.collocate_argo_merge_walltime: "01:00:00"

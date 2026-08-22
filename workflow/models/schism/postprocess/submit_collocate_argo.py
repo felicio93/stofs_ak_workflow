@@ -117,7 +117,7 @@ def submit_collocate_argo(cfg: dict, config_dir: Path) -> str:
         "JOBNAME":        f"argo_day_M{pid}",
         "NTASKS":         str(ntasks),
         "ARRAY_THROTTLE": throttle,
-        "MEM":            slurm.get("collocate_argo_mem",      "16G"),
+        "MEM":            slurm.get("collocate_argo_mem",      "48G"),
         "WALLTIME":       slurm.get("collocate_argo_walltime", "01:00:00"),
         "MANIFEST":       str(manifest),
     })

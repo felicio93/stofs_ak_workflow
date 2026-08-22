@@ -230,12 +230,53 @@ collocate_argo_end:   null
 #   slurm.collocate_argo_merge_mem: 32G
 #   slurm.collocate_argo_merge_walltime: "01:00:00"
 
+# =============================================================================
+# plot_argo — all axis limits, colormaps and style settings
+# =============================================================================
+# Depth filter for all plots (metres). Set to the shelf depth of your domain.
 collocate_argo_plot_max_depth: 300
-# Optional: only use profiles whose nearest mesh node is within X km.
-# null = no filter (use all collocated profiles).
+
+# Optional secondary distance filter (null = use the already-filtered clean file).
 collocate_argo_plot_max_dist_km: null
-# DPI for all three Argo diagnostic plots.
+
+# DPI for all four Argo diagnostic plots.
 collocate_argo_plot_dpi: 150
+
+# --- Plot 1: Location map ---
+collocate_argo_plot_location_cmap: turbo   # date colormap
+collocate_argo_plot_location_s: 14         # scatter marker size
+
+# --- Plot 2: Skill histograms ---
+collocate_argo_plot_hist_bins: 40
+collocate_argo_plot_r2_xlim: [0, 1]
+# Per-variable bias/RMSE histogram x-ranges (null = auto 99th-pct of data).
+collocate_argo_plot_temp_bias_xlim: null    # e.g. [-3, 3]
+collocate_argo_plot_temp_rmse_xlim: null    # e.g. [0, 3]
+collocate_argo_plot_psal_bias_xlim: null    # e.g. [-1, 1]
+collocate_argo_plot_psal_rmse_xlim: null    # e.g. [0, 1]
+# Histogram bar colours.
+collocate_argo_plot_temp_hist_color: royalblue
+collocate_argo_plot_psal_hist_color: teal
+
+# --- Plot 3: Profile matrix ---
+# x-axis limits for obs/model profile panels (null = auto 1st–99th pct of obs).
+collocate_argo_plot_temp_xlim: null         # e.g. [-2, 20]
+collocate_argo_plot_psal_xlim: null         # e.g. [28, 36]
+# Bias and RMSE x-limits (shared with histogram xlim keys above; null = auto).
+# Profile line colours.
+collocate_argo_plot_temp_color: royalblue
+collocate_argo_plot_psal_color: teal
+# Individual profile line style.
+collocate_argo_plot_profile_alpha: 0.15
+collocate_argo_plot_profile_lw: 0.8
+
+# --- Plot 4: Spatial skill map ---
+collocate_argo_plot_rmse_cmap: plasma       # RMSE scatter colormap
+collocate_argo_plot_r2_cmap: RdYlGn        # R² scatter colormap (red=bad, green=good)
+# RMSE colour scale upper limit (null = auto 99th pct of data per variable).
+collocate_argo_plot_temp_rmse_vmax: null    # e.g. 3.0  (°C)
+collocate_argo_plot_psal_rmse_vmax: null    # e.g. 1.0  (PSU)
+collocate_argo_plot_skill_s: 20             # scatter marker size
 
 # =============================================================================
 # Optional SLURM overrides for Phase 5 jobs (else defaults from the code).

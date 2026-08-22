@@ -208,7 +208,12 @@ collocate_argo_end:   null
 
 # plot_argo settings (used by the plot_argo step below).
 # Max depth for the histogram and profile matrix plots (metres).
-collocate_argo_plot_max_depth: 2000
+# Set this to the approximate maximum shelf depth of your domain.
+# The Alaska/Bering Sea shelf is ~200 m; deep Argo floats reach >5000 m
+# but SCHISM sigma layers only cover the actual model bathymetry, so
+# obs/model overlap is limited to the shallowest levels. A value of
+# 300 m captures most shelf-sea collocation skill.
+collocate_argo_plot_max_depth: 300
 # Optional: only use profiles whose nearest mesh node is within X km.
 # null = no filter (use all collocated profiles).
 collocate_argo_plot_max_dist_km: null

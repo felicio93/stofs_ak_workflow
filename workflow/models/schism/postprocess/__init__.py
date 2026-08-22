@@ -27,12 +27,14 @@ Implemented steps
                  skill_metrics.csv under P{ID}/P{ID}_station_skill/. Re-runnable
                  for any sub-period via station_skill_start/end in
                  postprocess.yaml.
-  collocate_argo Interactive OCSTrack 3-D collocation of SCHISM temperature and
-                 salinity profiles against the downloaded Argo floats. Loops
-                 over run months, collocates each with ocstrack.Collocate
-                 (var_type='3D_Profile'), and concatenates the per-month
-                 NetCDFs into one file per variable under
-                 P{ID}/P{ID}_collocate_argo/. Needs download_argo first.
+  collocate_argo Two-stage SLURM: parallel per-day array (Stage 1) + serial
+                 merge/clean (Stage 2). Each array task collocates all
+                 configured variables for one calendar day, reusing the
+                 2.6 M-node KDTree. Daily NetCDFs are merged into
+                 collocated_{var}.nc + collocated_{var}_clean.nc under
+                 P{ID}/P{ID}_collocate_argo/. Falls back to serial
+                 month-by-month loop when sbatch is unavailable or
+                 ALLOW_NON_SLURM=1. Needs download_argo first.
   plot_argo      Three Argo diagnostic plots using the collocated NetCDFs from
                  collocate_argo: (1) profile location map coloured by date,
                  (2) per-variable skill histograms (R², Bias, RMSE), and

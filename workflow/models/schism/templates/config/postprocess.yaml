@@ -213,6 +213,22 @@ collocate_argo_end:   null
 # but SCHISM sigma layers only cover the actual model bathymetry, so
 # obs/model overlap is limited to the shallowest levels. A value of
 # 300 m captures most shelf-sea collocation skill.
+# SLURM parallelization settings for the two-stage collocate_argo job.
+# Stage 1: one array task per day.
+#   collocate_argo_array_throttle  max concurrent array tasks (default 50)
+#   collocate_argo_mem             memory per array task (default 48G)
+#   collocate_argo_walltime        wall-time per array task (default 01:00:00)
+# Stage 2: serial merge.
+#   collocate_argo_merge_mem       memory for merge job (default 32G)
+#   collocate_argo_merge_walltime  wall-time for merge job (default 01:00:00)
+# These go into the slurm: block of project.yaml, not here — listed here
+# for reference only.
+#   slurm.collocate_argo_array_throttle: 50
+#   slurm.collocate_argo_mem: 48G
+#   slurm.collocate_argo_walltime: "01:00:00"
+#   slurm.collocate_argo_merge_mem: 32G
+#   slurm.collocate_argo_merge_walltime: "01:00:00"
+
 collocate_argo_plot_max_depth: 300
 # Optional: only use profiles whose nearest mesh node is within X km.
 # null = no filter (use all collocated profiles).

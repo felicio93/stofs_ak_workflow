@@ -127,6 +127,10 @@ def _clip(a_start, a_end, b_start, b_end):
 def _collocate_one_day(cfg, day_str: str, out_dir: Path) -> list:
     """Collocate all configured variables for a single calendar day.
 
+    Memory-efficient design: loads only the single processed Argo file
+    matching the day (cropped_{YYYYMMDD}_prof.nc) rather than the full
+    processed directory, avoiding OOM in the SLURM array tasks.
+
     Builds the KDTree once (expensive for 2.6 M nodes), then reuses it for
     each variable.  Returns a list of written NetCDF paths (one per variable
     that produced results).
@@ -165,15 +169,41 @@ def _collocate_one_day(cfg, day_str: str, out_dir: Path) -> list:
         print(f"  [{day_str}] all variables already done, skipping.")
         return [daily_dir / f"collocated_{v}_{day_str}.nc" for v in variables]
 
-    # ---- Load Argo profiles for this day ----
-    argo_dir = _argo_processed_dir(cfg)
-    try:
-        argo_full = ArgoData(str(argo_dir))
-    except ValueError as exc:
-        print(f"  [{day_str}] Argo load failed: {exc}")
-        return []
+    # ---- Load Argo profiles for this day (single-file, memory-efficient) ----
+    # The processed directory contains one file per day named
+    # cropped_{YYYYMMDD}_prof.nc.  Loading only that file instead of the full
+    # directory avoids concatenating all 100+ days into memory before
+    # time-filtering — which caused OOM kills in the SLURM array tasks.
+    argo_dir     = _argo_processed_dir(cfg)
+    argo_day_nc  = argo_dir / f"cropped_{day_str}_prof.nc"
 
-    argo_full.filter_by_time(day_iso, dnxt_iso)
+    if argo_day_nc.exists() and argo_day_nc.stat().st_size > 0:
+        # Fast path: load only the single daily file.
+        import tempfile, shutil
+        # ArgoData expects a directory; create a temporary directory containing
+        # only the one file (symlink avoids any data copy).
+        tmp_dir = Path(tempfile.mkdtemp(prefix="argo_day_"))
+        try:
+            (tmp_dir / argo_day_nc.name).symlink_to(argo_day_nc)
+            try:
+                argo_full = ArgoData(str(tmp_dir))
+            except ValueError as exc:
+                print(f"  [{day_str}] Argo load failed ({argo_day_nc.name}): {exc}")
+                return []
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+    else:
+        # Fallback: load the full directory and time-filter.
+        # Used when filenames don't match the cropped_{YYYYMMDD}_prof.nc pattern.
+        print(f"  [{day_str}] no daily file {argo_day_nc.name} — "
+              f"loading full directory (slower).")
+        try:
+            argo_full = ArgoData(str(argo_dir))
+        except ValueError as exc:
+            print(f"  [{day_str}] Argo load failed: {exc}")
+            return []
+        argo_full.filter_by_time(day_iso, dnxt_iso)
+
     if argo_full.ds.sizes.get("JULD", 0) == 0:
         print(f"  [{day_str}] no Argo profiles, skipping.")
         return []

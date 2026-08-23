@@ -142,11 +142,29 @@ def postprocess_phase(cfg: dict, config_dir, only: str = None):
     else:
         print("[SKIP] collocate_argo")
 
-    # --- plot_argo (interactive): location map + skill histograms + profile matrix ---
+    # --- plot_argo: location map + skill histograms + profile matrix ---
+    # When collocate_argo was submitted via SLURM (the default), plot_argo
+    # is auto-chained as Stage 3 (afterok on the merge job) and will run
+    # automatically — no action needed here.
+    # When collocate_argo ran in serial mode (ALLOW_NON_SLURM=1) or
+    # collocate_argo.done already exists from a previous run, this step
+    # runs interactively.
     if enabled("plot_argo"):
-        print("[STEP] plot_argo")
-        from workflow.models.schism.postprocess.argo_plots import run_plot_argo
-        run_plot_argo(cfg, config_dir)
+        from pathlib import Path as _Path
+        from workflow.core.config import model_dir as _model_dir
+        _pid      = cfg["project_id"]
+        _done_col = (_model_dir(cfg) / f"P{_pid}" /
+                     f"P{_pid}_collocate_argo" / "collocate_argo.done")
+        if _done_col.exists():
+            # Collocation finished (serial mode or previous run) → run now.
+            print("[STEP] plot_argo")
+            from workflow.models.schism.postprocess.argo_plots import run_plot_argo
+            run_plot_argo(cfg, config_dir)
+        else:
+            # Collocation was submitted as a SLURM job; plot_argo is queued
+            # as Stage 3 (afterok on the merge) and will run automatically.
+            print("[NOTE] plot_argo: SLURM Stage 3 job queued "
+                  "(afterok on merge job) — will run automatically.")
     else:
         print("[SKIP] plot_argo")
 

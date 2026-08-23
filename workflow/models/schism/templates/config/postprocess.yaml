@@ -229,6 +229,9 @@ collocate_argo_end:   null
 #   slurm.collocate_argo_walltime: "01:00:00"
 #   slurm.collocate_argo_merge_mem: 32G
 #   slurm.collocate_argo_merge_walltime: "01:00:00"
+# Stage 3: plot_argo (auto-chained after merge when plot_argo: true).
+#   slurm.collocate_argo_plot_mem: 16G
+#   slurm.collocate_argo_plot_walltime: "00:30:00"
 
 # =============================================================================
 # plot_argo — all axis limits, colormaps and style settings
@@ -273,6 +276,12 @@ collocate_argo_plot_profile_lw: 0.8
 # --- Plot 4: Spatial skill map ---
 collocate_argo_plot_rmse_cmap: plasma       # RMSE scatter colormap
 collocate_argo_plot_r2_cmap: RdYlGn        # R² scatter colormap (red=bad, green=good)
+# Depth used when COMPUTING skill metrics for the skill map.
+# null = full water column (recommended: uses all available overlapping levels
+# so even deep Argo floats with only a few shallow SCHISM sigma-layer matches
+# still appear as coloured rather than gray). Set to a number (metres) to
+# restrict metrics to a shallower depth range.
+collocate_argo_plot_skill_max_depth: null
 # RMSE colour scale upper limit (null = auto 99th pct of data per variable).
 collocate_argo_plot_temp_rmse_vmax: null    # e.g. 3.0  (°C)
 collocate_argo_plot_psal_rmse_vmax: null    # e.g. 1.0  (PSU)

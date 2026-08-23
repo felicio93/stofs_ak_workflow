@@ -1,7 +1,7 @@
 """
 models/schism/postprocess/submit_collocate_argo.py
 ===================================================
-Two-stage SLURM launcher for the parallel Argo collocation step.
+Three-stage SLURM launcher for the parallel Argo collocation + plotting pipeline.
 
 Stage 1 — SLURM array, one task per day (throttled):
     A manifest lists every day in the collocation window. Each array task
@@ -9,20 +9,22 @@ Stage 1 — SLURM array, one task per day (throttled):
     assigned day, reusing the 2.6 M-node KDTree built once per task.
     Per-day per-variable NetCDFs are written to:
         P{ID}/P{ID}_collocate_argo/daily/collocated_{var}_{YYYYMMDD}.nc
-    The throttle cap (--array=1-N%K) keeps active tasks within the QOS
-    MaxSubmitJobsPerUser limit.
 
 Stage 2 — serial merge (--dependency=afterok on Stage 1):
     Concatenates all daily files per variable into one combined NetCDF,
     writes the distance-filtered clean file, and touches collocate_argo.done.
-    Kept separate so the user can re-run just the merge with different
-    threshold settings without repeating the collocation.
+
+Stage 3 — serial plot_argo (--dependency=afterok on Stage 2):
+    Generates all four Argo diagnostic plots via the standard
+    ``stofs-ak --run --phase postprocess --only plot_argo`` CLI, consistent
+    with how compare_sst_gif and plot_outputs_gif are dispatched.
+    Only submitted when ``plot_argo: true`` is set in steps.yaml.
 
 Re-run logic:
-    * If collocate_argo.done exists → skip entirely.
-    * If .daily_done exists but collocate_argo.done is missing → submit only
-      the merge job (Stage 2).
-    * Otherwise → submit full pipeline (Stage 1 + Stage 2).
+    * collocate_argo.done exists + plot_argo.done exists → skip entirely.
+    * collocate_argo.done exists + plot_argo.done missing → submit Stage 3 only.
+    * .daily_done exists + collocate_argo.done missing → submit Stage 2 + 3.
+    * Otherwise → submit full pipeline (Stage 1 + 2 + 3).
 """
 
 from datetime import date, timedelta
@@ -48,33 +50,51 @@ def _build_day_list(cfg) -> list:
     return days
 
 
-def submit_collocate_argo(cfg: dict, config_dir: Path) -> str:
-    """Submit the two-stage Argo collocation to SLURM.
+def _submit_stage3(cfg, slurm, common, submitter, logdir, jid2, pid) -> str:
+    """Submit Stage 3 (plot_argo) with afterok dependency on jid2."""
+    # Stage 3 uses the stofs-ak CLI, not the collocate_argo module directly,
+    # matching the pattern used by compare_sst_gif and plot_outputs_gif.
+    stage3_common = dict(common)
+    stage3_common["SCRIPT"] = "stofs-ak"
 
-    Returns the SLURM job ID of the last submitted job (merge job), or ''
-    if nothing was submitted.
+    stage3 = dict(stage3_common)
+    stage3.update({
+        "JOBNAME":  f"argo_plot_M{pid}",
+        "MEM":      slurm.get("collocate_argo_plot_mem",      "16G"),
+        "WALLTIME": slurm.get("collocate_argo_plot_walltime", "00:30:00"),
+    })
+    dep = f"afterok:{jid2}" if jid2 else None
+    if dep:
+        print(f"  Submitting plot_argo Stage 3 (afterok:{jid2})")
+    else:
+        print("  Submitting plot_argo Stage 3")
+    out3 = submitter.render_and_submit(
+        "collocate_argo_plot.sbatch", stage3,
+        logdir / "collocate_argo_plot.sbatch",
+        dependency=dep)
+    return SlurmSubmitter.parse_jobid(out3)
+
+
+def submit_collocate_argo(cfg: dict, config_dir: Path) -> str:
+    """Submit the three-stage Argo collocation + plotting pipeline to SLURM.
+
+    Returns the SLURM job ID of the last submitted job, or '' if nothing
+    was submitted.
     """
     pid    = cfg["project_id"]
     mdir   = model_dir(cfg)
     logdir = mdir / "logs"
     logdir.mkdir(parents=True, exist_ok=True)
 
-    out_dir    = mdir / f"P{pid}" / f"P{pid}_collocate_argo"
+    out_dir = mdir / f"P{pid}" / f"P{pid}_collocate_argo"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     done_all    = out_dir / "collocate_argo.done"
     done_daily  = out_dir / ".daily_done"
+    done_plot   = out_dir / "plot_argo.done"
 
-    # Already fully complete.
-    if done_all.exists():
-        print("  collocate_argo: collocate_argo.done exists — already complete, "
-              "skipping.")
-        return ""
-
-    days = _build_day_list(cfg)
-    if not days:
-        print("  collocate_argo: empty date range. Nothing to do.")
-        return ""
+    # Determine whether Stage 3 should be included.
+    do_plot = bool(cfg.get("plot_argo", False))
 
     slurm = cfg.get("slurm", {})
     common = {
@@ -90,10 +110,25 @@ def submit_collocate_argo(cfg: dict, config_dir: Path) -> str:
 
     submitter = SlurmSubmitter(TEMPLATES_DIR)
 
+    # ---- Fully complete ----
+    if done_all.exists() and (done_plot.exists() or not do_plot):
+        print("  collocate_argo: already complete, skipping.")
+        return ""
+
+    # ---- collocate done, only plot missing ----
+    if done_all.exists() and do_plot and not done_plot.exists():
+        print("  collocate_argo: collocation done. Submitting plot_argo only.")
+        return _submit_stage3(cfg, slurm, common, submitter, logdir, "", pid)
+
+    days = _build_day_list(cfg)
+    if not days:
+        print("  collocate_argo: empty date range. Nothing to do.")
+        return ""
+
     # ---- Stage 2 only: daily files done, merge missing ----
     if done_daily.exists():
-        print("  collocate_argo: daily collocation already complete "
-              "(.daily_done exists). Submitting merge only.")
+        print("  collocate_argo: daily collocation done (.daily_done). "
+              "Submitting merge + plot.")
         stage2 = dict(common)
         stage2.update({
             "JOBNAME":  f"argo_merge_M{pid}",
@@ -103,9 +138,12 @@ def submit_collocate_argo(cfg: dict, config_dir: Path) -> str:
         out2 = submitter.render_and_submit(
             "collocate_argo_merge.sbatch", stage2,
             logdir / "collocate_argo_merge.sbatch")
-        return SlurmSubmitter.parse_jobid(out2)
+        jid2 = SlurmSubmitter.parse_jobid(out2)
+        if do_plot:
+            return _submit_stage3(cfg, slurm, common, submitter, logdir, jid2, pid)
+        return jid2
 
-    # ---- Full pipeline: Stage 1 array + Stage 2 merge ----
+    # ---- Full pipeline: Stage 1 + 2 + (optionally) 3 ----
     ntasks   = len(days)
     throttle = str(slurm.get("collocate_argo_array_throttle", 50))
 
@@ -141,5 +179,11 @@ def submit_collocate_argo(cfg: dict, config_dir: Path) -> str:
         dependency=f"afterok:{jid1}")
     jid2 = SlurmSubmitter.parse_jobid(out2)
 
+    if do_plot:
+        last_jid = _submit_stage3(
+            cfg, slurm, common, submitter, logdir, jid2, pid)
+    else:
+        last_jid = jid2
+
     print(f"  Monitor: squeue -u $USER | Logs: {logdir}/argo_*.out")
-    return jid2
+    return last_jid

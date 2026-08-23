@@ -257,17 +257,20 @@ def _data_summary(obs_arr, mod_arr, dep_arr, max_depth, var_name):
 # Per-profile metrics helper
 # ---------------------------------------------------------------------------
 
-def _compute_profile_metrics(obs_arr, mod_arr, depth_arr, max_depth):
+def _compute_profile_metrics(obs_arr, mod_arr, depth_arr, max_depth,
+                             min_levels: int = 2):
     """Per-profile R², Bias, RMSE where BOTH obs AND model valid, |depth|≤max_depth.
     Returns (r2_list, bias_list, rmse_list, valid_mask) where valid_mask[i]=True
-    means profile i produced metrics."""
+    means profile i produced metrics. R² is NaN when fewer than 2 levels overlap.
+    Set min_levels=1 to include profiles with only a single matching depth level
+    (useful for skill maps where RMSE/Bias are still meaningful)."""
     z_all = _depth_pos(depth_arr)
     r2_list, bias_list, rmse_list = [], [], []
     valid_mask = np.zeros(obs_arr.shape[0], dtype=bool)
     for i in range(obs_arr.shape[0]):
         z = z_all[i]; obs = obs_arr[i]; mod = mod_arr[i]
         mask = ~np.isnan(obs) & ~np.isnan(mod) & ~np.isnan(z) & (z <= max_depth)
-        if mask.sum() < 2:
+        if mask.sum() < min_levels:
             continue
         o = obs[mask]; m = mod[mask]
         bias = float(np.mean(m - o))
@@ -589,7 +592,8 @@ def plot_argo_profiles(cfg, ds, var: str, out_dir: Path, max_depth: float, dpi: 
 # ---------------------------------------------------------------------------
 
 def plot_argo_skill_map(cfg, ds, var: str, out_dir: Path,
-                        max_depth: float, dpi: int, boundaries):
+                        max_depth: float, skill_max_depth: float,
+                        dpi: int, boundaries):
     """Two-panel scatter map: per-profile RMSE (left) and R² (right).
     Profiles with no model overlap are shown as gray dots.
     """
@@ -600,8 +604,12 @@ def plot_argo_skill_map(cfg, ds, var: str, out_dir: Path,
     lons    = ds["lon"].values
     lats    = ds["lat"].values
 
+    # Use skill_max_depth (potentially larger than display max_depth) so that
+    # profiles with deep-only measurements still get skill metrics.
+    # min_levels=1: RMSE/Bias are meaningful with 1 overlapping level;
+    # R² will be NaN for those (requires variance -> needs >= 2 points).
     r2_list, bias_list, rmse_list, valid_mask = _compute_profile_metrics(
-        obs_arr, mod_arr, dep_arr, max_depth)
+        obs_arr, mod_arr, dep_arr, skill_max_depth, min_levels=1)
 
     rmse_arr   = np.full(len(lons), np.nan)
     r2_arr     = np.full(len(lons), np.nan)
@@ -685,9 +693,11 @@ def plot_argo_skill_map(cfg, ds, var: str, out_dir: Path,
                       markerscale=1.5)
 
     start = cfg["start_date"]; end = cfg["end_date"]
+    skill_depth_str = f"{skill_max_depth:.0f} m" \
+        if np.isfinite(skill_max_depth) else "full depth"
     fig.suptitle(
         f"SCHISM vs Argo — {meta['label']} Skill  |  "
-        f"Depth ≤ {max_depth:.0f} m  |  {start} to {end}",
+        f"Skill depth ≤ {skill_depth_str}  |  {start} to {end}",
         fontsize=TITLE_FS, fontweight="bold")
 
     out_path = out_dir / f"argo_skill_map_{var}.jpg"
@@ -708,6 +718,11 @@ def run_plot_argo(cfg: dict, config_dir=None):
         return
 
     max_depth   = float(cfg.get("collocate_argo_plot_max_depth",  300))
+    # Depth used for COMPUTING skill metrics on the skill map. Defaults to
+    # the full water column (inf) so all overlapping levels contribute,
+    # regardless of the display max_depth used for the profile matrix.
+    _skill_d = cfg.get("collocate_argo_plot_skill_max_depth")
+    skill_max_depth = float(_skill_d) if _skill_d is not None else np.inf
     max_dist_km = cfg.get("collocate_argo_plot_max_dist_km")
     dpi         = int(cfg.get("collocate_argo_plot_dpi", 150))
     variables   = cfg.get("collocate_argo_vars") or ["temperature", "salinity"]
@@ -749,7 +764,8 @@ def run_plot_argo(cfg: dict, config_dir=None):
     for var, ds in datasets.items():
         plot_argo_histograms(cfg, ds, var, out_dir, max_depth, dpi)
         plot_argo_profiles(cfg, ds, var, out_dir, max_depth, dpi)
-        plot_argo_skill_map(cfg, ds, var, out_dir, max_depth, dpi, boundaries)
+        plot_argo_skill_map(cfg, ds, var, out_dir, max_depth,
+                            skill_max_depth, dpi, boundaries)
         ds.close()
 
     (out_dir / "plot_argo.done").touch()

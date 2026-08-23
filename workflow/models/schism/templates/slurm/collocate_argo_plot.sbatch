@@ -23,6 +23,6 @@ set -e
 
 echo "=== plot_argo: $(date) ==="
 
-{{PY}} {{SCRIPT}} --config {{CONFIG_DIR}} --run --phase postprocess --only plot_argo
+{{PY}} {{SCRIPT}} --config {{CONFIG_DIR}}
 
 echo "=== plot_argo complete: $(date) ==="

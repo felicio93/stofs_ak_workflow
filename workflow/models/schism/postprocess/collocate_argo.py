@@ -320,7 +320,7 @@ def _concat_daily(var: str, daily_dir: Path, out_dir: Path):
         return None
 
     try:
-        merged = xr.concat(dsets, dim="time")
+        merged = xr.concat(dsets, dim="time", join="outer")
         merged = merged.sortby("time")
     except (ValueError, KeyError) as exc:
         print(f"  [merge {var}] concat failed: {exc}")
@@ -513,7 +513,7 @@ def _concat_months(var, per_month_files, out_dir):
     if not dsets:
         return None
     try:
-        merged = xr.concat(dsets, dim="time")
+        merged = xr.concat(dsets, dim="time", join="outer")
         merged = merged.sortby("time")
     except (ValueError, KeyError) as exc:
         print(f"  [concat {var}] concat failed: {exc}")

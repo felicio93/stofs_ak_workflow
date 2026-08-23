@@ -52,10 +52,10 @@ def _build_day_list(cfg) -> list:
 
 def _submit_stage3(cfg, slurm, common, submitter, logdir, jid2, pid) -> str:
     """Submit Stage 3 (plot_argo) with afterok dependency on jid2."""
-    # Stage 3 uses the stofs-ak CLI, not the collocate_argo module directly,
-    # matching the pattern used by compare_sst_gif and plot_outputs_gif.
+    # Stage 3 calls argo_plots as a Python module, matching the pattern used
+    # by compare_sst_gif (compare_sst assemble) and plot_outputs_gif.
     stage3_common = dict(common)
-    stage3_common["SCRIPT"] = "stofs-ak"
+    stage3_common["SCRIPT"] = "-m workflow.models.schism.postprocess.argo_plots"
 
     stage3 = dict(stage3_common)
     stage3.update({

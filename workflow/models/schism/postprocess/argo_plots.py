@@ -648,10 +648,12 @@ def plot_argo_skill_map(cfg, ds, var: str, out_dir: Path,
         lon_min = float(lons.min())-PADDING_LON; lon_max = float(lons.max())+PADDING_LON
         lat_min = float(lats.min())-PADDING_LAT; lat_max = float(lats.max())+PADDING_LAT
 
-    # Size: two panels side by side
+    # Size: two panels side by side. Remove the +0.8 extra height that was
+    # creating a large gap between the suptitle and the axes when
+    # constrained_layout distributes the whitespace.
     fw_one, fh = _aspect_figsize(lon_min, lon_max, lat_min, lat_max)
     fig, (ax_rmse, ax_r2) = plt.subplots(
-        1, 2, figsize=(fw_one * 2 + 0.5, fh + 0.8),
+        1, 2, figsize=(fw_one * 2 + 0.5, fh),
         constrained_layout=True)
 
     # ---- Draw both panels ----
@@ -676,7 +678,7 @@ def plot_argo_skill_map(cfg, ds, var: str, out_dir: Path,
                         s=s, edgecolor="k", linewidth=0.15, zorder=5)
 
         cbar = fig.colorbar(sc, ax=ax, orientation="vertical",
-                            pad=0.02, fraction=0.030, shrink=0.60)
+                            pad=0.02, fraction=0.030, shrink=0.72)
         cbar.set_label(cbar_label, fontsize=CBAR_FS)
         cbar.ax.tick_params(labelsize=TICK_FS)
 
@@ -698,7 +700,7 @@ def plot_argo_skill_map(cfg, ds, var: str, out_dir: Path,
     fig.suptitle(
         f"SCHISM vs Argo — {meta['label']} Skill  |  "
         f"Skill depth ≤ {skill_depth_str}  |  {start} to {end}",
-        fontsize=TITLE_FS, fontweight="bold", y=0.98)
+        fontsize=TITLE_FS, fontweight="bold")
 
     out_path = out_dir / f"argo_skill_map_{var}.jpg"
     fig.savefig(str(out_path), dpi=dpi, format="jpeg",

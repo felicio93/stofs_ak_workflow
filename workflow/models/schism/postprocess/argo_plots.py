@@ -676,7 +676,7 @@ def plot_argo_skill_map(cfg, ds, var: str, out_dir: Path,
                         s=s, edgecolor="k", linewidth=0.15, zorder=5)
 
         cbar = fig.colorbar(sc, ax=ax, orientation="vertical",
-                            pad=0.02, fraction=0.046, shrink=0.85)
+                            pad=0.02, fraction=0.030, shrink=0.60)
         cbar.set_label(cbar_label, fontsize=CBAR_FS)
         cbar.ax.tick_params(labelsize=TICK_FS)
 
@@ -689,7 +689,7 @@ def plot_argo_skill_map(cfg, ds, var: str, out_dir: Path,
         _panel_letter(ax, letter)
 
         if n_invalid > 0:
-            ax.legend(loc="upper left", fontsize=TICK_FS, framealpha=0.8,
+            ax.legend(loc="lower right", fontsize=TICK_FS, framealpha=0.8,
                       markerscale=1.5)
 
     start = cfg["start_date"]; end = cfg["end_date"]
@@ -698,7 +698,7 @@ def plot_argo_skill_map(cfg, ds, var: str, out_dir: Path,
     fig.suptitle(
         f"SCHISM vs Argo — {meta['label']} Skill  |  "
         f"Skill depth ≤ {skill_depth_str}  |  {start} to {end}",
-        fontsize=TITLE_FS, fontweight="bold")
+        fontsize=TITLE_FS, fontweight="bold", y=0.98)
 
     out_path = out_dir / f"argo_skill_map_{var}.jpg"
     fig.savefig(str(out_path), dpi=dpi, format="jpeg",

@@ -66,8 +66,7 @@ def plot_datm_month(cfg: dict, ym: str):
 
     out_dir.mkdir(parents=True, exist_ok=True)
     tmp_dir.mkdir(parents=True, exist_ok=True)
-    print(f"
---- plot_datm {ym} -> {out_dir} ---")
+    print(f"--- plot_datm {ym} -> {out_dir} ---")
 
     import netCDF4 as nc4
 

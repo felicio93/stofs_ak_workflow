@@ -16,10 +16,6 @@ def submit_gen_datm(cfg: dict, config_dir: Path, after_jobid: str = "") -> str:
     for ym in months:
         out = mdir / f"I{pid}" / f"I{pid}_{ym}" / "forcing" / f"datm_{ym}.nc"
         sentinel = out.parent / "gen_datm.done"
-        sflux_ready = mdir / f"I{pid}" / f"I{pid}_{ym}" / "sflux" / "gen_sflux.done"
-        if not sflux_ready.exists():
-            print(f"  {ym}: sflux not ready (missing gen_sflux.done), skipping.")
-            continue
         if sentinel.exists() and out.exists() and out.stat().st_size > 0:
             print(f"  {ym}: gen_datm already complete, skipping.")
             continue

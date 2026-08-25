@@ -18,12 +18,6 @@ def submit_plot_datm(cfg: dict, config_dir: Path, after_jobid: str = "") -> str:
         if sentinel.exists():
             print(f"  {ym}: plot_datm already complete, skipping.")
             continue
-
-        datm_subdir = cfg.get("datm_subdir", "forcing")
-        datm_ready = mdir / f"I{pid}" / f"I{pid}_{ym}" / datm_subdir / "gen_datm.done"
-        if not datm_ready.exists():
-            print(f"  {ym}: datm file not ready (missing gen_datm.done), skipping.")
-            continue
         pending.append(ym)
 
     if not pending:

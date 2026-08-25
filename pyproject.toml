@@ -41,7 +41,11 @@ include = ["workflow*"]
 [tool.setuptools.package-data]
 # Ship SLURM/config templates that live inside the model packages.
 "workflow.models.schism" = [
-    "templates/slurm/*.sbatch",
-    "templates/config/*.yaml",
-    "templates/auto_hotstart.py",
+  "templates/slurm/*.sbatch",
+  "templates/config/*.yaml",
+  "templates/auto_hotstart.py",
+]
+"workflow.models.ufs_schism" = [
+  "templates/slurm/*.sbatch",
+  "templates/config/*.yaml",
 ]

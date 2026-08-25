@@ -1,0 +1,11 @@
+# ufs_schism.yaml — UFS-SCHISM specific settings (Slice A)
+
+# Where to write DATM forcing in each monthly I dir
+datm_subdir: forcing
+datm_filename_template: "datm_{YYYYMM}.nc"
+
+# DATM time axis: seconds since first day of month 00Z
+datm_time_units_template: "seconds since {YYYY}-{MM}-01 00:00:00"
+
+# Fill value used for DATM vars
+datm_fill_value: -9999.0

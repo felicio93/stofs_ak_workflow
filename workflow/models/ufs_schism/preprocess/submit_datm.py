@@ -5,7 +5,7 @@ from workflow.core.slurm import SlurmSubmitter, write_manifest
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates" / "slurm"
 
-def submit_gen_datm(cfg: dict, config_dir: Path) -> str:
+def submit_gen_datm(cfg: dict, config_dir: Path, after_jobid: str = "") -> str:
     pid = cfg["project_id"]
     mdir = model_dir(cfg)
     months = list_months(cfg)
@@ -30,6 +30,8 @@ def submit_gen_datm(cfg: dict, config_dir: Path) -> str:
         return ""
 
     manifest = write_manifest(pending, logdir / "gen_datm_months.manifest")
+
+    dependency = f"afterok:{after_jobid}" if after_jobid else None
 
     slurm = cfg.get("slurm", {})
     subs = {

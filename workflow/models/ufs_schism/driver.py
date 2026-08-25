@@ -17,11 +17,12 @@ class UfsSchismDriver(ModelDriver):
             print("[SKIP] download_era5")
 
         # Reuse existing SCHISM gen_sflux
+        sflux_jid = None
         if en("gen_sflux"):
             print("[STEP] gen_sflux (reuse SCHISM gen_sflux)")
             from workflow.models.schism.preprocess.submit_era5 import submit_gen_sflux
-            jid = submit_gen_sflux(cfg, config_dir)
-            if jid: slurm_jobs.append(jid)
+            sflux_jid = submit_gen_sflux(cfg, config_dir)
+            if sflux_jid: slurm_jobs.append(sflux_jid)
         else:
             print("[SKIP] gen_sflux")
 
@@ -30,7 +31,7 @@ class UfsSchismDriver(ModelDriver):
         if en("gen_datm"):
             print("[STEP] gen_datm (sflux -> DATM)")
             from workflow.models.ufs_schism.preprocess.submit_datm import submit_gen_datm
-            datm_jid = submit_gen_datm(cfg, config_dir)
+            datm_jid = submit_gen_datm(cfg, config_dir, after_jobid=sflux_jid)
             if datm_jid: slurm_jobs.append(datm_jid)
         else:
             print("[SKIP] gen_datm")

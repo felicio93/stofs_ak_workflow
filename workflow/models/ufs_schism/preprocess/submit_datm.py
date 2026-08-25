@@ -51,5 +51,4 @@ def submit_gen_datm(cfg: dict, config_dir: Path) -> str:
     submitter = SlurmSubmitter(TEMPLATES_DIR)
     print(f"  Submitting gen_datm: {len(pending)} month(s) ({pending[0]} -> {pending[-1]})")
     out = submitter.render_and_submit("gen_datm.sbatch", subs, logdir / "gen_datm.sbatch", dependency=dependency)
-    return SlurmSubmitter.parse_jobid(out)")
     return SlurmSubmitter.parse_jobid(out)

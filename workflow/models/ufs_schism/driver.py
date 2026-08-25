@@ -48,7 +48,22 @@ class UfsSchismDriver(ModelDriver):
         return slurm_jobs
 
     def run(self, only: str = None):
+        if not self.enabled("setup_run") and not self.enabled("submit_run"):
+            print("All run phase steps are disabled. Skipping run phase.")
+            return
+
         raise NotImplementedError("Slice A only: run phase not implemented for ufs_schism yet.")
 
     def postprocess(self, only: str = None):
+        postprocess_steps = {
+            "plot_outputs", "station_skill", "download_coops", "download_ndbc",
+            "compare_sst", "download_sst", "diag_run_plots", "download_argo",
+            "collocate_argo", "plot_argo"
+        }
+        any_enabled = any(self.enabled(step) for step in postprocess_steps)
+
+        if not any_enabled and only is None:
+            print("All postprocessing phase steps are disabled. Skipping postprocessing phase.")
+            return
+
         raise NotImplementedError("Slice A only: postprocess not implemented for ufs_schism yet.")

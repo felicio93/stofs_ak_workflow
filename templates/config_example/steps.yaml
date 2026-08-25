@@ -26,6 +26,7 @@ aggregate_hycom: false  # Concatenate HYCOM daily -> monthly SCHISM stacks
 plot_hycom: false   # HYCOM debug GIFs (temperature, salinity, ssh)
 plot_sflux:     false   # ERA5/sflux debug GIFs (6-hourly, all variables)
 gen_datm: false   # Convert SCHISM sflux -> CDEPS DATM forcing NetCDF (UFS-SCHISM)
+plot_datm: false   # DATM debug GIFs (6-hourly, all variables)
 
 # Phase 3 — SCHISM preprocessing (no internet required):
 # Run gen_estuary first (once, interactive) before submitting SLURM steps.

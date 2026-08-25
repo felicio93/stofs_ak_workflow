@@ -26,13 +26,23 @@ class UfsSchismDriver(ModelDriver):
             print("[SKIP] gen_sflux")
 
         # New: convert sflux -> DATM
+        datm_jid = None
         if en("gen_datm"):
             print("[STEP] gen_datm (sflux -> DATM)")
             from workflow.models.ufs_schism.preprocess.submit_datm import submit_gen_datm
-            jid = submit_gen_datm(cfg, config_dir)
-            if jid: slurm_jobs.append(jid)
+            datm_jid = submit_gen_datm(cfg, config_dir)
+            if datm_jid: slurm_jobs.append(datm_jid)
         else:
             print("[SKIP] gen_datm")
+
+        # New: plot DATM
+        if en("plot_datm"):
+            print("[STEP] plot_datm (DATM debug plots)")
+            from workflow.models.ufs_schism.preprocess.submit_plot_datm import submit_plot_datm
+            jid = submit_plot_datm(cfg, config_dir, after_jobid=datm_jid)
+            if jid: slurm_jobs.append(jid)
+        else:
+            print("[SKIP] plot_datm")
 
         return slurm_jobs
 

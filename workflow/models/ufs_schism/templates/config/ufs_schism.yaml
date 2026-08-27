@@ -9,3 +9,6 @@ datm_time_units_template: "seconds since {YYYY}-{MM}-01 00:00:00"
 
 # Fill value used for DATM vars
 datm_fill_value: -9999.0
+
+# Atmospheric model time step (seconds)
+dt_atmos: 720

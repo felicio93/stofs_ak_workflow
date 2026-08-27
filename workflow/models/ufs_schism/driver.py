@@ -74,6 +74,32 @@ class UfsSchismDriver(ModelDriver):
         else:
             print("[SKIP] gen_datm_streams")
 
+        # New: copy fd_ufs.yaml
+        if en("copy_fd_ufs"):
+            print("[STEP] copy_fd_ufs (Copy fd_ufs.yaml)")
+            from workflow.models.ufs_schism.preprocess.copy_fd_ufs import copy_fd_ufs_to_months
+            copy_fd_ufs_to_months(cfg)
+        else:
+            print("[SKIP] copy_fd_ufs")
+
+        # New: copy noahmptable.tbl
+        if en("copy_noahmptable"):
+            print("[STEP] copy_noahmptable (Copy noahmptable.tbl)")
+            from workflow.models.ufs_schism.preprocess.copy_noahmptable import copy_noahmptable_to_months
+            copy_noahmptable_to_months(cfg)
+        else:
+            print("[SKIP] copy_noahmptable")
+
+        # New: generate model_configure
+        if en("gen_model_configure"):
+            print("[STEP] gen_model_configure (Generate model_configure file)")
+            from workflow.core.config import list_months
+            from workflow.models.ufs_schism.preprocess.gen_model_configure import gen_model_configure_month
+            for ym in list_months(cfg):
+                gen_model_configure_month(cfg, ym)
+        else:
+            print("[SKIP] gen_model_configure")
+
         return slurm_jobs
 
     def run(self, only: str = None):

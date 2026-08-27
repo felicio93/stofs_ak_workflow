@@ -45,6 +45,15 @@ class UfsSchismDriver(ModelDriver):
         else:
             print("[SKIP] plot_datm")
 
+        # New: generate ESMF mesh
+        if en("gen_esmf_mesh"):
+            print("[STEP] gen_esmf_mesh (Generate ESMF mesh file)")
+            from workflow.models.ufs_schism.preprocess.submit_esmf_mesh import submit_gen_esmf_mesh
+            jid = submit_gen_esmf_mesh(cfg, config_dir, after_jobid=datm_jid)
+            if jid: slurm_jobs.append(jid)
+        else:
+            print("[SKIP] gen_esmf_mesh")
+
         return slurm_jobs
 
     def run(self, only: str = None):

@@ -29,6 +29,7 @@ gen_datm: false   # Convert SCHISM sflux -> CDEPS DATM forcing NetCDF (UFS-SCHIS
 plot_datm: false   # DATM debug GIFs (6-hourly, all variables)
 gen_esmf_mesh: false # Generate ESMF mesh file from DATM grid
 gen_datm_in: false   # Generate datm_in file from template
+gen_datm_streams: false # Generate datm.streams file from template
 
 # Phase 3 — SCHISM preprocessing (no internet required):
 # Run gen_estuary first (once, interactive) before submitting SLURM steps.

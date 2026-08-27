@@ -54,6 +54,16 @@ class UfsSchismDriver(ModelDriver):
         else:
             print("[SKIP] gen_esmf_mesh")
 
+        # New: generate datm_in
+        if en("gen_datm_in"):
+            print("[STEP] gen_datm_in (Generate datm_in file)")
+            from workflow.core.config import list_months
+            from workflow.models.ufs_schism.preprocess.gen_datm_in import gen_datm_in_month
+            for ym in list_months(cfg):
+                gen_datm_in_month(cfg, ym)
+        else:
+            print("[SKIP] gen_datm_in")
+
         return slurm_jobs
 
     def run(self, only: str = None):

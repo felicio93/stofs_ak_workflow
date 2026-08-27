@@ -44,8 +44,7 @@ def gen_esmf_mesh(cfg: dict, ym: str):
         print(f"ERROR: DATM forcing file not found: {datm_path}")
         sys.exit(1)
 
-    print(f"
---- gen_esmf_mesh {ym} -> {out_path} ---")
+    print(f"--- gen_esmf_mesh {ym} -> {out_path} ---")
 
     with nc4.Dataset(datm_path) as ds:
         lon2d = ds.variables["longitude"][:]

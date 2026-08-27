@@ -100,6 +100,24 @@ class UfsSchismDriver(ModelDriver):
         else:
             print("[SKIP] gen_model_configure")
 
+        # New: copy modulefiles
+        if en("copy_modulefiles"):
+            print("[STEP] copy_modulefiles (Copy .lua modulefiles)")
+            from workflow.models.ufs_schism.preprocess.copy_modulefiles import copy_modulefiles_to_months
+            copy_modulefiles_to_months(cfg)
+        else:
+            print("[SKIP] copy_modulefiles")
+
+        # New: generate ufs.configure
+        if en("gen_ufs_configure"):
+            print("[STEP] gen_ufs_configure (Generate ufs.configure file)")
+            from workflow.core.config import list_months
+            from workflow.models.ufs_schism.preprocess.gen_ufs_configure import gen_ufs_configure_month
+            for ym in list_months(cfg):
+                gen_ufs_configure_month(cfg, ym)
+        else:
+            print("[SKIP] gen_ufs_configure")
+
         return slurm_jobs
 
     def run(self, only: str = None):

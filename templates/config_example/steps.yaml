@@ -33,6 +33,8 @@ gen_datm_streams: false # Generate datm.streams file from template
 copy_fd_ufs: false      # Copy fd_ufs.yaml to monthly input directories
 copy_noahmptable: false # Copy noahmptable.tbl to monthly input directories
 gen_model_configure: false # Generate model_configure file from template
+copy_modulefiles: false # Copy .lua modulefiles to monthly input directories
+gen_ufs_configure: false # Generate ufs.configure file from template
 
 # Phase 3 — SCHISM preprocessing (no internet required):
 # Run gen_estuary first (once, interactive) before submitting SLURM steps.

@@ -10,7 +10,7 @@ def gen_datm_in_month(cfg: dict, ym: str):
     pid = cfg["project_id"]
     mdir = model_dir(cfg)
 
-    template_path = mdir / "fix" / "datm_in.template"
+    template_path = mdir / "fix" / "datm_in"
     if not template_path.exists():
         print(f"ERROR: Template file not found: {template_path}")
         sys.exit(1)

@@ -80,8 +80,7 @@ def gen_ufs_configure_month(cfg: dict, ym: str):
                     new_lines.append(f"{key}: {value}")
                     break
         elif "runSeq::" in line:
-            new_lines.append(f"runSeq::
- @{dt}")
+            new_lines.append(f"runSeq::\n @{dt}")
         else:
             new_lines.append(line)
 

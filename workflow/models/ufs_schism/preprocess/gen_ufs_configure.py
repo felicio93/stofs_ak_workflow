@@ -75,12 +75,13 @@ def gen_ufs_configure_month(cfg: dict, ym: str):
     new_lines = []
     for line in lines:
         if "runSeq::" in line:
-            new_lines.append(f"runSeq::\n @{dt}")
+            new_lines.append(f"runSeq::\n@{dt}")
         else:
             found = False
             for key, value in replacements.items():
                 if key in line:
-                    new_lines.append(f"{key}: {value}")
+                    key_part = line.split(":")[0]
+                    new_lines.append(f"{key_part}: {value}")
                     found = True
                     break
             if not found:

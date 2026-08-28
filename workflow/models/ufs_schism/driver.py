@@ -4,6 +4,7 @@ class UfsSchismDriver(ModelDriver):
     name = "UFS_SCHISM"
 
     def preprocess(self, only: str = None):
+        from workflow.core.config import model_dir, list_months
         cfg, config_dir = self.cfg, self.config_dir
         en = lambda step: self.enabled(step, only)
         slurm_jobs = []

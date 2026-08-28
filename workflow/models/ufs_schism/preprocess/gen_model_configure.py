@@ -32,7 +32,7 @@ def gen_model_configure_month(cfg: dict, ym: str):
     content = template_path.read_text()
     content = re.sub(r"^(start_year\s*:\s*).+$", f"\1{year}", content, flags=re.MULTILINE)
     content = re.sub(r"^(start_month\s*:\s*).+$", f"\1{month}", content, flags=re.MULTILINE)
-    content = re.sub(r"^(start_day\s*:\s*).+$", r"\11", content, flags=re.MULTILINE)
+    content = re.sub(r"^(start_day\s*:\s*).+$", r"\\11", content, flags=re.MULTILINE)
     content = re.sub(r"^(start_hour\s*:\s*).+$", r"\10", content, flags=re.MULTILINE)
     content = re.sub(r"^(nhours_fcst\s*:\s*).+$", f"\1{nhours}", content, flags=re.MULTILINE)
     content = re.sub(r"^(dt_atmos\s*:\s*).+$", f"\1{dt_atmos}", content, flags=re.MULTILINE)

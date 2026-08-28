@@ -9,7 +9,7 @@ def gen_datm_streams_month(cfg: dict, ym: str):
     mdir = model_dir(cfg)
     year = ym[:4]
 
-    template_path = mdir / "fix" / "datm.streams.template"
+    template_path = mdir / "fix" / "datm.streams"
     if not template_path.exists():
         print(f"ERROR: Template file not found: {template_path}")
         sys.exit(1)

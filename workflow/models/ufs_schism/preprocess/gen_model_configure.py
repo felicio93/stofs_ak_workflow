@@ -11,7 +11,7 @@ def gen_model_configure_month(cfg: dict, ym: str):
     year = int(ym[:4])
     month = int(ym[4:])
 
-    template_path = mdir / "fix" / "model_configure.template"
+    template_path = mdir / "fix" / "model_configure"
     if not template_path.exists():
         print(f"ERROR: Template file not found: {template_path}")
         sys.exit(1)

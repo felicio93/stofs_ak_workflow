@@ -19,6 +19,13 @@ def read_param_nml(mdir: Path) -> dict:
         params[key] = value.split('!')[0].strip()
     return params
 
+def _set_nems_value(text: str, key: str, value) -> str:
+    pattern = re.compile(f"^(\s*{key}\s*:\s*).+$", re.MULTILINE)
+    new_text, n = pattern.subn(f"\1{value}", text)
+    if n == 0:
+        print(f"  WARNING: parameter '{key}' not found in ufs.configure.")
+    return new_text
+
 def gen_ufs_configure_month(cfg: dict, ym: str):
     pid = cfg["project_id"]
     mdir = model_dir(cfg)
@@ -33,63 +40,53 @@ def gen_ufs_configure_month(cfg: dict, ym: str):
         print(f"ERROR: model_configure not found: {model_configure_path}")
         sys.exit(1)
 
-    # Read nhours_fcst from model_configure
     mc_content = model_configure_path.read_text()
     match = re.search(r"^nhours_fcst\s*:\s*(\d+)", mc_content, re.MULTILINE)
     if not match:
         print(f"ERROR: Could not find nhours_fcst in {model_configure_path}")
-        sys.exit(1)
+        return False
     nhours_fcst = int(match.group(1))
 
-    # Read dt from param.nml
     param_nml = read_param_nml(mdir)
-    dt = int(float(param_nml.get("dt", 180))) # Default to 180 if not found
-
-    replacements = {
-        "med_model": cfg.get("med_model", "cmeps"),
-        "atm_model": cfg.get("atm_model", "datm"),
-        "ocn_model": cfg.get("ocn_model", "schism"),
-        "med_petlist_bounds": cfg.get("med_petlist_bounds", "0 159"),
-        "atm_petlist_bounds": cfg.get("atm_petlist_bounds", "0 159"),
-        "ocn_petlist_bounds": cfg.get("ocn_petlist_bounds", "160 3352"),
-        "med_omp_num_threads": cfg.get("med_omp_num_threads", 1),
-        "atm_omp_num_threads": cfg.get("atm_omp_num_threads", 1),
-        "ocn_omp_num_threads": cfg.get("ocn_omp_num_threads", 1),
-        "CPLMODE": cfg.get("cpl_mode", "coastal"),
-        "meshloc": "element",
-        "coupling_config": cfg.get("coupling_config", "none"),
-        "coupling_interval_slow_sec": dt,
-        "RUNTYPE": cfg.get("run_type", "startup"),
-        "casename": cfg.get("case_name", "ufs.cpld"),
-        "RESTART_N": cfg.get("restart_n", 9999),
-        "FHMAX": nhours_fcst,
-    }
+    dt = int(float(param_nml["dt"]))
+replacements = {
+    "MED_model": cfg["med_model"],
+    "ATM_model": cfg["atm_model"],
+    "OCN_model": cfg["ocn_model"],
+    "MED_petlist_bounds": f''{cfg["med_petlist_bounds"]}''',
+    "ATM_petlist_bounds": f''{cfg["atm_petlist_bounds"]}''',
+    "OCN_petlist_bounds": f''{cfg["ocn_petlist_bounds"]}''',
+    "MED_omp_num_threads": cfg["med_omp_num_threads"],
+    "ATM_omp_num_threads": cfg["atm_omp_num_threads"],
+    "OCN_omp_num_threads": cfg["ocn_omp_num_threads"],
+    "coupling_mode": cfg["cpl_mode"],
+    "meshloc": "element",
+    "CouplingConfig": cfg["coupling_config"],
+    "start_type": cfg["run_type"],
+    "case_name": cfg["case_name"],
+    "restart_n": cfg["restart_n"],
+    "stop_n": nhours_fcst,
+}
 
     out_path = mdir / f"I{pid}" / f"I{pid}_{ym}" / "ufs.configure"
     sentinel = out_path.parent / "gen_ufs_configure.done"
 
     if sentinel.exists() and out_path.exists():
         print(f"  gen_ufs_configure: {ym} already complete. Skipping.")
-        return
+        return True
 
-    print(f"--- gen_ufs_configure {ym} -> {out_path} ---")
+    print(f"
+--- gen_ufs_configure {ym} -> {out_path} ---")
 
     content = template_path.read_text()
     for key, value in replacements.items():
-        if "petlist_bounds" in key:
-            content = re.sub(r"^({key}\s*:\s*).+$".format(key=key), r"\\1{}".format(value), content, flags=re.MULTILINE, count=1)
-        else:
-            content = re.sub(r"^({key}\s*=\s*).+$".format(key=key), r"\\1{}".format(value), content, flags=re.MULTILINE, count=1)
-        # Handle run sequence block
-        if key == "coupling_interval_slow_sec":
-             content = re.sub(r"^(runSeq::\s*@).+$", r"\\1{}".format(value), content, flags=re.MULTILINE, count=1)
+        content = _set_nems_value(content, key, value)
 
+    # Handle run sequence block separately
+    content = re.sub(r"^(runSeq::\s*@).+$", f"\1{dt}", content, flags=re.MULTILINE, count=1)
 
     out_path.write_text(content)
-    sentinel.touch()
-
-    print(f"  Wrote {out_path}")
-    print(f"  Sentinel: {sentinel}")
+    return True
 
 if __name__ == "__main__":
     import argparse
@@ -99,4 +96,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     config = load_config(Path(args.config))
-    gen_ufs_configure_month(config, args.month)
+    if gen_ufs_configure_month(config, args.month):
+        sentinel = model_dir(config) / f"I{config['project_id']}" / f"I{config['project_id']}_{args.month}" / "gen_ufs_configure.done"
+        sentinel.touch()
+        print(f"  Wrote {sentinel.parent / 'ufs.configure'}")
+        print(f"  Sentinel: {sentinel}")

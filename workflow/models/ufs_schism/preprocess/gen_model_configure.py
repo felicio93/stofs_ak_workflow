@@ -29,15 +29,25 @@ def gen_model_configure_month(cfg: dict, ym: str):
 
     print(f"--- gen_model_configure {ym} -> {out_path} ---")
 
-    content = template_path.read_text()
-    content = re.sub(r"^(start_year\s*:\s*).+$", r"\\1{}".format(year), content, flags=re.MULTILINE)
-    content = re.sub(r"^(start_month\s*:\s*).+$", r"\\1{}".format(month), content, flags=re.MULTILINE)
-    content = re.sub(r"^(start_day\s*:\s*).+$", r"\\11", content, flags=re.MULTILINE)
-    content = re.sub(r"^(start_hour\s*:\s*).+$", r"\\10", content, flags=re.MULTILINE)
-    content = re.sub(r"^(nhours_fcst\s*:\s*).+$", r"\\1{}".format(nhours), content, flags=re.MULTILINE)
-    content = re.sub(r"^(dt_atmos\s*:\s*).+$", r"\\1{}".format(dt_atmos), content, flags=re.MULTILINE)
-
-    out_path.write_text(content)
+    lines = template_path.read_text().splitlines()
+    new_lines = []
+    for line in lines:
+        if "start_year:" in line:
+            new_lines.append(f"start_year:              {year}")
+        elif "start_month:" in line:
+            new_lines.append(f"start_month:             {month}")
+        elif "start_day:" in line:
+            new_lines.append("start_day:               1")
+        elif "start_hour:" in line:
+            new_lines.append("start_hour:              0")
+        elif "nhours_fcst:" in line:
+            new_lines.append(f"nhours_fcst:             {nhours}")
+        elif "dt_atmos:" in line:
+            new_lines.append(f"dt_atmos:                {dt_atmos}")
+        else:
+            new_lines.append(line)
+    
+    out_path.write_text("\n".join(new_lines))
     sentinel.touch()
 
     print(f"  Wrote {out_path}")

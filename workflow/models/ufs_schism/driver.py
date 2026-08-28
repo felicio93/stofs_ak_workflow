@@ -127,6 +127,59 @@ class UfsSchismDriver(ModelDriver):
         else:
             print("[SKIP] gen_ufs_configure")
 
+        # --- Phase 3: SCHISM preprocessing ----------------------------------
+        if en("gen_estuary"):
+            print("[STEP] gen_estuary")
+            from workflow.models.schism.preprocess.gen_estuary import run_gen_estuary
+            run_gen_estuary(cfg)
+        else:
+            print("[SKIP] gen_estuary")
+
+        if en("gen_bctides"):
+            print("[STEP] gen_bctides")
+            from workflow.models.schism.preprocess.gen_bctides import run_gen_bctides
+            run_gen_bctides(cfg)
+        else:
+            print("[SKIP] gen_bctides")
+
+        if en("gen_source"):
+            print("[STEP] gen_source")
+            from workflow.models.schism.preprocess.gen_source import run_gen_source
+            run_gen_source(cfg)
+        else:
+            print("[SKIP] gen_source")
+
+        if en("gen_param"):
+            print("[STEP] gen_param")
+            from workflow.models.schism.preprocess.gen_param import run_gen_param
+            run_gen_param(cfg)
+        else:
+            print("[SKIP] gen_param")
+
+        if en("gen_hotstart"):
+            print("[STEP] gen_hotstart")
+            from workflow.models.schism.preprocess.gen_hycom_utils import submit_gen_hotstart
+            jid = submit_gen_hotstart(cfg, config_dir)
+            if jid: slurm_jobs.append(jid)
+        else:
+            print("[SKIP] gen_hotstart")
+
+        if en("gen_3Dth"):
+            print("[STEP] gen_3Dth")
+            from workflow.models.schism.preprocess.gen_hycom_utils import submit_gen_3Dth
+            jid = submit_gen_3Dth(cfg, config_dir)
+            if jid: slurm_jobs.append(jid)
+        else:
+            print("[SKIP] gen_3Dth")
+
+        if en("gen_nudge"):
+            print("[STEP] gen_nudge")
+            from workflow.models.schism.preprocess.gen_hycom_utils import submit_gen_nudge
+            jid = submit_gen_nudge(cfg, config_dir)
+            if jid: slurm_jobs.append(jid)
+        else:
+            print("[SKIP] gen_nudge")
+
         return slurm_jobs
 
     def run(self, only: str = None):

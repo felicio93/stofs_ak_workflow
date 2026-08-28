@@ -34,8 +34,7 @@ def gen_datm_in_month(cfg: dict, ym: str):
         print(f"  gen_datm_in: {ym} already complete. Skipping.")
         return
 
-    print(f"
---- gen_datm_in {ym} -> {out_path} ---")
+    print(f"--- gen_datm_in {ym} -> {out_path} ---")
 
     content = template_path.read_text()
     content = re.sub(r"^(model_maskfile\s*=\s*).+$", f"\\1\'{datm_subdir}/datm_esmf_mesh.nc\'", content, flags=re.MULTILINE)

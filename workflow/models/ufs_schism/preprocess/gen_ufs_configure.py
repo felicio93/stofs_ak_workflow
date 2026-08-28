@@ -84,8 +84,7 @@ def gen_ufs_configure_month(cfg: dict, ym: str):
         else:
             new_lines.append(line)
 
-    out_path.write_text("
-".join(new_lines))
+    out_path.write_text("\n".join(new_lines))
     return True
 
 if __name__ == "__main__":

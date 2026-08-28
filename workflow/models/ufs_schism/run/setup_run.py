@@ -911,15 +911,15 @@ def _setup_month(
     ):
         return False
 
-    forcing_sentinel = (
-        idir
-        / "forcing"
-        / "gen_forcing.done"
-    )
+    if not _check_sentinel(
+        idir / "forcing" / "gen_esmf_mesh.done",
+        "gen_esmf_mesh",
+    ):
+        return False
 
     if not _check_sentinel(
-        forcing_sentinel,
-        "gen_forcing",
+        idir / "forcing" / "gen_datm.done",
+        "gen_datm",
     ):
         return False
 

@@ -27,8 +27,7 @@ def gen_model_configure_month(cfg: dict, ym: str):
         print(f"  gen_model_configure: {ym} already complete. Skipping.")
         return
 
-    print(f"
---- gen_model_configure {ym} -> {out_path} ---")
+    print(f"--- gen_model_configure {ym} -> {out_path} ---")
 
     content = template_path.read_text()
     content = re.sub(r"^(start_year\s*:\s*).+$", f"\1{year}", content, flags=re.MULTILINE)

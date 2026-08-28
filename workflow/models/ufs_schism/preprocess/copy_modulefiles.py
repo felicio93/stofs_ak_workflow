@@ -17,8 +17,7 @@ def copy_modulefiles_to_months(cfg: dict):
         print("No .lua files found in bin/. Skipping copy_modulefiles.")
         return
 
-    print("
---- copy_modulefiles ---")
+    print("--- copy_modulefiles ---")
     for ym in list_months(cfg):
         dest_dir = mdir / f"I{pid}" / f"I{pid}_{ym}" / "modulefiles"
         dest_dir.mkdir(parents=True, exist_ok=True)

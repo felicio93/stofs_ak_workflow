@@ -27,8 +27,7 @@ def gen_datm_streams_month(cfg: dict, ym: str):
         print(f"  gen_datm_streams: {ym} already complete. Skipping.")
         return
 
-    print(f"
---- gen_datm_streams {ym} -> {out_path} ---")
+    print(f"--- gen_datm_streams {ym} -> {out_path} ---")
 
     content = template_path.read_text()
     content = re.sub(r"^(yearFirst01\s*=\s*).+$", f"\\1{year}", content, flags=re.MULTILINE)

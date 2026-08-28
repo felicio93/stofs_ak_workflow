@@ -12,8 +12,7 @@ def copy_fd_ufs_to_months(cfg: dict):
         print(f"ERROR: Source file not found: {source_path}")
         return
 
-    print("
---- copy_fd_ufs ---")
+    print("--- copy_fd_ufs ---")
     for ym in list_months(cfg):
         dest_dir = mdir / f"I{pid}" / f"I{pid}_{ym}"
         dest_path = dest_dir / "fd_ufs.yaml"

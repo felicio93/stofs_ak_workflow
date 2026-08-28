@@ -72,8 +72,7 @@ def gen_ufs_configure_month(cfg: dict, ym: str):
         print(f"  gen_ufs_configure: {ym} already complete. Skipping.")
         return
 
-    print(f"
---- gen_ufs_configure {ym} -> {out_path} ---")
+    print(f"--- gen_ufs_configure {ym} -> {out_path} ---")
 
     content = template_path.read_text()
     for key, value in replacements.items():

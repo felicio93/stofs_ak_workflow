@@ -12,8 +12,7 @@ def copy_noahmptable_to_months(cfg: dict):
         print(f"ERROR: Source file not found: {source_path}")
         return
 
-    print("
---- copy_noahmptable ---")
+    print("--- copy_noahmptable ---")
     for ym in list_months(cfg):
         dest_dir = mdir / f"I{pid}" / f"I{pid}_{ym}"
         dest_path = dest_dir / "noahmptable.tbl"

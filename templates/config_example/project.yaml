@@ -12,8 +12,8 @@ project_id: "01"
 #   schism       SCHISM standalone (implemented)
 #   schism_wwm   SCHISM + WWM, internally coupled (planned)
 #   schism_mice  SCHISM + MICE, internally coupled (planned)
-#   ufs_coastal  UFS-Coastal based variants (implemented)
-model_type: schism #ufs_coastal
+#   ufs_schism  UFS-Coastal based variants (implemented)
+model_type: ufs_schism #schism
 
 # Absolute path to the project directory on the HPC filesystem.
 # The workflow will create M{id}/ and all subdirectories here.

@@ -69,15 +69,13 @@ def gen_ufs_configure_month(cfg: dict, ym: str):
         print(f"  gen_ufs_configure: {ym} already complete. Skipping.")
         return True
 
-    print(f"
---- gen_ufs_configure {ym} -> {out_path} ---")
+    print(f"--- gen_ufs_configure {ym} -> {out_path} ---")
 
     lines = template_path.read_text().splitlines()
     new_lines = []
     for line in lines:
         if "runSeq::" in line:
-            new_lines.append(f"runSeq::
- @{dt}")
+            new_lines.append(f"runSeq::@{dt}")
         else:
             found = False
             for key, value in replacements.items():
@@ -88,8 +86,7 @@ def gen_ufs_configure_month(cfg: dict, ym: str):
             if not found:
                 new_lines.append(line)
 
-    out_path.write_text("
-".join(new_lines))
+    out_path.write_text("".join(new_lines))
     return True
 
 if __name__ == "__main__":

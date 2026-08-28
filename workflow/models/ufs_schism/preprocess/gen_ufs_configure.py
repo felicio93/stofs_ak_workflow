@@ -77,12 +77,12 @@ def gen_ufs_configure_month(cfg: dict, ym: str):
     content = template_path.read_text()
     for key, value in replacements.items():
         if "petlist_bounds" in key:
-            content = re.sub(f"^({key}\s*:\s*).+$", f"\\1{value}", content, flags=re.MULTILINE, count=1)
+            content = re.sub(r"^({key}\s*:\s*).+$".format(key=key), r"\\1{}".format(value), content, flags=re.MULTILINE, count=1)
         else:
-            content = re.sub(f"^({key}\s*=\s*).+$", f"\\1{value}", content, flags=re.MULTILINE, count=1)
+            content = re.sub(r"^({key}\s*=\s*).+$".format(key=key), r"\\1{}".format(value), content, flags=re.MULTILINE, count=1)
         # Handle run sequence block
         if key == "coupling_interval_slow_sec":
-             content = re.sub(r"^(runSeq::\s*@).+$", f"\\1{value}", content, flags=re.MULTILINE, count=1)
+             content = re.sub(r"^(runSeq::\s*@).+$", r"\\1{}".format(value), content, flags=re.MULTILINE, count=1)
 
 
     out_path.write_text(content)

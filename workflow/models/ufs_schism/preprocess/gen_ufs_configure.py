@@ -49,24 +49,25 @@ def gen_ufs_configure_month(cfg: dict, ym: str):
 
     param_nml = read_param_nml(mdir)
     dt = int(float(param_nml["dt"]))
-replacements = {
-    "MED_model": cfg["med_model"],
-    "ATM_model": cfg["atm_model"],
-    "OCN_model": cfg["ocn_model"],
-    "MED_petlist_bounds": f''{cfg["med_petlist_bounds"]}''',
-    "ATM_petlist_bounds": f''{cfg["atm_petlist_bounds"]}''',
-    "OCN_petlist_bounds": f''{cfg["ocn_petlist_bounds"]}''',
-    "MED_omp_num_threads": cfg["med_omp_num_threads"],
-    "ATM_omp_num_threads": cfg["atm_omp_num_threads"],
-    "OCN_omp_num_threads": cfg["ocn_omp_num_threads"],
-    "coupling_mode": cfg["cpl_mode"],
-    "meshloc": "element",
-    "CouplingConfig": cfg["coupling_config"],
-    "start_type": cfg["run_type"],
-    "case_name": cfg["case_name"],
-    "restart_n": cfg["restart_n"],
-    "stop_n": nhours_fcst,
-}
+
+    replacements = {
+        "MED_model": cfg["med_model"],
+        "ATM_model": cfg["atm_model"],
+        "OCN_model": cfg["ocn_model"],
+        "MED_petlist_bounds": f''{cfg["med_petlist_bounds"]}''',
+        "ATM_petlist_bounds": f''{cfg["atm_petlist_bounds"]}''',
+        "OCN_petlist_bounds": f''{cfg["ocn_petlist_bounds"]}''',
+        "MED_omp_num_threads": cfg["med_omp_num_threads"],
+        "ATM_omp_num_threads": cfg["atm_omp_num_threads"],
+        "OCN_omp_num_threads": cfg["ocn_omp_num_threads"],
+        "coupling_mode": cfg["cpl_mode"],
+        "meshloc": "element",
+        "CouplingConfig": cfg["coupling_config"],
+        "start_type": cfg["run_type"],
+        "case_name": cfg["case_name"],
+        "restart_n": cfg["restart_n"],
+        "stop_n": nhours_fcst,
+    }
 
     out_path = mdir / f"I{pid}" / f"I{pid}_{ym}" / "ufs.configure"
     sentinel = out_path.parent / "gen_ufs_configure.done"

@@ -11,7 +11,7 @@ class UfsSchismDriver(ModelDriver):
         # Reuse existing downloads
         if en("download_era5"):
             print("[STEP] download_era5")
-            from workflow.downloaders.era5 import run_download_era5
+            from workflow.core.config import model_dir, list_months
             run_download_era5(cfg)
         else:
             print("[SKIP] download_era5")

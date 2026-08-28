@@ -19,13 +19,6 @@ def read_param_nml(mdir: Path) -> dict:
         params[key] = value.split('!')[0].strip()
     return params
 
-def _set_nems_value(text: str, key: str, value) -> str:
-    pattern = re.compile(f"^(\s*{key}\s*:\s*).+$", re.MULTILINE)
-    new_text, n = pattern.subn(f"\1{value}", text)
-    if n == 0:
-        print(f"  WARNING: parameter '{key}' not found in ufs.configure.")
-    return new_text
-
 def gen_ufs_configure_month(cfg: dict, ym: str):
     pid = cfg["project_id"]
     mdir = model_dir(cfg)
@@ -54,9 +47,9 @@ def gen_ufs_configure_month(cfg: dict, ym: str):
         "MED_model": cfg["med_model"],
         "ATM_model": cfg["atm_model"],
         "OCN_model": cfg["ocn_model"],
-        "MED_petlist_bounds": f'{cfg["med_petlist_bounds"]}',
-        "ATM_petlist_bounds": f'{cfg["atm_petlist_bounds"]}',
-        "OCN_petlist_bounds": f'{cfg["ocn_petlist_bounds"]}',
+        "MED_petlist_bounds": cfg["med_petlist_bounds"],
+        "ATM_petlist_bounds": cfg["atm_petlist_bounds"],
+        "OCN_petlist_bounds": cfg["ocn_petlist_bounds"],
         "MED_omp_num_threads": cfg["med_omp_num_threads"],
         "ATM_omp_num_threads": cfg["atm_omp_num_threads"],
         "OCN_omp_num_threads": cfg["ocn_omp_num_threads"],
@@ -76,16 +69,25 @@ def gen_ufs_configure_month(cfg: dict, ym: str):
         print(f"  gen_ufs_configure: {ym} already complete. Skipping.")
         return True
 
-    print(f"--- gen_ufs_configure {ym} -> {out_path} ---")
+    print(f"
+--- gen_ufs_configure {ym} -> {out_path} ---")
 
-    content = template_path.read_text()
-    for key, value in replacements.items():
-        content = _set_nems_value(content, key, value)
+    lines = template_path.read_text().splitlines()
+    new_lines = []
+    for line in lines:
+        if any(key in line for key in replacements):
+            for key, value in replacements.items():
+                if key in line:
+                    new_lines.append(f"{key}: {value}")
+                    break
+        elif "runSeq::" in line:
+            new_lines.append(f"runSeq::
+ @{dt}")
+        else:
+            new_lines.append(line)
 
-    # Handle run sequence block separately
-    content = re.sub(r"^(runSeq::\s*@).+$", f"\1{dt}", content, flags=re.MULTILINE, count=1)
-
-    out_path.write_text(content)
+    out_path.write_text("
+".join(new_lines))
     return True
 
 if __name__ == "__main__":

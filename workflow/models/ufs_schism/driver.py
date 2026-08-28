@@ -183,11 +183,8 @@ class UfsSchismDriver(ModelDriver):
         return slurm_jobs
 
     def run(self, only: str = None):
-        if not self.enabled("setup_run") and not self.enabled("submit_run"):
-            print("All run phase steps are disabled. Skipping run phase.")
-            return
-
-        raise NotImplementedError("Slice A only: run phase not implemented for ufs_schism yet.")
+        from workflow.models.ufs_schism.run.run_manager import run_phase
+        run_phase(self.cfg, self.config_dir, only=only)
 
     def postprocess(self, only: str = None):
         postprocess_steps = {

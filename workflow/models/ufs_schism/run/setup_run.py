@@ -4,13 +4,12 @@ models/ufs_schism/run/setup_run.py
 
 Phase 4, step "setup_run".
 
-Populates each R{ID}_YYYYMM/ run directory so a UFS-SCHISM month can be
-launched.
+Populates each R{ID}_YYYYMM/ run directory so a UFS-SCHISM month can
+be launched.
 
-This follows the SCHISM setup_run implementation as closely as possible.
-The main UFS-SCHISM-specific differences are:
+UFS-SCHISM-specific behavior:
 
-  * forcing/ replaces sflux/
+  * forcing/ replaces the SCHISM sflux/ directory.
   * UFS-specific monthly inputs are linked from I{ID}_YYYYMM/:
       datm_in
       datm.streams
@@ -18,15 +17,15 @@ The main UFS-SCHISM-specific differences are:
       noahmptable.tbl
       model_configure
       ufs.configure
-  * the UFS-SCHISM executable is copied from bin/
+  * The UFS-SCHISM executable is copied from bin/.
+  * combine_hotstart7 is copied into outputs/.
 
-Everything else intentionally follows the SCHISM run-phase logic, including:
+The remainder intentionally follows the SCHISM setup_run behavior:
 
   * fix/ freshness checks
   * static fix/ symlinks
   * monthly input symlinks
   * month-1 hotstart handling
-  * SCHISM executable deployment
   * outputs/ placeholders
   * combine_hotstart7
   * run_test
@@ -35,6 +34,10 @@ Everything else intentionally follows the SCHISM run-phase logic, including:
   * auto_hotstart.py rendering
   * diagnostic support
   * resume/sentinel behavior
+
+Sentinel:
+
+    R{ID}_YYYYMM/setup_run.done
 """
 
 import re
@@ -47,6 +50,13 @@ from pathlib import Path
 from workflow.core.config import list_months, model_dir
 from workflow.core.environment import env_python
 
+
+# =============================================================================
+# Templates
+# =============================================================================
+
+# Reuse the existing SCHISM run templates because UFS-SCHISM uses the same
+# auto_hotstart and diagnostic infrastructure.
 TEMPLATE_DIR = (
     Path(__file__).resolve().parent.parent.parent
     / "schism"
@@ -82,11 +92,7 @@ FIX_LINKS = [
 
 
 # =============================================================================
-# Monthly inputs from I{ID}_YYYYMM/
-#
-# These are required.
-#
-# UFS-SCHISM uses "forcing/" instead of the SCHISM "sflux/" directory.
+# Required monthly files from I{ID}_YYYYMM/
 # =============================================================================
 
 INPUT_LINKS = [
@@ -101,7 +107,7 @@ INPUT_LINKS = [
     "TEM_nu.nc",
     "SAL_nu.nc",
 
-    # UFS-SCHISM inputs
+    # UFS-SCHISM monthly inputs
     "datm_in",
     "datm.streams",
     "fd_ufs.yaml",
@@ -115,6 +121,9 @@ INPUT_LINKS = [
 # Files SCHISM/UFS-SCHISM expects under outputs/
 # =============================================================================
 
+# SCHISM opens staout files according to the configured tracer count.
+# Creating 1..20 covers the common configurations and extra empty files are
+# harmless.
 OUTPUT_PLACEHOLDERS = (
     [f"staout_{i}" for i in range(1, 21)]
     + ["flux.out"]
@@ -122,9 +131,19 @@ OUTPUT_PLACEHOLDERS = (
 
 
 # =============================================================================
-# fix/ freshness checks
+# Freshness checks
 # =============================================================================
 
+# fix/ source -> generated/deployed counterpart
+#
+# param.nml:
+#     fix/param.nml -> I{ID}_YYYYMM/param.nml
+#
+# run_test/run_comb:
+#     fix/run_test -> R{ID}_YYYYMM/run_test
+#     fix/run_comb -> R{ID}_YYYYMM/run_comb
+#
+# Executables are handled separately below.
 _FIX_FRESHNESS_CHECKS = {
     "param.nml": ("idir", "param.nml"),
     "run_test": ("rdir", "run_test"),
@@ -132,21 +151,28 @@ _FIX_FRESHNESS_CHECKS = {
 }
 
 
-def _mtime(p: Path) -> float:
-    """Return mtime of a path, following symlinks. -inf if missing."""
+def _mtime(path: Path) -> float:
+    """
+    Return modification time, following symlinks.
+
+    Missing/unstatable files return -inf.
+    """
     try:
-        return p.stat().st_mtime
+        return path.stat().st_mtime
     except OSError:
         return float("-inf")
 
 
-def _fmt_mtime(p: Path) -> str:
-    t = _mtime(p)
+def _fmt_mtime(path: Path) -> str:
+    """Return a human-readable modification time."""
+    t = _mtime(path)
 
     if t == float("-inf"):
         return "(missing)"
 
-    return datetime.fromtimestamp(t).strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.fromtimestamp(t).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
 
 
 def check_fix_freshness(
@@ -155,9 +181,15 @@ def check_fix_freshness(
     ym: str,
 ) -> list:
     """
-    Compare fix/ source files against their derived counterparts.
+    Compare fix/ and bin/ source files against their deployed/generated
+    counterparts for a month.
 
-    This is intentionally the same behavior as the SCHISM version.
+    Returns warning strings for files where the source is newer.
+
+    Important:
+      * param.nml freshness is informational but setup_run will refuse to
+        proceed until the generated param.nml is regenerated.
+      * run_test/run_comb and executables can be automatically redeployed.
     """
 
     pid = cfg["project_id"]
@@ -170,8 +202,12 @@ def check_fix_freshness(
 
     warnings = []
 
-    # fix/ -> I{ID} / R{ID}
+    # ------------------------------------------------------------------
+    # fix/ -> generated/deployed files
+    # ------------------------------------------------------------------
+
     for fix_name, (dest_key, dest_name) in _FIX_FRESHNESS_CHECKS.items():
+
         src = fix / fix_name
 
         if not src.exists():
@@ -189,23 +225,30 @@ def check_fix_freshness(
                 f"{dest_dir.name}/{dest_name} ({_fmt_mtime(dst)})."
             )
 
-    # UFS executable -> R directory
-    executable_name = cfg.get("executable")
+    # ------------------------------------------------------------------
+    # UFS-SCHISM executable
+    # ------------------------------------------------------------------
 
-    if executable_name:
-        src_exe = bind / executable_name
-        dst_exe = rdir / executable_name
+    executables = cfg.get("executables", {})
+
+    ufs_exe = executables.get("ufs_schism")
+
+    if ufs_exe:
+        src_exe = bind / ufs_exe
+        dst_exe = rdir / ufs_exe
 
         if src_exe.exists() and dst_exe.exists():
             if _mtime(src_exe) > _mtime(dst_exe):
                 warnings.append(
-                    f"  bin/{executable_name} ({_fmt_mtime(src_exe)}) is "
-                    f"NEWER than the copy in {rdir.name}/ "
+                    f"  bin/{ufs_exe} ({_fmt_mtime(src_exe)}) is NEWER "
+                    f"than the copy in {rdir.name}/ "
                     f"({_fmt_mtime(dst_exe)})."
                 )
 
-    # combine executable, if configured
-    executables = cfg.get("executables", {})
+    # ------------------------------------------------------------------
+    # combine_hotstart executable
+    # ------------------------------------------------------------------
+
     combine_exe = executables.get("combine_hotstart")
 
     if combine_exe:
@@ -215,22 +258,136 @@ def check_fix_freshness(
         if src_combine.exists() and dst_combine.exists():
             if _mtime(src_combine) > _mtime(dst_combine):
                 warnings.append(
-                    f"  bin/{combine_exe} ({_fmt_mtime(src_combine)}) is "
-                    f"NEWER than the copy in {rdir.name}/outputs/ "
+                    f"  bin/{combine_exe} ({_fmt_mtime(src_combine)}) "
+                    f"is NEWER than the copy in "
+                    f"{rdir.name}/outputs/ "
                     f"({_fmt_mtime(dst_combine)})."
                 )
 
     return warnings
 
 
+def _param_is_stale(
+    cfg: dict,
+    mdir: Path,
+    ym: str,
+) -> bool:
+    """
+    Return True when fix/param.nml is newer than the generated monthly
+    I{ID}_YYYYMM/param.nml.
+
+    This situation requires gen_param to be rerun rather than allowing
+    setup_run to silently deploy stale generated input.
+    """
+
+    pid = cfg["project_id"]
+
+    src = mdir / "fix" / "param.nml"
+    dst = (
+        mdir
+        / f"I{pid}"
+        / f"I{pid}_{ym}"
+        / "param.nml"
+    )
+
+    if not src.exists() or not dst.exists():
+        return False
+
+    return _mtime(src) > _mtime(dst)
+
+
+def _deployment_is_stale(
+    cfg: dict,
+    mdir: Path,
+    ym: str,
+) -> bool:
+    """
+    Return True if an existing run directory needs setup_run to redeploy
+    files.
+
+    These are safe for setup_run to regenerate automatically:
+
+      * run_test
+      * run_comb
+      * UFS executable
+      * combine executable
+    """
+
+    pid = cfg["project_id"]
+
+    fix = mdir / "fix"
+    bind = mdir / "bin"
+
+    rdir = (
+        mdir
+        / f"R{pid}"
+        / f"R{pid}_{ym}"
+    )
+
+    # run_test
+    src = fix / "run_test"
+    dst = rdir / "run_test"
+
+    if src.exists() and dst.exists():
+        if _mtime(src) > _mtime(dst):
+            return True
+
+    # run_comb
+    src = fix / "run_comb"
+    dst = rdir / "run_comb"
+
+    if src.exists() and dst.exists():
+        if _mtime(src) > _mtime(dst):
+            return True
+
+    executables = cfg.get("executables", {})
+
+    # UFS executable
+    ufs_exe = executables.get("ufs_schism")
+
+    if ufs_exe:
+        src = bind / ufs_exe
+        dst = rdir / ufs_exe
+
+        if src.exists() and dst.exists():
+            if _mtime(src) > _mtime(dst):
+                return True
+
+    # combine executable
+    combine_exe = executables.get("combine_hotstart")
+
+    if combine_exe:
+        src = bind / combine_exe
+        dst = rdir / "outputs" / combine_exe
+
+        if src.exists() and dst.exists():
+            if _mtime(src) > _mtime(dst):
+                return True
+
+    return False
+
+
 # =============================================================================
 # Namelist helper
 # =============================================================================
 
-def _read_nml_int(nml_path: Path, param: str):
+def _read_nml_int(
+    nml_path: Path,
+    param: str,
+):
+    """
+    Read an integer-valued namelist parameter.
+
+    Supports values such as:
+
+        nhot_write = 168480
+        nhot_write = 168480 ! comment
+        nhot_write = 168480.0
+    """
+
     text = nml_path.read_text()
 
-    m = re.search(
+    match = re.search(
         r"^\s*"
         + re.escape(param)
         + r"\s*=\s*([^\s!]+)",
@@ -238,11 +395,11 @@ def _read_nml_int(nml_path: Path, param: str):
         re.IGNORECASE | re.MULTILINE,
     )
 
-    if not m:
+    if not match:
         return None
 
     try:
-        return int(float(m.group(1)))
+        return int(float(match.group(1)))
     except ValueError:
         return None
 
@@ -251,7 +408,11 @@ def _read_nml_int(nml_path: Path, param: str):
 # Job-card helpers
 # =============================================================================
 
-def _set_sbatch_jobname(text: str, jobname: str) -> str:
+def _set_sbatch_jobname(
+    text: str,
+    jobname: str,
+) -> str:
+    """Replace #SBATCH -J value."""
     return re.sub(
         r"(#SBATCH\s+-J\s+)(\S+)",
         rf"\g<1>{jobname}",
@@ -259,7 +420,11 @@ def _set_sbatch_jobname(text: str, jobname: str) -> str:
     )
 
 
-def _set_sbatch_workdir(text: str, workdir: str) -> str:
+def _set_sbatch_workdir(
+    text: str,
+    workdir: str,
+) -> str:
+    """Replace #SBATCH -D value."""
     return re.sub(
         r"(#SBATCH\s+-D\s+)(\S+)",
         rf"\g<1>{workdir}",
@@ -273,24 +438,58 @@ def _set_combine_command(
     step: int,
 ) -> str:
     """
-    Normalize the combine_hotstart7 invocation.
+    Normalize the combine_hotstart invocation.
 
-    combine_hotstart7 expects its inputs in the current working directory,
-    which is outputs/.
+    combine_hotstart7 reads its per-rank files from the current working
+    directory and writes the combined hotstart there.
+
+    run_comb is therefore configured to run with:
+
+        #SBATCH -D ./outputs
+
+    and invoke:
+
+        ./<combine_exe> -i <step>
+
+    The template may contain either the historical combine_hotstart7 name
+    or the configured executable name.
     """
 
-    pattern = re.compile(
-        r"(?:\S*/)?combine_hotstart7(?:\.exe)?\s+-i\s+\d+"
+    configured_name = Path(combine_exe).name
+
+    possible_names = {
+        "combine_hotstart7",
+        "combine_hotstart7.exe",
+        configured_name,
+    }
+
+    escaped_names = "|".join(
+        re.escape(name)
+        for name in sorted(
+            possible_names,
+            key=len,
+            reverse=True,
+        )
     )
 
-    replacement = f"./{combine_exe} -i {step}"
+    pattern = re.compile(
+        rf"(?:\S*/)?(?:{escaped_names})"
+        rf"\s+-i\s+\d+"
+    )
 
-    new_text, n = pattern.subn(replacement, text)
+    replacement = (
+        f"./{configured_name} -i {step}"
+    )
 
-    if n == 0:
+    new_text, count = pattern.subn(
+        replacement,
+        text,
+    )
+
+    if count == 0:
         print(
-            "  WARNING: no combine_hotstart7 '-i' line found in run_comb; "
-            "the combine step may not run. Check fix/run_comb."
+            "  WARNING: no combine-hotstart '-i' command found in "
+            "run_comb. Check fix/run_comb."
         )
 
     return new_text
@@ -302,26 +501,34 @@ def _set_combine_command(
 
 def _render_auto_hotstart(
     run_dir: Path,
-    subs: dict,
+    substitutions: dict,
 ):
     """
-    Render the SAME auto_hotstart.py template used by SCHISM.
+    Render the shared SCHISM/UFS-SCHISM auto_hotstart.py template.
     """
+
+    if not AUTO_HOTSTART_TEMPLATE.is_file():
+        raise FileNotFoundError(
+            f"auto_hotstart template not found: "
+            f"{AUTO_HOTSTART_TEMPLATE}"
+        )
 
     text = AUTO_HOTSTART_TEMPLATE.read_text()
 
-    for key, val in subs.items():
+    for key, value in substitutions.items():
         text = text.replace(
-            "{{" + key + "}",
-            str(val),
+            "{{" + key + "}}",
+            str(value),
         )
 
-    out = run_dir / "auto_hotstart.py"
+    output = run_dir / "auto_hotstart.py"
 
-    out.write_text(text)
+    output.write_text(text)
 
-    out.chmod(
-        out.stat().st_mode | stat.S_IXUSR
+    # Make it executable for interactive/manual use, although submit_run
+    # invokes it explicitly with sys.executable.
+    output.chmod(
+        output.stat().st_mode | stat.S_IXUSR
     )
 
 
@@ -335,6 +542,20 @@ def _render_diag_sbatch(
     rdir: Path,
     config_dir: Path,
 ) -> Path:
+    """
+    Render diag_run.sbatch into the run directory.
+
+    UFS-SCHISM uses the existing SCHISM diagnostic processor because the
+    diagnostic processing operates on the SCHISM output stack produced by
+    UFS-SCHISM.
+    """
+
+    if not DIAG_SBATCH_TEMPLATE.is_file():
+        raise FileNotFoundError(
+            f"Diagnostic sbatch template not found: "
+            f"{DIAG_SBATCH_TEMPLATE}"
+        )
+
     slurm = cfg.get("slurm", {})
     var_cfgs = cfg.get("diag_run_vars", [])
 
@@ -343,14 +564,20 @@ def _render_diag_sbatch(
         for v in var_cfgs
     ]
 
-    manifest_path = rdir / "diag_vars.manifest"
+    manifest_path = (
+        rdir / "diag_vars.manifest"
+    )
+
     manifest_path.write_text(
         "\n".join(varnames) + "\n"
     )
 
-    nvar = max(len(varnames), 1)
+    nvar = max(
+        len(varnames),
+        1,
+    )
 
-    subs = {
+    substitutions = {
         "WORKDIR": str(rdir),
         "JOBNAME": f"diag_{rdir.name}",
         "ACCOUNT": slurm.get(
@@ -389,36 +616,83 @@ def _render_diag_sbatch(
 
     text = DIAG_SBATCH_TEMPLATE.read_text()
 
-    for key, value in subs.items():
+    for key, value in substitutions.items():
         text = text.replace(
             "{{" + key + "}}",
             str(value),
         )
 
-    out = rdir / "diag_run.sbatch"
-    out.write_text(text)
+    output = (
+        rdir / "diag_run.sbatch"
+    )
 
-    return out
+    output.write_text(text)
+
+    return output
 
 
 # =============================================================================
 # Symlink helper
 # =============================================================================
 
-def _link(src: Path, dst: Path):
+def _link(
+    src: Path,
+    dst: Path,
+):
     """
     Create/refresh a symlink dst -> src.
 
-    Returns False if src does not exist.
+    Returns False when src does not exist.
+
+    A real existing directory is never deleted. This protects against
+    accidentally destroying a populated run directory.
     """
 
     if not src.exists():
         return False
 
-    if dst.exists() or dst.is_symlink():
+    if dst.is_symlink() or dst.is_file():
         dst.unlink()
 
+    elif dst.exists():
+        raise RuntimeError(
+            f"Refusing to replace existing directory or other "
+            f"non-symlink path: {dst}"
+        )
+
     dst.symlink_to(src)
+
+    return True
+
+
+# =============================================================================
+# Executable validation
+# =============================================================================
+
+def _check_executable(
+    path: Path,
+    label: str,
+) -> bool:
+    """
+    Verify that an executable exists and has user execute permission.
+    """
+
+    if not path.is_file():
+        print(
+            f"  ERROR: {label} not found: {path}"
+        )
+        return False
+
+    if not (
+        path.stat().st_mode & stat.S_IXUSR
+    ):
+        print(
+            f"  ERROR: {label} is not executable: {path}"
+        )
+        print(
+            f"    Run: chmod u+x {path}"
+        )
+        return False
 
     return True
 
@@ -442,14 +716,83 @@ def _setup_month(
     fix = mdir / "fix"
     bind = mdir / "bin"
 
-    idir = mdir / f"I{pid}" / f"I{pid}_{ym}"
-    rdir = mdir / f"R{pid}" / f"R{pid}_{ym}"
+    idir = (
+        mdir
+        / f"I{pid}"
+        / f"I{pid}_{ym}"
+    )
 
-    print(f"\n--- setup_run {ym}  ({rdir}) ---")
+    rdir = (
+        mdir
+        / f"R{pid}"
+        / f"R{pid}_{ym}"
+    )
 
-    if (rdir / "setup_run.done").exists():
-        print(f"  {ym}: already set up, skipping.")
-        return True
+    print(
+        f"\n--- setup_run {ym}  ({rdir}) ---"
+    )
+
+    # ------------------------------------------------------------------
+    # Existing setup
+    #
+    # If setup_run.done exists:
+    #
+    #   * no stale deployment -> skip
+    #   * stale param.nml -> stop and require gen_param
+    #   * stale deployment files/executables -> rebuild automatically
+    # ------------------------------------------------------------------
+
+    sentinel = (
+        rdir / "setup_run.done"
+    )
+
+    if sentinel.exists():
+
+        if _param_is_stale(
+            cfg,
+            mdir,
+            ym,
+        ):
+            print(
+                f"  ERROR {ym}: fix/param.nml is newer than "
+                f"{idir / 'param.nml'}."
+            )
+            print(
+                "    The generated monthly param.nml is stale."
+            )
+            print(
+                "    Rerun gen_param before setup_run:"
+            )
+            print(
+                "      stofs-ak --run --only gen_param "
+                "--config <cfg>"
+            )
+            return False
+
+        if _deployment_is_stale(
+            cfg,
+            mdir,
+            ym,
+        ):
+            print(
+                f"  {ym}: existing setup is stale; "
+                "refreshing deployed run files."
+            )
+
+            # Remove the sentinel now. It will only be recreated after the
+            # complete setup succeeds. This prevents a failed refresh from
+            # leaving a misleading setup_run.done behind.
+            sentinel.unlink()
+
+        else:
+            print(
+                f"  {ym}: already set up, skipping."
+            )
+            return True
+
+    # ------------------------------------------------------------------
+    # Input directory
+    # ------------------------------------------------------------------
 
     if not idir.is_dir():
         print(
@@ -464,26 +807,33 @@ def _setup_month(
 
     # ------------------------------------------------------------------
     # Executables
+    #
+    # Expected project.yaml configuration:
+    #
+    # executables:
+    #   ufs_schism: <name>
+    #   combine_hotstart: <name>
     # ------------------------------------------------------------------
 
-    executable_name = cfg.get("executable")
+    executables = cfg.get(
+        "executables",
+        {},
+    )
 
-    if not executable_name:
+    ufs_exe = executables.get(
+        "ufs_schism"
+    )
+
+    combine_exe = executables.get(
+        "combine_hotstart"
+    )
+
+    if not ufs_exe:
         print(
-            "  ERROR: 'executable' must be set in project.yaml"
+            "  ERROR: executables.ufs_schism must be set "
+            "in project.yaml"
         )
         return False
-
-    executable_path = bind / executable_name
-
-    if not executable_path.exists():
-        print(
-            f"  ERROR: Executable not found: {executable_path}"
-        )
-        return False
-
-    executables = cfg.get("executables", {})
-    combine_exe = executables.get("combine_hotstart")
 
     if not combine_exe:
         print(
@@ -492,18 +842,28 @@ def _setup_month(
         )
         return False
 
-    combine_path = bind / combine_exe
+    ufs_exe_path = (
+        bind / ufs_exe
+    )
 
-    if not combine_path.exists():
-        print(
-            f"  ERROR: combine executable not found: {combine_path}"
-        )
+    combine_exe_path = (
+        bind / combine_exe
+    )
+
+    if not _check_executable(
+        ufs_exe_path,
+        "UFS-SCHISM executable",
+    ):
+        return False
+
+    if not _check_executable(
+        combine_exe_path,
+        "combine_hotstart executable",
+    ):
         return False
 
     # ------------------------------------------------------------------
     # Required preprocessing sentinels
-    #
-    # Keep these exactly analogous to the SCHISM implementation.
     # ------------------------------------------------------------------
 
     def _check_sentinel(
@@ -512,22 +872,29 @@ def _setup_month(
     ) -> bool:
 
         if not sentinel_path.exists():
+
             print(
                 f"  ERROR {ym}: '{step}' has not completed successfully."
             )
+
             print(
                 f"    Missing sentinel: {sentinel_path}"
             )
+
             print(
-                "    Either the SLURM job is still running, or it failed."
+                "    Either the SLURM job is still running, "
+                "or it failed."
             )
+
             print(
                 f"    Re-run: stofs-ak --run --only {step} "
-                f"--config <cfg>"
+                "--config <cfg>"
             )
+
             print(
                 "    Then re-run setup_run once it completes."
             )
+
             return False
 
         return True
@@ -544,9 +911,10 @@ def _setup_month(
     ):
         return False
 
-    # UFS-SCHISM uses forcing rather than sflux.
     forcing_sentinel = (
-        idir / "forcing" / "gen_forcing.done"
+        idir
+        / "forcing"
+        / "gen_forcing.done"
     )
 
     if not _check_sentinel(
@@ -556,6 +924,7 @@ def _setup_month(
         return False
 
     if month_index == 0:
+
         if not _check_sentinel(
             idir / "gen_hotstart.done",
             "gen_hotstart",
@@ -563,114 +932,225 @@ def _setup_month(
             return False
 
     # ------------------------------------------------------------------
+    # Verify generated param.nml is not stale
+    # ------------------------------------------------------------------
+
+    if _param_is_stale(
+        cfg,
+        mdir,
+        ym,
+    ):
+        print(
+            f"  ERROR {ym}: fix/param.nml is newer than "
+            f"{idir / 'param.nml'}."
+        )
+        print(
+            "    setup_run will not deploy a stale generated param.nml."
+        )
+        print(
+            "    Rerun gen_param first:"
+        )
+        print(
+            "      stofs-ak --run --only gen_param "
+            "--config <cfg>"
+        )
+        return False
+
+    # ------------------------------------------------------------------
     # Static fix/ files
     # ------------------------------------------------------------------
 
     for name in FIX_LINKS:
-        if not _link(
-            fix / name,
-            rdir / name,
-        ):
+
+        try:
+            linked = _link(
+                fix / name,
+                rdir / name,
+            )
+        except RuntimeError as exc:
+            print(
+                f"  ERROR {ym}: {exc}"
+            )
+            return False
+
+        if not linked:
             print(
                 f"  NOTE: fix/{name} not found, skipped."
             )
 
     # ------------------------------------------------------------------
-    # Monthly inputs
+    # Required monthly files
     # ------------------------------------------------------------------
 
     for name in INPUT_LINKS:
-        if not _link(
-            idir / name,
-            rdir / name,
-        ):
+
+        src = idir / name
+        dst = rdir / name
+
+        try:
+            linked = _link(
+                src,
+                dst,
+            )
+        except RuntimeError as exc:
             print(
-                f"  ERROR {ym}: required input missing: "
-                f"{idir / name}"
+                f"  ERROR {ym}: {exc}"
+            )
+            return False
+
+        if not linked:
+            print(
+                f"  ERROR {ym}: required input missing: {src}"
             )
             return False
 
     # ------------------------------------------------------------------
     # UFS forcing directory
-    #
-    # This is the intentional UFS-SCHISM difference from SCHISM's
-    # sflux directory.
     # ------------------------------------------------------------------
 
-    if not _link(
-        idir / "forcing",
-        rdir / "forcing",
-    ):
+    forcing_src = (
+        idir / "forcing"
+    )
+
+    forcing_dst = (
+        rdir / "forcing"
+    )
+
+    try:
+        linked = _link(
+            forcing_src,
+            forcing_dst,
+        )
+    except RuntimeError as exc:
+        print(
+            f"  ERROR {ym}: {exc}"
+        )
+        return False
+
+    if not linked:
         print(
             f"  ERROR {ym}: forcing dir missing: "
-            f"{idir / 'forcing'}"
+            f"{forcing_src}"
         )
         return False
 
     # ------------------------------------------------------------------
-    # Month 1 hotstart
+    # Month-1 hotstart
+    #
+    # Later months receive hotstart.nc through auto_hotstart chaining.
     # ------------------------------------------------------------------
 
     if month_index == 0:
-        if not _link(
-            idir / "hotstart.nc",
-            rdir / "hotstart.nc",
-        ):
+
+        hotstart_src = (
+            idir / "hotstart.nc"
+        )
+
+        hotstart_dst = (
+            rdir / "hotstart.nc"
+        )
+
+        try:
+            linked = _link(
+                hotstart_src,
+                hotstart_dst,
+            )
+        except RuntimeError as exc:
+            print(
+                f"  ERROR {ym}: {exc}"
+            )
+            return False
+
+        if not linked:
             print(
                 f"  ERROR {ym}: month-1 hotstart missing: "
-                f"{idir / 'hotstart.nc'}"
+                f"{hotstart_src}"
             )
             print(
                 "    Run gen_hotstart (Phase 3) first."
             )
             return False
 
-    # Later months receive hotstart.nc from the previous month
-    # through auto_hotstart.py.
-
     # ------------------------------------------------------------------
     # Copy UFS-SCHISM executable
     # ------------------------------------------------------------------
 
-    shutil.copy2(
-        executable_path,
-        rdir / executable_name,
-    )
+    try:
+        shutil.copy2(
+            ufs_exe_path,
+            rdir / Path(ufs_exe).name,
+        )
+    except OSError as exc:
+        print(
+            f"  ERROR {ym}: failed to copy UFS-SCHISM executable: "
+            f"{exc}"
+        )
+        return False
 
     # ------------------------------------------------------------------
     # outputs/
     # ------------------------------------------------------------------
 
-    outdir = rdir / "outputs"
-
-    outdir.mkdir(
-        exist_ok=True
+    outdir = (
+        rdir / "outputs"
     )
+
+    try:
+        outdir.mkdir(
+            exist_ok=True
+        )
+    except OSError as exc:
+        print(
+            f"  ERROR {ym}: could not create {outdir}: {exc}"
+        )
+        return False
 
     for name in OUTPUT_PLACEHOLDERS:
-        f = outdir / name
 
-        if not f.exists():
-            f.touch()
+        placeholder = (
+            outdir / name
+        )
 
-    shutil.copy2(
-        combine_path,
-        outdir / combine_exe,
+        if not placeholder.exists():
+            try:
+                placeholder.touch()
+            except OSError as exc:
+                print(
+                    f"  ERROR {ym}: could not create "
+                    f"{placeholder}: {exc}"
+                )
+                return False
+
+    # Copy combine executable into outputs/.
+    try:
+        shutil.copy2(
+            combine_exe_path,
+            outdir / Path(combine_exe).name,
+        )
+    except OSError as exc:
+        print(
+            f"  ERROR {ym}: failed to copy combine executable: "
+            f"{exc}"
+        )
+        return False
+
+    # ------------------------------------------------------------------
+    # nhot_write
+    # ------------------------------------------------------------------
+
+    param_path = (
+        idir / "param.nml"
     )
 
-    # ------------------------------------------------------------------
-    # nhot_write from param.nml
-    # ------------------------------------------------------------------
-
     nhot_write = _read_nml_int(
-        idir / "param.nml",
+        param_path,
         "nhot_write",
     )
 
     if nhot_write is None:
         print(
             f"  ERROR {ym}: could not read nhot_write from "
-            f"{idir / 'param.nml'}"
+            f"{param_path}"
         )
         return False
 
@@ -682,8 +1162,19 @@ def _setup_month(
         f"R{pid}_{month_index + 1:02d}"
     )
 
+    run_test_template = (
+        fix / "run_test"
+    )
+
+    if not run_test_template.is_file():
+        print(
+            f"  ERROR {ym}: run_test not found: "
+            f"{run_test_template}"
+        )
+        return False
+
     run_test = _set_sbatch_jobname(
-        (fix / "run_test").read_text(),
+        run_test_template.read_text(),
         run_jobname,
     )
 
@@ -692,9 +1183,15 @@ def _setup_month(
         ".",
     )
 
-    (rdir / "run_test").write_text(
-        run_test
-    )
+    try:
+        (
+            rdir / "run_test"
+        ).write_text(run_test)
+    except OSError as exc:
+        print(
+            f"  ERROR {ym}: could not write run_test: {exc}"
+        )
+        return False
 
     # ------------------------------------------------------------------
     # run_comb
@@ -704,8 +1201,19 @@ def _setup_month(
         f"C{pid}_{month_index + 1:02d}"
     )
 
+    run_comb_template = (
+        fix / "run_comb"
+    )
+
+    if not run_comb_template.is_file():
+        print(
+            f"  ERROR {ym}: run_comb not found: "
+            f"{run_comb_template}"
+        )
+        return False
+
     run_comb = _set_sbatch_jobname(
-        (fix / "run_comb").read_text(),
+        run_comb_template.read_text(),
         comb_jobname,
     )
 
@@ -716,20 +1224,29 @@ def _setup_month(
 
     run_comb = _set_combine_command(
         run_comb,
-        combine_exe,
+        Path(combine_exe).name,
         nhot_write,
     )
 
-    (rdir / "run_comb").write_text(
-        run_comb
-    )
+    try:
+        (
+            rdir / "run_comb"
+        ).write_text(run_comb)
+    except OSError as exc:
+        print(
+            f"  ERROR {ym}: could not write run_comb: {exc}"
+        )
+        return False
 
     # ------------------------------------------------------------------
     # Diagnostics
     # ------------------------------------------------------------------
 
     diag_enabled = bool(
-        cfg.get("diag_run_plots", False)
+        cfg.get(
+            "diag_run_plots",
+            False,
+        )
     )
 
     diag_sbatch = ""
@@ -737,13 +1254,23 @@ def _setup_month(
     diag_nvar = 0
 
     if diag_enabled:
-        diag_sbatch = str(
-            _render_diag_sbatch(
+
+        try:
+            diag_path = _render_diag_sbatch(
                 cfg,
                 mdir,
                 rdir,
                 config_dir,
             )
+        except OSError as exc:
+            print(
+                f"  ERROR {ym}: could not render diagnostic sbatch: "
+                f"{exc}"
+            )
+            return False
+
+        diag_sbatch = str(
+            diag_path
         )
 
         diag_vars_manifest = str(
@@ -751,60 +1278,94 @@ def _setup_month(
         )
 
         diag_nvar = max(
-            len(cfg.get("diag_run_vars", [])),
+            len(
+                cfg.get(
+                    "diag_run_vars",
+                    [],
+                )
+            ),
             1,
         )
 
     # ------------------------------------------------------------------
     # auto_hotstart.py
-    #
-    # IMPORTANT:
-    # This uses the same template and same substitutions as SCHISM.
     # ------------------------------------------------------------------
 
     next_rdir = (
-        mdir / f"R{pid}" / f"R{pid}_{next_ym}"
+        mdir
+        / f"R{pid}"
+        / f"R{pid}_{next_ym}"
         if next_ym
         else None
     )
 
-    _render_auto_hotstart(
-        rdir,
-        {
-            "RUNDIR": str(rdir),
-            "NEXT_RUNDIR": (
-                f'r"{next_rdir}"'
-                if next_rdir
-                else "None"
-            ),
-            "CHAIN_HOTSTART": bool(
-                cfg.get(
-                    "chain_hotstart",
-                    True,
-                )
-            ),
-            "IS_LAST_MONTH": bool(
-                is_last
-            ),
-            "NHOT_WRITE": nhot_write,
-            "MONTH": ym,
-            "RUN_JOBNAME": run_jobname,
-            "DIAG_ENABLED": diag_enabled,
-            "DIAG_SBATCH": diag_sbatch,
-            "DIAG_VARS_MANIFEST": diag_vars_manifest,
-            "DIAG_NVAR": diag_nvar,
-        },
-    )
+    try:
+        _render_auto_hotstart(
+            rdir,
+            {
+                "RUNDIR": str(rdir),
+
+                "NEXT_RUNDIR": (
+                    f'r"{next_rdir}"'
+                    if next_rdir
+                    else "None"
+                ),
+
+                "CHAIN_HOTSTART": bool(
+                    cfg.get(
+                        "chain_hotstart",
+                        True,
+                    )
+                ),
+
+                "IS_LAST_MONTH": bool(
+                    is_last
+                ),
+
+                "NHOT_WRITE": nhot_write,
+
+                "MONTH": ym,
+
+                "RUN_JOBNAME": run_jobname,
+
+                "DIAG_ENABLED": diag_enabled,
+
+                "DIAG_SBATCH": diag_sbatch,
+
+                "DIAG_VARS_MANIFEST": (
+                    diag_vars_manifest
+                ),
+
+                "DIAG_NVAR": diag_nvar,
+            },
+        )
+
+    except OSError as exc:
+        print(
+            f"  ERROR {ym}: could not render auto_hotstart.py: "
+            f"{exc}"
+        )
+        return False
 
     # ------------------------------------------------------------------
-    # Sentinel
+    # setup_run sentinel
+    #
+    # Only create this after EVERYTHING above succeeds.
     # ------------------------------------------------------------------
 
-    (rdir / "setup_run.done").touch()
+    try:
+        sentinel.touch()
+    except OSError as exc:
+        print(
+            f"  ERROR {ym}: could not create "
+            f"{sentinel}: {exc}"
+        )
+        return False
 
     print(
         f"  {ym}: run directory ready "
-        f"(job {run_jobname}, combine step {nhot_write})."
+        f"(job {run_jobname}, "
+        f"combine step {nhot_write})."
     )
 
     return True
@@ -818,11 +1379,23 @@ def run_setup_run(
     cfg: dict,
     config_dir=None,
 ):
+    """
+    Run setup_run for every configured month.
+    """
+
     from pathlib import Path as _Path
 
     pid = cfg["project_id"]
+
     mdir = model_dir(cfg)
+
     months = list_months(cfg)
+
+    if not months:
+        print(
+            "ERROR: no months configured."
+        )
+        sys.exit(1)
 
     config_dir = (
         _Path(config_dir)
@@ -830,75 +1403,91 @@ def run_setup_run(
         else _Path(".")
     )
 
-    print(f"\n{'=' * 60}")
-    print(f"  setup_run for M{pid}")
+    print(
+        f"\n{'=' * 60}"
+    )
+
+    print(
+        f"  setup_run for M{pid}"
+    )
+
     print(
         f"  {len(months)} month(s): "
         f"{months[0]} -> {months[-1]}"
     )
+
     print(
         f"  chain_hotstart: "
         f"{bool(cfg.get('chain_hotstart', True))}"
     )
-    print(f"{'=' * 60}")
+
+    print(
+        f"{'=' * 60}"
+    )
 
     # ------------------------------------------------------------------
-    # Freshness check
+    # Freshness summary
     # ------------------------------------------------------------------
 
     all_stale = []
 
     for ym in months:
-        warns = check_fix_freshness(
+
+        warnings = check_fix_freshness(
             cfg,
             mdir,
             ym,
         )
 
-        for w in warns:
+        for warning in warnings:
             all_stale.append(
-                f"  [{ym}] {w.strip()}"
+                f"  [{ym}] {warning.strip()}"
             )
 
     if all_stale:
+
         print(
             f"\n  {'!' * 58}"
         )
 
         print(
-            "  WARNING: one or more files in fix/ are NEWER than "
-            "their derived counterparts in I{ID}_YYYYMM/ or "
-            "R{ID}_YYYYMM/."
+            "  WARNING: one or more source files are newer than "
+            "their generated/deployed counterparts."
         )
 
         print(
-            "  This usually means fix/ was edited after preprocessing "
-            "or a previous setup_run already ran."
+            "  Details:"
         )
 
-        print(
-            "  Check carefully:"
-        )
-
-        for w in all_stale:
-            print(w)
+        for warning in all_stale:
+            print(
+                warning
+            )
 
         print()
-        print("  What to do:")
 
         print(
-            "   param.nml changed -> delete "
-            "I{ID}_YYYYMM/param.nml and rerun gen_param."
+            "  Handling:"
         )
 
         print(
-            "   run_test/run_comb changed -> delete "
-            "setup_run.done for affected months and rerun setup_run."
+            "   param.nml -> setup_run will STOP for the affected "
+            "month. Rerun gen_param first."
         )
 
         print(
-            "   executable replaced in bin/ -> delete "
-            "setup_run.done and rerun setup_run."
+            "   run_test/run_comb -> setup_run will automatically "
+            "regenerate the deployed job card."
+        )
+
+        print(
+            "   UFS executable -> setup_run will automatically "
+            "recopy it into R{ID}_YYYYMM/."
+        )
+
+        print(
+            "   combine executable -> setup_run will automatically "
+            "recopy it into R{ID}_YYYYMM/outputs/."
         )
 
         print(
@@ -934,38 +1523,48 @@ def run_setup_run(
         )
 
         if not ok:
-            failed.append(ym)
+            failed.append(
+                ym
+            )
 
     # ------------------------------------------------------------------
     # Summary
     # ------------------------------------------------------------------
 
-    print(f"\n{'=' * 60}")
+    print(
+        f"\n{'=' * 60}"
+    )
 
     if not failed:
+
         print(
             "  setup_run complete. No failures."
         )
+
         print(
             "  Next: enable submit_run and run inside screen/tmux:"
         )
+
         print(
             "    stofs-ak --run --phase run "
             "--only submit_run --config <cfg>"
         )
 
     else:
+
         print(
             f"  setup_run finished with "
             f"{len(failed)} failure(s):"
         )
 
-        for m in failed:
+        for month in failed:
             print(
-                f"    {m}"
+                f"    {month}"
             )
 
-    print(f"{'=' * 60}\n")
+    print(
+        f"{'=' * 60}\n"
+    )
 
     if failed:
         sys.exit(1)
@@ -976,6 +1575,7 @@ def run_setup_run(
 # =============================================================================
 
 if __name__ == "__main__":
+
     import argparse
 
     parser = argparse.ArgumentParser(
@@ -992,12 +1592,16 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    config_dir = Path(args.config)
+    config_dir = Path(
+        args.config
+    )
 
     config = __import__(
         "workflow.core.config",
         fromlist=["load_config"],
-    ).load_config(config_dir)
+    ).load_config(
+        config_dir
+    )
 
     run_setup_run(
         config,

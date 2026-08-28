@@ -29,14 +29,23 @@ def gen_datm_streams_month(cfg: dict, ym: str):
 
     print(f"--- gen_datm_streams {ym} -> {out_path} ---")
 
-    content = template_path.read_text()
-    content = re.sub(r"^(yearFirst01\s*=\s*).+$", f"\\1{year}", content, flags=re.MULTILINE)
-    content = re.sub(r"^(yearLast01\s*=\s*).+$", f"\\1{year}", content, flags=re.MULTILINE)
-    content = re.sub(r"^(yearAlign01\s*=\s*).+$", f"\\1{year}", content, flags=re.MULTILINE)
-    content = re.sub(r"^(stream_mesh_file01\s*=\s*).+$", f"\\1\"{mesh_file}\"", content, flags=re.MULTILINE)
-    content = re.sub(r"^(stream_data_files01\s*=\s*).+$", f"\\1\"{forcing_file}\"", content, flags=re.MULTILINE)
-
-    out_path.write_text(content)
+    lines = template_path.read_text().splitlines()
+    new_lines = []
+    for line in lines:
+        if "yearFirst01:" in line:
+            new_lines.append(f"yearFirst01:               {year}")
+        elif "yearLast01:" in line:
+            new_lines.append(f"yearLast01:                {year}")
+        elif "yearAlign01:" in line:
+            new_lines.append(f"yearAlign01:               {year}")
+        elif "stream_mesh_file01:" in line:
+            new_lines.append(f'stream_mesh_file01:        "{mesh_file}"')
+        elif "stream_data_files01:" in line:
+            new_lines.append(f'stream_data_files01:       "{forcing_file}"')
+        else:
+            new_lines.append(line)
+    
+    out_path.write_text("\n".join(new_lines))
     sentinel.touch()
 
     print(f"  Wrote {out_path}")

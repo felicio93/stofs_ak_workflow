@@ -60,7 +60,9 @@ class UfsSchismDriver(ModelDriver):
             from workflow.core.config import list_months
             from workflow.models.ufs_schism.preprocess.gen_datm_in import gen_datm_in_month
             for ym in list_months(cfg):
-                gen_datm_in_month(cfg, ym)
+                if gen_datm_in_month(cfg, ym):
+                    sentinel = model_dir(cfg) / f"I{cfg['project_id']}" / f"I{cfg['project_id']}_{ym}" / "gen_datm_in.done"
+                    sentinel.touch()
         else:
             print("[SKIP] gen_datm_in")
 
@@ -70,7 +72,9 @@ class UfsSchismDriver(ModelDriver):
             from workflow.core.config import list_months
             from workflow.models.ufs_schism.preprocess.gen_datm_streams import gen_datm_streams_month
             for ym in list_months(cfg):
-                gen_datm_streams_month(cfg, ym)
+                if gen_datm_streams_month(cfg, ym):
+                    sentinel = model_dir(cfg) / f"I{cfg['project_id']}" / f"I{cfg['project_id']}_{ym}" / "gen_datm_streams.done"
+                    sentinel.touch()
         else:
             print("[SKIP] gen_datm_streams")
 
@@ -96,7 +100,9 @@ class UfsSchismDriver(ModelDriver):
             from workflow.core.config import list_months
             from workflow.models.ufs_schism.preprocess.gen_model_configure import gen_model_configure_month
             for ym in list_months(cfg):
-                gen_model_configure_month(cfg, ym)
+                if gen_model_configure_month(cfg, ym):
+                    sentinel = model_dir(cfg) / f"I{cfg['project_id']}" / f"I{cfg['project_id']}_{ym}" / "gen_model_configure.done"
+                    sentinel.touch()
         else:
             print("[SKIP] gen_model_configure")
 
@@ -114,7 +120,9 @@ class UfsSchismDriver(ModelDriver):
             from workflow.core.config import list_months
             from workflow.models.ufs_schism.preprocess.gen_ufs_configure import gen_ufs_configure_month
             for ym in list_months(cfg):
-                gen_ufs_configure_month(cfg, ym)
+                if gen_ufs_configure_month(cfg, ym):
+                    sentinel = model_dir(cfg) / f"I{cfg['project_id']}" / f"I{cfg['project_id']}_{ym}" / "gen_ufs_configure.done"
+                    sentinel.touch()
         else:
             print("[SKIP] gen_ufs_configure")
 

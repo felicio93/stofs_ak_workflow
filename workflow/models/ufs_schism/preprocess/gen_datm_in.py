@@ -36,13 +36,21 @@ def gen_datm_in_month(cfg: dict, ym: str):
 
     print(f"--- gen_datm_in {ym} -> {out_path} ---")
 
-    content = template_path.read_text()
-    content = re.sub(r"^(model_maskfile\s*=\s*).+$", f"\\1\'{datm_subdir}/datm_esmf_mesh.nc\'", content, flags=re.MULTILINE)
-    content = re.sub(r"^(model_meshfile\s*=\s*).+$", f"\\1\'{datm_subdir}/datm_esmf_mesh.nc\'", content, flags=re.MULTILINE)
-    content = re.sub(r"^(nx_global\s*=\s*).+$", f"\\1{nx}", content, flags=re.MULTILINE)
-    content = re.sub(r"^(ny_global\s*=\s*).+$", f"\\1{ny}", content, flags=re.MULTILINE)
-
-    out_path.write_text(content)
+    lines = template_path.read_text().splitlines()
+    new_lines = []
+    for line in lines:
+        if "model_maskfile" in line:
+            new_lines.append(f"  model_maskfile = '{datm_subdir}/datm_esmf_mesh.nc'")
+        elif "model_meshfile" in line:
+            new_lines.append(f"  model_meshfile = '{datm_subdir}/datm_esmf_mesh.nc'")
+        elif "nx_global" in line:
+            new_lines.append(f"  nx_global = {nx}")
+        elif "ny_global" in line:
+            new_lines.append(f"  ny_global = {ny}")
+        else:
+            new_lines.append(line)
+    
+    out_path.write_text("\n".join(new_lines))
     sentinel.touch()
 
     print(f"  Wrote {out_path} (nx={nx}, ny={ny})")

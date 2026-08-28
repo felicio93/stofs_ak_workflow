@@ -15,7 +15,6 @@ def gen_datm_streams_month(cfg: dict, ym: str):
         sys.exit(1)
 
     datm_subdir = cfg.get("datm_subdir", "forcing")
-    datm_dir = mdir / f"I{pid}" / f"I{pid}_{ym}" / datm_subdir
 
     mesh_file = f'{datm_subdir}/datm_esmf_mesh.nc'
     forcing_file = f'{datm_subdir}/datm_{ym}.nc'

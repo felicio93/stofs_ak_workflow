@@ -35,7 +35,7 @@ def gen_model_configure_month(cfg: dict, ym: str):
         if "start_year:" in line:
             new_lines.append(f"start_year:              {year}")
         elif "start_month:" in line:
-            new_lines.append(f"start_month:             {month}")
+            new_lines.append(f"start_month:             {month:02d}")
         elif "start_day:" in line:
             new_lines.append("start_day:               1")
         elif "start_hour:" in line:

@@ -1,19 +1,39 @@
-# ufs_schism.yaml — UFS-SCHISM specific settings (Slice A)
+# =============================================================================
+# ufs_schism.yaml — UFS-SCHISM specific settings
+# =============================================================================
 
-# Where to write DATM forcing in each monthly I dir
+# Where to write DATM forcing in each monthly I dir.
 datm_subdir: forcing
 datm_filename_template: "datm_{YYYYMM}.nc"
 
-# DATM time axis: seconds since first day of month 00Z
+# DATM time axis: seconds since first day of month 00Z.
 datm_time_units_template: "seconds since {YYYY}-{MM}-01 00:00:00"
 
-# Fill value used for DATM vars
+# Fill value used for DATM vars.
 datm_fill_value: -9999.0
 
-# Atmospheric model time step (seconds)
+# Atmospheric model time step (seconds).
 dt_atmos: 720
 
-# UFS model configuration
+# =============================================================================
+# UFS model coupling configuration
+# =============================================================================
+# IMPORTANT: The petlist_bounds below are job-size specific and MUST be
+# updated to match your SLURM job allocation before running setup_run.
+#
+# The bounds use 0-based indexing of MPI tasks across all components:
+#   med_petlist_bounds: first and last PET index for the mediator (CMEPS)
+#   atm_petlist_bounds: first and last PET index for the atmosphere (DATM)
+#   ocn_petlist_bounds: first and last PET index for the ocean (SCHISM)
+#
+# Example for a job with 160 ATM + 3193 OCN = 3353 total tasks:
+#   med_petlist_bounds: "0 159"    <- mediator shares ATM tasks (0..159)
+#   atm_petlist_bounds: "0 159"    <- DATM: tasks 0..159
+#   ocn_petlist_bounds: "160 3352" <- SCHISM: tasks 160..3352
+#
+# Adjust these values to match your job's #SBATCH -n (total MPI tasks)
+# and the SCHISM decomposition used.
+# =============================================================================
 med_model: "cmeps"
 atm_model: "datm"
 ocn_model: "schism"

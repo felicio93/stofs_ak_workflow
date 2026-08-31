@@ -43,7 +43,6 @@ from dateutil.relativedelta import relativedelta
 from workflow.core.config import load_config, KNOWN_MODEL_TYPES
 from workflow.models.base import make_driver
 
-
 # =============================================================================
 # Config validation
 # =============================================================================
@@ -61,13 +60,14 @@ def validate_config(cfg: dict):
 
     try:
         start = date.fromisoformat(cfg["start_date"])
-        end = date.fromisoformat(cfg["end_date"])
+        end   = date.fromisoformat(cfg["end_date"])
     except (KeyError, ValueError) as exc:
         print(f"ERROR: invalid start_date/end_date in project.yaml: {exc}")
         sys.exit(1)
 
     if start > end:
-        print(f"ERROR: start_date ({start}) must be before or equal to end_date ({end})")
+        print(f"ERROR: start_date ({start}) must be before or equal to "
+              f"end_date ({end})")
         sys.exit(1)
 
     lon_ref = str(cfg.get("lon_reference", ""))
@@ -77,7 +77,8 @@ def validate_config(cfg: dict):
 
     model_type = str(cfg.get("model_type", "schism")).lower()
     if model_type not in KNOWN_MODEL_TYPES:
-        print(f"ERROR: model_type must be one of {KNOWN_MODEL_TYPES}, got: {model_type!r}")
+        print(f"ERROR: model_type must be one of {KNOWN_MODEL_TYPES}, "
+              f"got: {model_type!r}")
         sys.exit(1)
 
     for key in ("lon_min", "lon_max", "lat_min", "lat_max"):
@@ -90,17 +91,19 @@ def validate_config(cfg: dict):
     lon_min = float(cfg["lon_min"])
     lon_max = float(cfg["lon_max"])
     if lon_min >= lon_max:
-        print("ERROR: wrapped longitude domains are not supported yet; lon_min must be less than lon_max")
+        print("ERROR: wrapped longitude domains are not supported yet; "
+              "lon_min must be less than lon_max")
         sys.exit(1)
 
 
-# Phase 4 steps in steps.yaml — if any are enabled but --phase preprocess
-# is active (the default), warn the user so they know to pass --phase run.
-RUN_PHASE_STEPS      = {"setup_run", "submit_run"}
-POSTPROCESS_STEPS    = {"plot_outputs", "station_skill",
-                        "download_coops", "download_ndbc", "compare_sst",
-                        "download_sst", "diag_run_plots",
-                        "download_argo", "collocate_argo", "plot_argo"}
+# Phase 4 steps — if enabled under --phase preprocess, warn the user.
+RUN_PHASE_STEPS   = {"setup_run", "submit_run"}
+POSTPROCESS_STEPS = {
+    "plot_outputs", "station_skill",
+    "download_coops", "download_ndbc", "compare_sst",
+    "download_sst", "diag_run_plots",
+    "download_argo", "collocate_argo", "plot_argo",
+}
 
 
 def _phase_mismatch_warnings(cfg: dict, phase: str, only: str):
@@ -116,11 +119,15 @@ def _phase_mismatch_warnings(cfg: dict, phase: str, only: str):
             print("  WARNING: some steps in your steps.yaml belong to a")
             print("  different phase and will NOT run with the current command.")
             if run_on:
-                print(f"    Phase 4 steps enabled but ignored: {', '.join(sorted(run_on))}")
-                print("    Run them with:  stofs-ak --run --phase run --config <cfg>")
+                print(f"    Phase 4 steps enabled but ignored: "
+                      f"{', '.join(sorted(run_on))}")
+                print("    Run them with:  "
+                      "stofs-ak --run --phase run --config <cfg>")
             if post_on:
-                print(f"    Phase 5 steps enabled but ignored: {', '.join(sorted(post_on))}")
-                print("    Run them with:  stofs-ak --run --phase postprocess --config <cfg>")
+                print(f"    Phase 5 steps enabled but ignored: "
+                      f"{', '.join(sorted(post_on))}")
+                print("    Run them with:  "
+                      "stofs-ak --run --phase postprocess --config <cfg>")
             print(f"  {'!'*58}\n")
 
     elif phase == "run":
@@ -141,45 +148,50 @@ def _phase_mismatch_warnings(cfg: dict, phase: str, only: str):
             print("  Run them with:  stofs-ak --run --config <cfg>")
             print(f"  {'!'*58}\n")
 
+
+# =============================================================================
+# --init: build project directory structure
+# =============================================================================
+
 def init_project(cfg: dict):
     """Create the full project directory tree."""
-
     pid         = cfg["project_id"]
     project_dir = Path(cfg["project_dir"])
     start       = date.fromisoformat(cfg["start_date"])
     end         = date.fromisoformat(cfg["end_date"])
 
-    model_dir = project_dir / f"M{pid}"
+    # Use mdir (not model_dir) to avoid shadowing the imported helper function.
+    mdir = project_dir / f"M{pid}"
 
     print(f"\n{'='*60}")
     print(f"  Initializing project M{pid}")
-    print(f"  Root: {model_dir}")
+    print(f"  Root: {mdir}")
     print(f"{'='*60}\n")
 
     # --- Top-level fixed directories ---
     for subdir in ["fix", "bin", "logs"]:
-        d = model_dir / subdir
+        d = mdir / subdir
         d.mkdir(parents=True, exist_ok=True)
         print(f"  Created: {d}")
 
     # --- Raw data directories ---
     for subdir in ["raw/hycom/ssh", "raw/hycom/ts", "raw/hycom/uv",
                    "raw/era5", "raw/glofas"]:
-        d = model_dir / subdir
+        d = mdir / subdir
         d.mkdir(parents=True, exist_ok=True)
         print(f"  Created: {d}")
 
-    # Pre-create yearly ERA5 raw subdirectories for the date range
+    # Pre-create yearly ERA5 raw subdirectories for the date range.
     start_year = date.fromisoformat(cfg["start_date"]).year
     end_year   = date.fromisoformat(cfg["end_date"]).year
     for yr in range(start_year, end_year + 1):
-        d = model_dir / "raw" / "era5" / str(yr)
+        d = mdir / "raw" / "era5" / str(yr)
         d.mkdir(parents=True, exist_ok=True)
         print(f"  Created: {d}")
 
-    # Pre-create yearly GloFAS raw subdirectories for the date range
+    # Pre-create yearly GloFAS raw subdirectories for the date range.
     for yr in range(start_year, end_year + 1):
-        d = model_dir / "raw" / "glofas" / str(yr)
+        d = mdir / "raw" / "glofas" / str(yr)
         d.mkdir(parents=True, exist_ok=True)
         print(f"  Created: {d}")
 
@@ -194,11 +206,10 @@ def init_project(cfg: dict):
           f"({months[0]} -> {months[-1]})\n")
 
     # --- I, R, D directories with monthly subdirectories ---
-    # Note: P{ID}/ (postprocessing output) uses topic-based subdirectories
-    # (P{ID}_plot_outputs/, P{ID}_station_skill/, etc.) created on-demand by
-    # each postprocessing step — not pre-created monthly subdirectories.
+    # P{ID}/ uses topic-based subdirectories created on-demand by each
+    # postprocessing step — not pre-created monthly subdirectories.
     for prefix, label in [("I", "Inputs"), ("R", "Run"), ("D", "Debug plots")]:
-        parent = model_dir / f"{prefix}{pid}"
+        parent = mdir / f"{prefix}{pid}"
         parent.mkdir(parents=True, exist_ok=True)
         print(f"  Created: {parent}  ({label})")
         for ym in months:
@@ -206,26 +217,22 @@ def init_project(cfg: dict):
             sub.mkdir(parents=True, exist_ok=True)
             print(f"    {sub.name}/")
 
-    # P{ID} top-level directory only (subdirs created by postprocessing steps).
-    (model_dir / f"P{pid}").mkdir(parents=True, exist_ok=True)
-    print(f"  Created: {model_dir / f'P{pid}'}  (Postprocessing)")
+    # P{ID} top-level directory only.
+    (mdir / f"P{pid}").mkdir(parents=True, exist_ok=True)
+    print(f"  Created: {mdir / f'P{pid}'}  (Postprocessing)")
 
     # --- SLURM log directory for debug plotting jobs ---
-    (model_dir / f"D{pid}" / "logs").mkdir(parents=True, exist_ok=True)
+    (mdir / f"D{pid}" / "logs").mkdir(parents=True, exist_ok=True)
 
     # --- Fixed-file diagnostics directory ---
-    (model_dir / f"D{pid}" / f"D{pid}_fix").mkdir(parents=True, exist_ok=True)
+    (mdir / f"D{pid}" / f"D{pid}_fix").mkdir(parents=True, exist_ok=True)
 
     print(f"\n  Init complete. Next steps:")
-    print(f"    1. Copy your mesh and fixed files into:  {model_dir}/fix/")
-    print(f"    2. Copy compiled Fortran executables into: {model_dir}/bin/")
+    print(f"    1. Copy your mesh and fixed files into:  {mdir}/fix/")
+    print(f"    2. Copy compiled Fortran executables into: {mdir}/bin/")
     print(f"    3. Run:  stofs-ak --run --config <config_dir>")
     print()
 
-
-# =============================================================================
-# --init: build project directory structure
-# =============================================================================
 
 # =============================================================================
 # --run: dispatch a phase (or all phases) to the model driver
@@ -236,35 +243,35 @@ def run_workflow(cfg: dict, config_dir: Path, phase: str = "preprocess",
     """Build the model driver from cfg['model_type'] and run one or all phases.
 
     phase is one of:
-      preprocess  (default) — data downloads + SCHISM input generation
+      preprocess  (default) — data downloads + model input generation
       run                   — populate run dirs + launch monthly runs
       postprocess           — output plots, validation, skill metrics
       all                   — preprocess -> run -> postprocess in sequence
 
     When phase='all', the orchestrator inserts a wait barrier between the
     preprocess and run phases: it collects the SLURM job IDs of all async
-    SLURM submissions made during preprocessing (gen_hotstart, gen_3Dth,
-    gen_nudge, gen_sflux, plot_hycom, inspect_mesh) and polls squeue
-    until they all leave the queue. This prevents the run phase (setup_run)
-    from checking for output files before the SLURM jobs have written them.
+    SLURM submissions made during preprocessing and polls squeue until they
+    all leave the queue. This prevents setup_run from checking for output
+    files before the SLURM jobs have written them.
     """
     _phase_mismatch_warnings(cfg, phase, only)
 
     driver = make_driver(cfg, config_dir)
-    phases = ["preprocess", "run", "postprocess"] if phase == "all" else [phase]
+    phases = (["preprocess", "run", "postprocess"]
+              if phase == "all" else [phase])
 
     _preprocess_slurm_jobs = []
 
     for ph in phases:
         print(f"\n{'='*60}")
-        print(f"  {driver.name} workflow -- project M{cfg['project_id']} -- phase: {ph}")
+        print(f"  {driver.name} workflow -- "
+              f"project M{cfg['project_id']} -- phase: {ph}")
         if only:
             print(f"  (restricted to step: {only})")
         print(f"{'='*60}\n")
 
         if ph == "preprocess":
             result = driver.preprocess(only=only)
-            # Collect async SLURM job IDs returned by preprocess().
             if isinstance(result, list):
                 _preprocess_slurm_jobs = [j for j in result if j]
 
@@ -275,12 +282,10 @@ def run_workflow(cfg: dict, config_dir: Path, phase: str = "preprocess",
                 wait_for_slurm_jobs(
                     _preprocess_slurm_jobs,
                     poll_seconds=30,
-                    label="Phase 3 SLURM jobs (gen_hotstart/gen_3Dth/gen_nudge/gen_sflux/...)"
+                    label="Phase 3 SLURM jobs "
+                          "(gen_hotstart/gen_3Dth/gen_nudge/gen_sflux/...)"
                 )
-                # Lustre/NFS metadata written on compute nodes can take a few
-                # seconds to become visible on the login node. Sleep briefly so
-                # setup_run's sentinel checks don't race against filesystem
-                # propagation and produce false "not completed" errors.
+                # Lustre/NFS metadata propagation pause.
                 print("  Waiting 15 s for filesystem metadata propagation ...")
                 time.sleep(15)
             driver.run(only=only)
@@ -297,8 +302,8 @@ def run_workflow(cfg: dict, config_dir: Path, phase: str = "preprocess",
 # --refresh: delete all sentinel files so the workflow re-runs from scratch
 # =============================================================================
 
-# All sentinel filenames used across the workflow, keyed by the directory
-# they live in relative to the per-month subdirectory.
+# All sentinel filenames, keyed by the directory they live in relative to
+# each per-month subdirectory.
 _SENTINELS = {
     # Preprocessing sentinels (in I{pid}/I{pid}_{ym}/)
     "idir": [
@@ -307,16 +312,27 @@ _SENTINELS = {
         "gen_nudge.done",
         "bctides.done",
         "sflux/gen_sflux.done",
+        # UFS-SCHISM specific:
+        "forcing/gen_datm.done",
+        "forcing/gen_esmf_mesh.done",
+        "gen_datm_in.done",
+        "gen_datm_streams.done",
+        "gen_model_configure.done",
+        "gen_ufs_configure.done",
+        "copy_fd_ufs.done",
+        "copy_noahmptable.done",
+        "modulefiles/copy_modulefiles.done",
     ],
     # Run sentinels (in R{pid}/R{pid}_{ym}/)
     "rdir": [
         "setup_run.done",
         "run.done",
     ],
-    # Diagnostics / postprocess sentinels (in D{pid}/D{pid}_{ym}/)
+    # Diagnostics sentinels (in D{pid}/D{pid}_{ym}/)
     "ddir": [
         "plot_hycom.done",
         "plot_sflux.done",
+        "plot_datm.done",
         "plot_outputs.done",
         "compare_sst.done",
     ],
@@ -324,7 +340,6 @@ _SENTINELS = {
 
 # Top-level (non-monthly) sentinels.
 _TOP_LEVEL_SENTINELS = [
-    # inspect_mesh writes its sentinel into D{pid}/D{pid}_fix/
     "inspect_mesh.done",
 ]
 
@@ -333,14 +348,8 @@ def reset_sentinels(cfg: dict):
     """Delete every sentinel file in the project so the workflow re-runs
     from scratch on the next invocation.
 
-    Raw downloaded data (raw/hycom, raw/era5, raw/glofas) and generated
-    NetCDF outputs (TS_1.nc, SAL_nu.nc, sflux_*.nc, etc.) are NOT deleted —
-    only the *.done sentinels that control resume logic. Steps whose outputs
-    are already present will regenerate them; steps that check for outputs
-    before writing (e.g. aggregate_hycom's is_complete_file check) will skip
-    them gracefully.
-
-    Prints a summary of every sentinel deleted (or not found).
+    Raw downloaded data and generated NetCDF outputs are NOT deleted — only
+    the *.done sentinels that control resume logic.
     """
     from workflow.core.config import list_months, model_dir
 
@@ -378,10 +387,11 @@ def reset_sentinels(cfg: dict):
     # --- Postprocessing sentinels (in P{pid}/ topic subdirs) ---
     pdir = mdir / f"P{pid}"
     for subdir, sentinels in [
-        (f"P{pid}_plot_outputs",  ["plot_outputs.done", ".frames_done"]),
-        (f"P{pid}_compare_sst",   ["compare_sst.done",  ".frames_done"]),
-        (f"P{pid}_station_skill", ["station_skill.done"]),  # written after successful skill assessment
-        (f"P{pid}_collocate_argo", ["collocate_argo.done", ".daily_done", "plot_argo.done"]),  # Argo collocation + plots
+        (f"P{pid}_plot_outputs",   ["plot_outputs.done",   ".frames_done"]),
+        (f"P{pid}_compare_sst",    ["compare_sst.done",    ".frames_done"]),
+        (f"P{pid}_station_skill",  ["station_skill.done"]),
+        (f"P{pid}_collocate_argo", ["collocate_argo.done", ".daily_done",
+                                    "plot_argo.done"]),
     ]:
         for name in sentinels:
             _remove(pdir / subdir / name)
@@ -402,6 +412,9 @@ def reset_sentinels(cfg: dict):
     print(f"{'='*60}\n")
 
 
+# =============================================================================
+# CLI
+# =============================================================================
 
 def main():
     parser = argparse.ArgumentParser(
@@ -411,7 +424,8 @@ def main():
     )
     parser.add_argument(
         "--config", required=True,
-        help="Path to the config/ directory containing project.yaml, domain.yaml, etc."
+        help="Path to the config/ directory containing project.yaml, "
+             "domain.yaml, etc."
     )
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument(
@@ -420,7 +434,8 @@ def main():
     )
     mode.add_argument(
         "--setup-envs", action="store_true", dest="setup_envs",
-        help="Create/verify the conda environments (run on the DTN; needs internet)"
+        help="Create/verify the conda environments "
+             "(run on the DTN; needs internet)"
     )
     mode.add_argument(
         "--run", action="store_true",
@@ -439,15 +454,16 @@ def main():
         choices=("preprocess", "run", "postprocess", "all"),
         help=(
             "Which phase to run with --run (default: preprocess). "
-            "preprocess = download + SCHISM inputs; "
+            "preprocess = download + model inputs; "
             "run = populate run dirs + launch monthly runs; "
-            "postprocess = output plots + validation (placeholder); "
+            "postprocess = output plots + validation; "
             "all = preprocess -> run -> postprocess in sequence"
         )
     )
     parser.add_argument(
         "--only", default=None,
-        help="Run only the named step (e.g. download_hycom), ignoring steps.yaml flags"
+        help="Run only the named step (e.g. download_hycom), "
+             "ignoring steps.yaml flags"
     )
     args = parser.parse_args()
 

@@ -3,25 +3,9 @@ models/schism/postprocess/compare_sst.py
 ========================================
 Phase 5 step "compare_sst" — model vs. satellite SST.
 
-Two-stage SLURM design (see submit_compare_sst.py):
-
-  Stage 1 (MPI parallel, one rank per day):
-      `mpi_frames()` distributes the full list of comparison days across all
-      MPI ranks.  Each rank calls `frame_for_day()` for its assigned days.
-      No inter-rank communication is needed; a Barrier() at the end
-      synchronises before the job exits.  Frames go to
-      P{ID}/P{ID}_compare_sst/frames/sst__YYYYMMDD.jpg.
-
-  Stage 2 (serial, afterok):
-      `assemble()` stitches the daily frames into one GIF.  Kept as a
-      separate step so the user can re-run with different parameters (fps,
-      date range, etc.) without re-rendering all frames.
-
-CLI:
-    srun -n <N> python -m workflow.models.schism.postprocess.compare_sst \\
-        mpi-frames --config <cfg>
-    python -m workflow.models.schism.postprocess.compare_sst assemble \\
-        --config <cfg>
+Two-stage SLURM design:
+  Stage 1 (MPI parallel): mpi_frames() — one rank per day.
+  Stage 2 (serial, afterok): assemble() — stitches daily frames into GIF.
 """
 
 import argparse
@@ -32,6 +16,24 @@ from pathlib import Path
 
 from workflow.core.config import load_config, list_months, model_dir
 from workflow.models.schism.postprocess import plot_common as pc
+
+# =============================================================================
+# Module-level mesh cache — avoids scanning all run directories once per day
+# in the MPI loop or legacy array path.
+# =============================================================================
+_mesh_cache = {}
+
+
+def _get_mesh(cfg):
+    """Load the mesh once per process and cache it."""
+    key = cfg["project_id"]
+    if key not in _mesh_cache:
+        out2d0 = _find_any_out2d(cfg)
+        if out2d0 is None:
+            _mesh_cache[key] = (None, None, None, None, None)
+        else:
+            _mesh_cache[key] = pc.load_mesh(out2d0)
+    return _mesh_cache[key]
 
 
 def _frames_dir(cfg) -> Path:
@@ -53,19 +55,17 @@ def _find_any_out2d(cfg):
     mdir = model_dir(cfg)
     for ym in list_months(cfg):
         outputs = mdir / f"R{pid}" / f"R{pid}_{ym}" / "outputs"
-        stacks = pc.list_output_stacks(outputs, "out2d")
+        stacks  = pc.list_output_stacks(outputs, "out2d")
         if stacks:
             return stacks[0]
     return None
-
 
 # =============================================================================
 # Model SST for one day
 # =============================================================================
 
 def _model_sst_for_day(cfg, d: date):
-    """Return (values, used_desc) — the model surface SST field for day d,
-    matched to the satellite according to sst_match. None if unavailable."""
+    """Return (values, used_desc) — model surface SST for day d."""
     import numpy as np
     import xarray as xr
 
@@ -77,33 +77,32 @@ def _model_sst_for_day(cfg, d: date):
     if not stacks:
         return None, "no temperature_*.nc"
 
-    match = str(cfg.get("sst_match", "daily_mean")).lower()
-    day0  = np.datetime64(d.isoformat())
-    day1  = day0 + np.timedelta64(1, "D")
-
-    # Collect surface-temperature timesteps that fall on day d.
-    day_vals = []
-    nearest_val = None
-    nearest_dt  = None
+    match  = str(cfg.get("sst_match", "daily_mean")).lower()
+    day0   = np.datetime64(d.isoformat())
+    day1   = day0 + np.timedelta64(1, "D")
     target = np.datetime64(f"{d.isoformat()}T12")
+
+    day_vals     = []
+    nearest_val  = None
+    nearest_dt   = None
 
     for nc in stacks:
         ds = xr.open_dataset(str(nc), drop_variables=pc.SAFE_DROP)
         if "temperature" not in ds:
             ds.close(); continue
-        times = ds["time"].values
+        times  = ds["time"].values
         in_day = (times >= day0) & (times < day1)
         if not in_day.any():
             ds.close(); continue
 
-        surf = pc.extract_layer(ds["temperature"], "surface")  # (time, node)
+        surf = pc.extract_layer(ds["temperature"], "surface")
         for i in np.nonzero(in_day)[0]:
             v = np.asarray(surf[i])
             if v.ndim > 1:
                 v = v.ravel()
             if match == "daily_mean":
                 day_vals.append(v)
-            else:  # nearest
+            else:
                 dt = abs(times[i] - target)
                 if nearest_dt is None or dt < nearest_dt:
                     nearest_dt, nearest_val = dt, v
@@ -119,7 +118,6 @@ def _model_sst_for_day(cfg, d: date):
             return None, "no model timesteps on day"
         return nearest_val, "nearest timestep to 12:00Z"
 
-
 # =============================================================================
 # Satellite SST for one day
 # =============================================================================
@@ -133,7 +131,7 @@ def _sat_sst_for_day(cfg, d: date):
     f = mdir / "obs" / "sst_leo" / f"leosst_{d:%Y%m%d}.nc"
     if not (f.exists() and f.stat().st_size > 0):
         return None
-    ds = xr.open_dataset(str(f))
+    ds  = xr.open_dataset(str(f))
     lon = np.array(ds["lon"])
     lat = np.array(ds["lat"])
     sst = np.array(ds["sst"])
@@ -143,13 +141,11 @@ def _sat_sst_for_day(cfg, d: date):
     lon2d, lat2d = np.meshgrid(lon, lat)
     return lon2d, lat2d, sst
 
-
 # =============================================================================
 # Stage 1 — MPI parallel frame generation
 # =============================================================================
 
 def _date_range(cfg) -> list:
-    """Return the sorted list of dates to compare (compare_sst_start/end)."""
     start = cfg.get("compare_sst_start") or cfg["start_date"]
     end   = cfg.get("compare_sst_end")   or cfg["end_date"]
     s = date.fromisoformat(str(start))
@@ -191,14 +187,11 @@ def mpi_frames(cfg):
     comm.Barrier()
     if rank == 0:
         print("  compare_sst MPI frames complete.")
-        # Write sentinel so submit_compare_sst can detect completed frames
-        # and skip re-submission on future runs.
         (_frames_dir(cfg).parent / ".frames_done").touch()
         sys.stdout.flush()
 
-
 # =============================================================================
-# Stage 1 legacy — single-day entry point (kept for backward compatibility)
+# Stage 1 — single-day entry point
 # =============================================================================
 
 def frame_for_day(cfg, d: date):
@@ -211,7 +204,7 @@ def frame_for_day(cfg, d: date):
 
     fdir = _frames_dir(cfg)
     fdir.mkdir(parents=True, exist_ok=True)
-    out  = fdir / f"sst__{d:%Y%m%d}.jpg"
+    out = fdir / f"sst__{d:%Y%m%d}.jpg"
 
     model_vals, model_desc = _model_sst_for_day(cfg, d)
     sat = _sat_sst_for_day(cfg, d)
@@ -226,13 +219,13 @@ def frame_for_day(cfg, d: date):
         print(f"  {d:%Y%m%d}: no satellite data, skipping.")
         return
 
-    # Mesh + isobaths + boundaries
-    out2d0 = _find_any_out2d(cfg)
-    if out2d0 is None:
-        print(f"  {d:%Y%m%d}: no out2d_*.nc found in any run directory. "
+    # Use the cached mesh (avoids re-scanning run directories each call).
+    x, y, depth, triang, _is_tri = _get_mesh(cfg)
+    if x is None:
+        print(f"  {d:%Y%m%d}: no out2d_*.nc found. "
               f"Has the model run completed?")
         return
-    x, y, depth, triang, _is_tri = pc.load_mesh(out2d0)
+
     boundaries = None
     for hp in (model_dir(cfg) / "fix" / "hgrid.ll",
                model_dir(cfg) / "fix" / "hgrid.gr3"):
@@ -245,10 +238,10 @@ def frame_for_day(cfg, d: date):
 
     lon2d, lat2d, sat_sst = sat
 
-    vmin = cfg.get("compare_sst_vmin", -2.0)
-    vmax = cfg.get("compare_sst_vmax", 12.0)
-    cmap = cfg.get("compare_sst_cmap", "jet")
-    dpi  = int(cfg.get("compare_sst_dpi", 150))
+    vmin     = cfg.get("compare_sst_vmin", -2.0)
+    vmax     = cfg.get("compare_sst_vmax", 12.0)
+    cmap     = cfg.get("compare_sst_cmap", "jet")
+    dpi      = int(cfg.get("compare_sst_dpi", 150))
     isobaths = cfg.get("isobaths", [200, 2000])
     if isobaths:
         isobaths = [float(v) for v in isobaths]
@@ -256,14 +249,11 @@ def frame_for_day(cfg, d: date):
     lon_min = float(cfg["lon_min"]); lon_max = float(cfg["lon_max"])
     lat_min = float(cfg["lat_min"]); lat_max = float(cfg["lat_max"])
 
-    # Size the figure to the domain aspect ratio to avoid whitespace.
-    # Each panel is set_aspect("equal") so matplotlib needs the figure width
-    # to match the lon/lat ratio.  Add 15% for the colorbar column.
     lon_range = lon_max - lon_min
     lat_range = lat_max - lat_min
-    panel_w = 10.0                         # base width (inches)
-    panel_h = panel_w * lat_range / lon_range
-    fig_h   = panel_h * 2 + 0.8           # two panels + title/gap room
+    panel_w   = 10.0
+    panel_h   = panel_w * lat_range / lon_range
+    fig_h     = panel_h * 2 + 0.8
     fig = plt.figure(figsize=(panel_w, fig_h))
     ax1 = fig.add_subplot(2, 1, 1)
     ax2 = fig.add_subplot(2, 1, 2)
@@ -294,8 +284,6 @@ def frame_for_day(cfg, d: date):
     # --- satellite panel ---
     tp2 = ax2.pcolormesh(lon2d, lat2d, sat_sst, cmap=cmap,
                          vmin=vmin, vmax=vmax, rasterized=True)
-    # Overlay the same isobaths and mesh boundaries on the satellite panel
-    # so it has the same geographic reference as the model panel.
     if isobaths:
         try:
             ax2.tricontour(triang, np.asarray(depth), levels=isobaths,
@@ -317,16 +305,14 @@ def frame_for_day(cfg, d: date):
     ax2.set_aspect("equal")
 
     fig.tight_layout(pad=0.5, h_pad=0.8)
-
     fig.savefig(str(out), dpi=dpi, format="jpeg",
                 bbox_inches="tight", pil_kwargs={"quality": 90})
     plt.close(fig)
     gc.collect()
     print(f"  {d:%Y%m%d}: frame written -> {out.name}")
 
-
 # =============================================================================
-# Stage 2 — assemble the daily frames into a GIF
+# Stage 2 — assemble daily frames into a GIF
 # =============================================================================
 
 def assemble(cfg):
@@ -352,7 +338,6 @@ def assemble(cfg):
     (gdir / "compare_sst.done").touch()
     print(f"  compare_sst assembly complete -> {gdir}")
 
-
 # =============================================================================
 # CLI
 # =============================================================================
@@ -361,11 +346,9 @@ def main():
     ap  = argparse.ArgumentParser(description="Model vs satellite SST")
     sub = ap.add_subparsers(dest="stage", required=True)
 
-    sub.add_parser("mpi-frames", help="MPI parallel frame generation "
-                   "(invoked via srun -n N)")
+    sub.add_parser("mpi-frames", help="MPI parallel frame generation")
 
-    pf = sub.add_parser("frames", help="render frame for one day "
-                        "(legacy array path)")
+    pf = sub.add_parser("frames", help="render frame for one day (legacy)")
     pf.add_argument("--date", required=True, help="YYYYMMDD")
 
     sub.add_parser("assemble", help="assemble daily frames into a GIF")

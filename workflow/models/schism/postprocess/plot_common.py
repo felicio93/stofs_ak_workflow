@@ -2,52 +2,36 @@
 models/schism/postprocess/plot_common.py
 ========================================
 Shared helpers for all Phase 5 SCHISM output plotting (diag_run, plot_outputs,
-compare_sst):
-
-  * SCHISM New I/O mesh loading (split_quads + matplotlib Triangulation)
-  * vertical-layer extraction from 3-D fields (surface / bottom / index)
-  * a single-panel tripcolor frame renderer with the shared workflow style
-    and 200/2000 m isobath overlay
-  * GIF assembly with optional frame retention
-  * variable-spec parsing from postprocess.yaml
-  * output-file discovery / time indexing
-
-All heavy imports (numpy, xarray, matplotlib, imageio) are deferred to call
-time so that importing this module (e.g. by the launcher on a login node) is
-cheap and does not require the plotting environment.
+compare_sst).
 """
 
 from pathlib import Path
 
-
-# SCHISM New I/O variables present in every output file that we never plot;
-# dropping them keeps memory down when opening the NetCDFs.
+# Variables present in every out2d file that are never configured as plot
+# targets in postprocess.yaml. Dropping them reduces memory when opening
+# NetCDFs with xarray.
+#
+# IMPORTANT: Do NOT add variables that appear in plot_outputs_vars or
+# diag_run_vars here. precipitationRate, evaporationRate, windSpeedX,
+# windSpeedY, windStressX, windStressY are valid plot targets and must NOT
+# be dropped.
 SAFE_DROP = [
+    # Diagnostic velocity at specific sigma levels — use horizontalVelX/Y
+    # from the 3D files with layer="surface"/"bottom" instead.
     "vvel4.5", "uvel4.5",
     "vvel_bottom", "uvel_bottom", "vvel_surface", "uvel_surface",
+    # Bottom/surface scalar diagnostics — use 3D variables with layer selector.
     "salt_bottom", "temp_bottom",
-    "precipitationRate", "evaporationRate",
-    "windSpeedX", "windSpeedY", "windStressX", "windStressY",
+    # Wetting/drying integer flag fields — not useful for standard plots.
     "dryFlagElement", "dryFlagSide", "dryFlagNode",
 ]
-
 
 # =============================================================================
 # Mesh
 # =============================================================================
 
 def split_quads(face_nodes):
-    """Split quad elements into triangles.
-
-    Returns (tris, is_tri):
-      tris   : int array (N_tri, 3) of triangle vertex indices. Pure triangles
-               come first, then each quad split into two triangles
-               (0,1,2) and (0,2,3).
-      is_tri : bool array (N_elem,) — True for elements that were already
-               triangles, False for quads. Used to expand element-centered
-               fields onto the split triangulation (a quad's value is repeated
-               for both of its child triangles).
-    """
+    """Split quad elements into triangles for matplotlib Triangulation."""
     import numpy as np
     fn = np.array(face_nodes)
     if fn.shape[1] == 3:
@@ -64,13 +48,7 @@ def split_quads(face_nodes):
 
 
 def expand_elem_values(values, is_tri):
-    """Map an element-centered field onto the split triangulation.
-
-    The triangulation orders faces as: [pure-triangle elems] + [quad tri #1] +
-    [quad tri #2]. An element-centered value array (length N_elem) must be
-    reordered to match: triangle-element values first, then each quad value
-    repeated for its two child triangles.
-    """
+    """Map an element-centered field onto the split triangulation."""
     import numpy as np
     v = np.asarray(values)
     tri_vals  = v[is_tri]
@@ -79,16 +57,7 @@ def expand_elem_values(values, is_tri):
 
 
 def load_mesh(out2d_path: Path):
-    """Return (x, y, depth, triangulation, is_tri) from a SCHISM out2d_*.nc file.
-
-    out2d files always carry SCHISM_hgrid_face_nodes / _node_x / _node_y /
-    depth, so the mesh (and its 200/2000 m isobaths) can be built once from
-    any out2d stack. `is_tri` is returned so element-centered variables can be
-    expanded onto the split triangulation via expand_elem_values().
-
-    The NetCDF engine is auto-selected by xarray (h5netcdf or netcdf4); SCHISM
-    New I/O output is HDF5/NETCDF4 and readable by either.
-    """
+    """Return (x, y, depth, triangulation, is_tri) from a SCHISM out2d_*.nc."""
     import numpy as np
     import xarray as xr
     import matplotlib.tri as mtri
@@ -101,40 +70,32 @@ def load_mesh(out2d_path: Path):
     ds.close()
 
     tris, is_tri = split_quads(raw)
-    dep  = np.where(np.isnan(dep), -9999.0, dep)
+    dep = np.where(np.isnan(dep), -9999.0, dep)
     return x, y, dep, mtri.Triangulation(x, y, tris), is_tri
-
 
 # =============================================================================
 # Vertical-layer extraction
 # =============================================================================
 
 def extract_layer(da, layer_spec):
-    """Reduce a 3-D SCHISM field (time, node, level) to (time, node).
-
-    layer_spec:
-      "surface" -> last (shallowest) sigma level (-1)
-      "bottom"  -> deepest wet sigma level per node
-      int       -> explicit 0-based sigma index
-    A field with no level dimension is returned unchanged.
-    """
+    """Reduce a 3-D SCHISM field (time, node, level) to (time, node)."""
     import numpy as np
 
-    dims = list(da.dims)
+    dims     = list(da.dims)
     level_ax = next((i for i, d in enumerate(dims)
                      if "vgrid" in d.lower() or "layer" in d.lower()), None)
     arr = np.array(da)
     if level_ax is None:
         return arr
 
-    time_ax = next((i for i, d in enumerate(dims) if "time" in d.lower()), 0)
+    time_ax = next((i for i, d in enumerate(dims)
+                    if "time" in d.lower()), 0)
 
     if layer_spec == "surface":
         return np.take(arr, -1, axis=level_ax)
 
     if layer_spec == "bottom":
-        # Determine, per node, the deepest finite level from the first frame.
-        first = np.take(arr, 0, axis=time_ax)          # drop time
+        first = np.take(arr, 0, axis=time_ax)
         lax   = level_ax - (1 if time_ax < level_ax else 0)
         nlev  = first.shape[lax]
         valid = np.isfinite(first)
@@ -142,7 +103,6 @@ def extract_layer(da, layer_spec):
         idx_shape[lax] = nlev
         level_idx = np.arange(nlev).reshape(idx_shape)
         deepest = np.where(valid, level_idx, -1).max(axis=lax).clip(0)
-        # Apply that static bottom index across all timesteps.
         nt = arr.shape[time_ax]
         return np.stack(
             [np.take_along_axis(
@@ -155,23 +115,15 @@ def extract_layer(da, layer_spec):
 
     return np.take(arr, int(layer_spec), axis=level_ax)
 
-
 # =============================================================================
-# Frame rendering (single tripcolor panel + isobaths)
+# Frame rendering
 # =============================================================================
 
 def render_frame(triang, values, title, out_path, cbar_label,
                  cmap="jet", vmin=None, vmax=None,
                  depth=None, isobaths=(200, 2000),
                  dpi=150, quality=90, boundaries=None, is_elem=False):
-    """Render one JPEG frame using the shared workflow style plus isobaths.
-
-    Delegates the panel/colorbar/style/isobaths to
-    core.plot_style.make_frame_tripcolor. Returns the written JPEG path.
-
-    is_elem: True for element-centered fields (values already expanded onto the
-    split triangulation via expand_elem_values) — drawn as facecolors.
-    """
+    """Render one JPEG frame using the shared workflow style plus isobaths."""
     import numpy as np
     from workflow.core.plot_style import make_frame_tripcolor
 
@@ -186,7 +138,7 @@ def render_frame(triang, values, title, out_path, cbar_label,
 def robust_limits(values, vmin, vmax):
     """Fill None color limits from the 2nd/98th percentiles of finite data."""
     import numpy as np
-    arr = np.asarray(values)
+    arr    = np.asarray(values)
     finite = arr[np.isfinite(arr)]
     if finite.size == 0:
         return (0.0, 1.0)
@@ -195,7 +147,6 @@ def robust_limits(values, vmin, vmax):
     if lo == hi:
         hi = lo + 1e-6
     return (lo, hi)
-
 
 # =============================================================================
 # GIF assembly
@@ -218,7 +169,6 @@ def assemble_gif(frame_paths, gif_path: Path, fps: int = 4,
         print(f"  Removed {len(frame_paths)} individual frames "
               f"(keep_frames=false).")
 
-
 # =============================================================================
 # Variable-spec + output-file helpers
 # =============================================================================
@@ -234,7 +184,7 @@ def var_spec(entry: dict) -> dict:
         "vmax":        entry.get("vmax", None),
         "is_3d":       bool(entry.get("is_3d", False)),
         "layer":       entry.get("layer", "surface"),
-        "loc":         str(entry.get("loc", "node")).lower(),  # node | elem
+        "loc":         str(entry.get("loc", "node")).lower(),
     }
 
 

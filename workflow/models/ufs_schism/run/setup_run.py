@@ -8,6 +8,8 @@ be launched. Follows the SCHISM setup_run behavior exactly, with the
 following UFS-SCHISM-specific differences:
 
   * forcing/ replaces the sflux/ directory.
+  * modulefiles/ is symlinked from I{ID}_YYYYMM/modulefiles/ so that
+    `module use modulefiles` works inside run_test.
   * Additional monthly inputs are linked from I{ID}_YYYYMM/:
       datm_in, datm.streams, fd_ufs.yaml, noahmptable.tbl,
       model_configure, ufs.configure
@@ -135,8 +137,9 @@ def check_fix_freshness(cfg: dict, mdir: Path, ym: str) -> list:
         if src_combine.exists() and dst_combine.exists():
             if _mtime(src_combine) > _mtime(dst_combine):
                 warnings.append(
-                    f"  bin/{combine_exe} ({_fmt_mtime(src_combine)}) is NEWER than "
-                    f"the copy in {rdir.name}/outputs/ ({_fmt_mtime(dst_combine)})."
+                    f"  bin/{combine_exe} ({_fmt_mtime(src_combine)}) is NEWER "
+                    f"than the copy in {rdir.name}/outputs/ "
+                    f"({_fmt_mtime(dst_combine)})."
                 )
 
     return warnings
@@ -172,14 +175,17 @@ def _set_sbatch_workdir(text: str, workdir: str) -> str:
 def _set_combine_command(text: str, combine_exe: str, step: int) -> str:
     """Normalise the combine_hotstart invocation in run_comb.
 
-    combine_hotstart7 reads its per-rank inputs and writes the combined
+    combine_hotstart7 reads its per-rank files and writes the combined
     hotstart_it=<step>.nc in the current working directory (./outputs).
     The template may use various paths/names — all are normalised to
     ./<combine_exe> -i <step>.
     """
     configured_name = Path(combine_exe).name
-    possible_names = {"combine_hotstart7", "combine_hotstart7.exe", configured_name}
-    escaped = "|".join(re.escape(n) for n in sorted(possible_names, key=len, reverse=True))
+    possible_names  = {"combine_hotstart7", "combine_hotstart7.exe",
+                       configured_name}
+    escaped = "|".join(
+        re.escape(n) for n in sorted(possible_names, key=len, reverse=True)
+    )
     pattern = re.compile(rf"(?:\S*/)?(?:{escaped})\s+-i\s+\d+")
     new_text, n = pattern.subn(f"./{configured_name} -i {step}", text)
     if n == 0:
@@ -209,7 +215,8 @@ def _render_diag_sbatch(cfg: dict, mdir: Path, rdir: Path,
     """
     slurm    = cfg.get("slurm", {})
     var_cfgs = cfg.get("diag_run_vars", [])
-    varnames = [v["var_name"] if isinstance(v, dict) else v for v in var_cfgs]
+    varnames = [v["var_name"] if isinstance(v, dict) else v
+                for v in var_cfgs]
 
     manifest_path = rdir / "diag_vars.manifest"
     manifest_path.write_text("\n".join(varnames) + "\n")
@@ -224,8 +231,10 @@ def _render_diag_sbatch(cfg: dict, mdir: Path, rdir: Path,
         "MEM":                slurm.get("diag_run_mem",      "16G"),
         "WALLTIME":           slurm.get("diag_run_walltime", "00:10:00"),
         "LOGDIR":             str(mdir / "logs"),
-        "MAILUSER":           slurm.get("mail_user",         "felicio.cassalho@noaa.gov"),
-        "PY":                 env_python(cfg, "diag_run_plots", default="swf_plot"),
+        "MAILUSER":           slurm.get("mail_user",
+                                        "felicio.cassalho@noaa.gov"),
+        "PY":                 env_python(cfg, "diag_run_plots",
+                                         default="swf_plot"),
         "SCRIPT":             "-m workflow.models.schism.postprocess.diag_run",
         "CONFIG_DIR":         str(config_dir),
         "DIAG_VARS_MANIFEST": str(manifest_path),
@@ -313,14 +322,20 @@ def _setup_month(cfg: dict, mdir: Path, ym: str, month_index: int,
 
     datm_subdir = str(cfg.get("datm_subdir", "forcing"))
 
-    if not _check_sentinel(idir / "gen_3Dth.done",              "gen_3Dth"):      return False
-    if not _check_sentinel(idir / "gen_nudge.done",             "gen_nudge"):     return False
-    if not _check_sentinel(idir / "sflux" / "gen_sflux.done",  "gen_sflux"):     return False
-    if not _check_sentinel(idir / datm_subdir / "gen_datm.done",      "gen_datm"):      return False
-    if not _check_sentinel(idir / datm_subdir / "gen_esmf_mesh.done", "gen_esmf_mesh"): return False
+    if not _check_sentinel(idir / "gen_3Dth.done",
+                           "gen_3Dth"):              return False
+    if not _check_sentinel(idir / "gen_nudge.done",
+                           "gen_nudge"):             return False
+    if not _check_sentinel(idir / "sflux" / "gen_sflux.done",
+                           "gen_sflux"):             return False
+    if not _check_sentinel(idir / datm_subdir / "gen_datm.done",
+                           "gen_datm"):              return False
+    if not _check_sentinel(idir / datm_subdir / "gen_esmf_mesh.done",
+                           "gen_esmf_mesh"):         return False
 
     if month_index == 0:
-        if not _check_sentinel(idir / "gen_hotstart.done", "gen_hotstart"): return False
+        if not _check_sentinel(idir / "gen_hotstart.done",
+                               "gen_hotstart"):      return False
 
     # --- symlink static fix/ files ---
     for name in FIX_LINKS:
@@ -338,10 +353,23 @@ def _setup_month(cfg: dict, mdir: Path, ym: str, month_index: int,
         print(f"  ERROR {ym}: forcing dir missing: {idir / datm_subdir}")
         return False
 
+    # --- symlink modulefiles/ directory ---
+    # Required so that `module use modulefiles` in run_test resolves correctly
+    # when the job runs with #SBATCH -D . (working dir = run dir).
+    modulefiles_src = idir / "modulefiles"
+    if modulefiles_src.is_dir():
+        if not _link(modulefiles_src, rdir / "modulefiles"):
+            print(f"  WARNING {ym}: could not symlink modulefiles/ — "
+                  f"module loading may fail in run_test.")
+    else:
+        print(f"  WARNING {ym}: no modulefiles/ found in {idir}. "
+              f"Run copy_modulefiles first or module loading will fail.")
+
     # --- month-1: symlink hotstart from I{ID}_{first} ---
     if month_index == 0:
         if not _link(idir / "hotstart.nc", rdir / "hotstart.nc"):
-            print(f"  ERROR {ym}: month-1 hotstart missing: {idir / 'hotstart.nc'}")
+            print(f"  ERROR {ym}: month-1 hotstart missing: "
+                  f"{idir / 'hotstart.nc'}")
             print("    Run gen_hotstart (Phase 3) first.")
             return False
     # months 2+ receive hotstart.nc from the previous month at run time.
@@ -361,20 +389,23 @@ def _setup_month(cfg: dict, mdir: Path, ym: str, month_index: int,
     # --- nhot_write from this month's param.nml ---
     nhot_write = _read_nml_int(idir / "param.nml", "nhot_write")
     if nhot_write is None:
-        print(f"  ERROR {ym}: could not read nhot_write from {idir / 'param.nml'}")
+        print(f"  ERROR {ym}: could not read nhot_write from "
+              f"{idir / 'param.nml'}")
         return False
 
     # --- adapt run_test ---
     run_jobname = f"R{pid}_{month_index + 1:02d}"
-    run_test = _set_sbatch_jobname((fix / "run_test").read_text(), run_jobname)
-    run_test = _set_sbatch_workdir(run_test, ".")
+    run_test    = _set_sbatch_jobname(
+        (fix / "run_test").read_text(), run_jobname)
+    run_test    = _set_sbatch_workdir(run_test, ".")
     (rdir / "run_test").write_text(run_test)
 
     # --- adapt run_comb ---
     comb_jobname = f"C{pid}_{month_index + 1:02d}"
-    run_comb = _set_sbatch_jobname((fix / "run_comb").read_text(), comb_jobname)
-    run_comb = _set_sbatch_workdir(run_comb, "./outputs")
-    run_comb = _set_combine_command(run_comb, combine_exe, nhot_write)
+    run_comb     = _set_sbatch_jobname(
+        (fix / "run_comb").read_text(), comb_jobname)
+    run_comb     = _set_sbatch_workdir(run_comb, "./outputs")
+    run_comb     = _set_combine_command(run_comb, combine_exe, nhot_write)
     (rdir / "run_comb").write_text(run_comb)
 
     # --- diagnostic hook (Phase 5 diag_run_plots, dispatched during run) ---
@@ -383,7 +414,8 @@ def _setup_month(cfg: dict, mdir: Path, ym: str, month_index: int,
     diag_vars_manifest = ""
     diag_nvar          = 0
     if diag_enabled:
-        diag_sbatch        = str(_render_diag_sbatch(cfg, mdir, rdir, config_dir))
+        diag_sbatch        = str(_render_diag_sbatch(cfg, mdir, rdir,
+                                                     config_dir))
         diag_vars_manifest = str(rdir / "diag_vars.manifest")
         diag_nvar          = max(len(cfg.get("diag_run_vars", [])), 1)
 
@@ -414,9 +446,9 @@ def _setup_month(cfg: dict, mdir: Path, ym: str, month_index: int,
 
 def run_setup_run(cfg: dict, config_dir=None):
     from pathlib import Path as _Path
-    pid    = cfg["project_id"]
-    mdir   = model_dir(cfg)
-    months = list_months(cfg)
+    pid        = cfg["project_id"]
+    mdir       = model_dir(cfg)
+    months     = list_months(cfg)
     config_dir = _Path(config_dir) if config_dir is not None else _Path(".")
 
     print(f"\n{'='*60}")
@@ -460,7 +492,8 @@ def run_setup_run(cfg: dict, config_dir=None):
     if not failed:
         print("  setup_run complete. No failures.")
         print("  Next: enable submit_run and run inside screen/tmux:")
-        print("    stofs-ak --run --phase run --only submit_run --config <cfg>")
+        print("    stofs-ak --run --phase run --only submit_run "
+              "--config <cfg>")
     else:
         print(f"  setup_run finished with {len(failed)} failure(s):")
         for m in failed:

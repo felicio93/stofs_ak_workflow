@@ -44,7 +44,7 @@ case_name: "ufs.cpld"
 restart_n: 9999
 med_petlist_bounds: "0 159"
 atm_petlist_bounds: "0 159"
-ocn_petlist_bounds: "160 3352"
+ocn_petlist_bounds: "160 3353"
 med_omp_num_threads: 1
 atm_omp_num_threads: 1
 ocn_omp_num_threads: 1

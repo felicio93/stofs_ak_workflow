@@ -4,9 +4,13 @@ models/ufs_schism/preprocess/gen_ufs_configure.py
 Generate ufs.configure file for one month.
 
 Reads fix/ufs.configure as a template, substitutes coupling parameters
-(MED/ATM/OCN petlist bounds, coupling mode, run type, etc.) from
-ufs_schism.yaml and the forecast length from the already-generated
+from ufs_schism.yaml and the forecast length from the already-generated
 model_configure, and writes I{ID}/I{ID}_YYYYMM/ufs.configure.
+
+The runSeq coupling interval (@N) is set from coupling_dt in ufs_schism.yaml
+(default 3600 seconds = hourly). This is intentionally decoupled from
+SCHISM's internal dt — the coupling interval should match the atmospheric
+forcing frequency (hourly ERA5/DATM), NOT SCHISM's timestep.
 
 Prerequisite: gen_model_configure must have run for this month.
 
@@ -45,7 +49,9 @@ def gen_ufs_configure_month(cfg: dict, ym: str) -> bool:
         print(f"ERROR: Template file not found: {template_path}")
         return False
 
-    model_configure_path = mdir / f"I{pid}" / f"I{pid}_{ym}" / "model_configure"
+    model_configure_path = (
+        mdir / f"I{pid}" / f"I{pid}_{ym}" / "model_configure"
+    )
     if not model_configure_path.exists():
         print(f"ERROR: model_configure not found: {model_configure_path}")
         print("  Run gen_model_configure for this month first.")
@@ -59,12 +65,24 @@ def gen_ufs_configure_month(cfg: dict, ym: str) -> bool:
         return False
     nhours_fcst = int(m.group(1))
 
-    # Read dt from fix/param.nml.
+    # Read SCHISM dt from fix/param.nml — used ONLY for informational
+    # purposes and stop_n. The runSeq coupling interval uses coupling_dt
+    # from ufs_schism.yaml, NOT dt.
     param_nml = _read_param_nml(mdir)
     if "dt" not in param_nml:
         print(f"ERROR: 'dt' not found in {mdir / 'fix' / 'param.nml'}")
         return False
-    dt = int(float(param_nml["dt"]))
+    schism_dt = int(float(param_nml["dt"]))
+
+    # Coupling interval: from ufs_schism.yaml, defaulting to 3600 seconds.
+    # This controls @N in the runSeq block — how often ATM and OCN exchange
+    # fields. Should match forcing frequency (hourly), NOT SCHISM's dt.
+    coupling_dt = int(cfg.get("coupling_dt", 3600))
+
+    if coupling_dt == schism_dt and schism_dt < 600:
+        print(f"  WARNING: coupling_dt={coupling_dt}s equals SCHISM dt={schism_dt}s.")
+        print(f"  This causes ESMF field exchange every timestep and is very slow.")
+        print(f"  Consider setting coupling_dt: 3600 in ufs_schism.yaml.")
 
     out_path = mdir / f"I{pid}" / f"I{pid}_{ym}" / "ufs.configure"
     sentinel = out_path.parent / "gen_ufs_configure.done"
@@ -74,45 +92,48 @@ def gen_ufs_configure_month(cfg: dict, ym: str) -> bool:
         return True
 
     print(f"--- gen_ufs_configure {ym} -> {out_path} ---")
+    print(f"  SCHISM dt={schism_dt}s, coupling_dt={coupling_dt}s, "
+          f"stop_n={nhours_fcst}h")
 
-    # Values to substitute — read from ufs_schism.yaml via the merged cfg.
+    # Values to substitute in the template.
     replacements = {
-        "MED_model":            cfg["med_model"],
-        "MED_petlist_bounds":   cfg["med_petlist_bounds"],
-        "MED_omp_num_threads":  cfg["med_omp_num_threads"],
-        "ATM_model":            cfg["atm_model"],
-        "ATM_petlist_bounds":   cfg["atm_petlist_bounds"],
-        "ATM_omp_num_threads":  cfg["atm_omp_num_threads"],
-        "OCN_model":            cfg["ocn_model"],
-        "OCN_petlist_bounds":   cfg["ocn_petlist_bounds"],
-        "OCN_omp_num_threads":  cfg["ocn_omp_num_threads"],
-        "coupling_mode":        cfg["cpl_mode"],
-        "meshloc":              "element",
-        "CouplingConfig":       cfg["coupling_config"],
-        "start_type":           cfg["run_type"],
-        "case_name":            cfg["case_name"],
-        "restart_n":            cfg["restart_n"],
-        "stop_n":               nhours_fcst,
+        "MED_model":           cfg["med_model"],
+        "MED_petlist_bounds":  cfg["med_petlist_bounds"],
+        "MED_omp_num_threads": cfg["med_omp_num_threads"],
+        "ATM_model":           cfg["atm_model"],
+        "ATM_petlist_bounds":  cfg["atm_petlist_bounds"],
+        "ATM_omp_num_threads": cfg["atm_omp_num_threads"],
+        "OCN_model":           cfg["ocn_model"],
+        "OCN_petlist_bounds":  cfg["ocn_petlist_bounds"],
+        "OCN_omp_num_threads": cfg["ocn_omp_num_threads"],
+        "coupling_mode":       cfg["cpl_mode"],
+        "meshloc":             "element",
+        "CouplingConfig":      cfg["coupling_config"],
+        "start_type":          cfg["run_type"],
+        "case_name":           cfg["case_name"],
+        "restart_n":           cfg["restart_n"],
+        "stop_n":              nhours_fcst,
     }
 
     lines = template_path.read_text().splitlines()
     new_lines = []
     in_runseq = False
-    runseq_timestep_written = False
+    runseq_dt_written = False
 
     for line in lines:
-        # --- runSeq block: replace the @<N> timestep ---
+        # ---- runSeq block: replace @N with coupling_dt ----
         if line.strip() == "runSeq::":
             new_lines.append(line)
             in_runseq = True
-            runseq_timestep_written = False
+            runseq_dt_written = False
             continue
 
         if in_runseq:
             if re.match(r"^\s*@\d+\s*$", line):
-                if not runseq_timestep_written:
-                    new_lines.append(f"@{dt}")
-                    runseq_timestep_written = True
+                # Replace whatever @N is in the template with coupling_dt
+                if not runseq_dt_written:
+                    new_lines.append(f"@{coupling_dt}")
+                    runseq_dt_written = True
                 continue
             if line.strip() == "::":
                 new_lines.append(line)
@@ -121,11 +142,10 @@ def gen_ufs_configure_month(cfg: dict, ym: str) -> bool:
             new_lines.append(line)
             continue
 
-        # --- Normal configuration lines ---
+        # ---- Normal configuration lines ----
         replaced = False
         for key, value in replacements.items():
             if re.match(rf"^(\s*){re.escape(key)}(\s*[:=])", line):
-                # Preserve indentation and separator from the template line.
                 m2 = re.match(rf"^(\s*){re.escape(key)}(\s*[:=])", line)
                 new_lines.append(
                     f"{m2.group(1)}{key}{m2.group(2)} {value}"
@@ -137,7 +157,9 @@ def gen_ufs_configure_month(cfg: dict, ym: str) -> bool:
 
     out_path.write_text("\n".join(new_lines) + "\n")
     sentinel.touch()
-    print(f"  Wrote {out_path}  (stop_n={nhours_fcst}, dt={dt})")
+    print(f"  Wrote {out_path}  "
+          f"(coupling_dt={coupling_dt}s, stop_n={nhours_fcst}h, "
+          f"schism_dt={schism_dt}s)")
     print(f"  Sentinel: {sentinel}")
     return True
 

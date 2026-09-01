@@ -19,8 +19,11 @@ Behaviour (ihot=1, single end-of-month hotstart):
      original hotstart.nc (there are NO intermediate hotstarts: param.nml is
      written so SCHISM outputs exactly one hotstart at the last timestep).
   3. On successful completion:
+       - (UFS-SCHISM only) run combine_output11_MPI to combine per-rank output
+         stacks into global daily files, then delete the partition-specific files;
        - submit run_comb (combine_hotstart7.exe -i NHOT_WRITE) inside outputs/;
        - wait for it to finish and verify outputs/hotstart_it=NHOT_WRITE.nc;
+       - delete per-rank hotstart files (hotstart_00*.nc) to free disk;
        - if this is NOT the last month and chaining is enabled, symlink that
          combined hotstart as NEXT_RUNDIR/hotstart.nc and launch the next
          month's auto_hotstart.py (blocking);
@@ -49,15 +52,24 @@ MONTH          = r"{{MONTH}}"           # YYYYMM label (for messages)
 RUN_JOBNAME    = r"{{RUN_JOBNAME}}"     # e.g. R01_01  (matches run_test -J)
 
 # --- diagnostic-plot hook (Phase 5 diag_run_plots, dispatched during the run) ---
-DIAG_ENABLED        = {{DIAG_ENABLED}}       # True/False: submit diag_run jobs for new stacks
-DIAG_SBATCH         = r"{{DIAG_SBATCH}}"     # path to the rendered diag_run.sbatch (or "")
-DIAG_VARS_MANIFEST  = r"{{DIAG_VARS_MANIFEST}}"  # one var_name per line; used by the array
-DIAG_NVAR           = {{DIAG_NVAR}}          # number of variables (= array size)
+DIAG_ENABLED        = {{DIAG_ENABLED}}
+DIAG_SBATCH         = r"{{DIAG_SBATCH}}"
+DIAG_VARS_MANIFEST  = r"{{DIAG_VARS_MANIFEST}}"
+DIAG_NVAR           = {{DIAG_NVAR}}
+
+# --- combine_output11_MPI hook (UFS-SCHISM old I/O only) ---
+# When enabled, after the run completes successfully:
+#   1. mpirun combine_output11_MPI -b 1 -e <nstacks> combines all per-rank
+#      schout_NNNNNN_*.nc files into global schout_*.nc daily files.
+#   2. Per-rank partition files (schout_NNNNNN_*.nc) are deleted to free disk.
+# For SCHISM standalone (New I/O) set this to False.
+COMBINE_OUTPUT_ENABLED  = {{COMBINE_OUTPUT_ENABLED}}   # True for UFS-SCHISM, False for SCHISM
+COMBINE_OUTPUT_EXE      = r"{{COMBINE_OUTPUT_EXE}}"    # e.g. ./outputs/combine_output11_MPI
+COMBINE_OUTPUT_NRANKS   = {{COMBINE_OUTPUT_NRANKS}}    # MPI ranks for combine job
+COMBINE_OUTPUT_SBATCH   = r"{{COMBINE_OUTPUT_SBATCH}}" # path to rendered run_combine_output sbatch
 # =====================================================================================
 
 # Adaptive polling schedule (seconds between status checks).
-# Polls frequently right after job submission, then backs off.
-# After the schedule is exhausted, polls every 3600 s (1 hour) indefinitely.
 _POLL_SCHEDULE = [
     0,       # check immediately after submit
     60,      # +1 min
@@ -71,24 +83,18 @@ _POLL_SCHEDULE = [
 ]
 _POLL_STEADY = 1800  # 30 min between checks once schedule is exhausted
 
-# Seconds between checks while waiting for the run_comb (combine_hotstart) job
-# to leave the queue.
 _COMBINE_POLL_SECONDS = 60
-
-# Maximum number of times the SCHISM job will be automatically resubmitted
-# for a given month before the script exits with an error.  Prevents infinite
-# resubmission loops caused by persistent node / configuration problems.
 _MAX_RESUBMITS = 5
 
 
 def _poll_sleep(poll_iter: int):
-    """Sleep the appropriate amount for this poll iteration."""
     if poll_iter < len(_POLL_SCHEDULE):
         secs = _POLL_SCHEDULE[poll_iter]
     else:
         secs = _POLL_STEADY
     if secs > 0:
         time.sleep(secs)
+
 
 QUEUE_CMD = f"squeue -u {os.environ.get('USER', os.environ.get('LOGNAME', ''))}"
 
@@ -98,14 +104,12 @@ def log(msg):
 
 
 def sh(cmd):
-    """Run a shell command, return (rc, stdout+stderr combined)."""
     r = subprocess.run(cmd, shell=True, capture_output=True, text=True)
     combined = (r.stdout.strip() + "\n" + r.stderr.strip()).strip()
     return r.returncode, combined
 
 
 def squeue_line_for(jobname):
-    """Return the squeue line for our job name, or None if not present."""
     _, out = sh(QUEUE_CMD)
     pat = re.compile(rf"\b{re.escape(jobname)}\b")
     for line in out.splitlines():
@@ -115,34 +119,17 @@ def squeue_line_for(jobname):
 
 
 def _clean_outputs():
-    """Delete stale output stacks and mirror.out before (re)submitting SCHISM.
-
-    When SCHISM restarts from hotstart.nc it always writes from stack 1.
-    Any *_N.nc output files left over from a previous run attempt (e.g. after
-    an HPC outage, wall-time kill, or hang) have a time axis that starts
-    mid-month, causing SCHISM to abort with 'fill_header_static: time dim'
-    when it tries to open those files at startup.
-
-    mirror.out is also removed so that run_completed() and mirror_time_step()
-    don't read stale state from the previous attempt.
-
-    hotstart_it=<N>.nc is explicitly preserved — it is the combined end-of-month
-    hotstart and must survive if it was already written.
-    """
+    """Delete stale output stacks and mirror.out before (re)submitting SCHISM."""
     outdir = Path(RUNDIR) / "outputs"
     deleted = []
 
-    # Numbered output stacks: out2d_1.nc, temperature_2.nc, etc.
-    # Pattern: any file matching *_<digits>.nc that is NOT hotstart_it=*.nc
     for f in sorted(outdir.glob("*_*.nc")):
         if f.name.startswith("hotstart_it="):
             continue
-        # Only match files whose stem ends with _<digits>
         if re.search(r"_\d+$", f.stem):
             f.unlink()
             deleted.append(f.name)
 
-    # mirror.out — written by SCHISM, not overwritten by SLURM on resubmit
     mirror = outdir / "mirror.out"
     if mirror.exists():
         mirror.unlink()
@@ -157,13 +144,11 @@ def _clean_outputs():
 
 
 def submit(script):
-    """sbatch a script from RUNDIR; return the job id string."""
     rc, out = sh(f"sbatch {script}")
     if rc != 0:
         log(f"ERROR: sbatch {script} failed:\n{out}")
         sys.exit(1)
     log(out)
-    # "Submitted batch job 12345"
     return out.split()[-1]
 
 
@@ -179,7 +164,6 @@ def mirror_last_line():
 
 
 def mirror_time_step():
-    """Return the most recent 'TIME STEP' value in mirror.out (or None)."""
     mo = Path(RUNDIR) / "outputs" / "mirror.out"
     if not mo.exists():
         return None
@@ -195,13 +179,6 @@ def mirror_time_step():
 
 
 def run_completed():
-    """True if mirror.out contains SCHISM's completion banner.
-
-    SCHISM (schism_finalize.F90) writes 'Run completed successfully at ...'
-    near the very end of fort.16/mirror.out. Under scribe I/O a few trailing
-    lines may follow it, so scan the LAST several lines rather than only the
-    final one.
-    """
     mo = Path(RUNDIR) / "outputs" / "mirror.out"
     if not mo.exists():
         return False
@@ -215,23 +192,11 @@ def run_completed():
     return False
 
 
-# --- diagnostic-plot dispatch (diag_run_plots) --------------------------------
-_diag_submitted = set()   # stacks already handed to a diag_run job
+# --- diagnostic-plot dispatch ---
+_diag_submitted = set()
 
 
 def dispatch_diag_plots(run_finished: bool = False):
-    """Submit diag_run job arrays for newly-completed output stacks.
-
-    A stack out2d_N.nc is 'complete' once out2d_{N+1}.nc exists (SCHISM writes
-    stacks sequentially), or — for the final stack — once the run has finished.
-    Called on each poll when DIAG_ENABLED. Idempotent: each stack is submitted
-    at most once (tracked in _diag_submitted; each per-variable diag job also
-    writes its own diag_{N}_{varname}.done sentinel).
-
-    One SLURM job array is submitted per stack: array size = DIAG_NVAR (one
-    task per configured variable). Tasks run in parallel so the wall-time is
-    that of a single variable, not all variables combined.
-    """
     if not DIAG_ENABLED or not DIAG_SBATCH:
         return
     outdir = Path(RUNDIR) / "outputs"
@@ -244,15 +209,9 @@ def dispatch_diag_plots(run_finished: bool = False):
     for n in stacks:
         if n in _diag_submitted:
             continue
-        # Complete if a later stack exists, or the run has finished.
         is_complete = (n < max_stack) or run_finished
         if not is_complete:
             continue
-        # Submit the job array for stack n.
-        # Note: --array is already set in the rendered diag_run.sbatch header
-        # (#SBATCH --array=1-N). Do NOT pass --array on the command line too —
-        # SLURM rejects submissions where the same directive appears both in
-        # the script and on the command line.
         rc, out = sh(
             f"sbatch --export=ALL,DIAG_MONTH={MONTH},DIAG_STACK={n} "
             f"{DIAG_SBATCH}"
@@ -265,18 +224,9 @@ def dispatch_diag_plots(run_finished: bool = False):
 
 
 def job_exit_code(job_id: str) -> int:
-    """Query sacct for the exit code of a completed SLURM job.
-
-    Returns the integer exit code, or -1 if sacct is unavailable or the
-    job is not found (treated as unknown/pending).
-    A non-zero code means the job exited abnormally (Fortran error, OOM,
-    signal, etc.) and should NOT be blindly resubmitted.
-    """
     rc, out = sh(f"sacct -n -X -o ExitCode -j {job_id}")
     if rc != 0 or not out.strip():
         return -1
-    # sacct ExitCode field is "exit_code:signal" e.g. "19:0" or "0:0"
-    # Take the first non-empty token and split on ':'
     for token in out.strip().splitlines():
         token = token.strip()
         if token:
@@ -288,29 +238,15 @@ def job_exit_code(job_id: str) -> int:
 
 
 def diagnose_failure(job_id: str) -> str:
-    """Return a human-readable failure description for a crashed job.
-
-    Checks (in order):
-      1. outputs/fatal.error  — SCHISM-written abort file
-      2. err2.out             — SBATCH -e log (Fortran/MPI stack traces)
-      3. myout                — SBATCH -o log (ABORT keyword scan)
-      4. sacct exit code      — non-zero means a crash of some kind
-
-    Returns a string describing the failure, or an empty string if nothing
-    definitive is found (caller should still not resubmit if exit code != 0).
-    """
-    # 1. SCHISM fatal.error
     fe = Path(RUNDIR) / "outputs" / "fatal.error"
     if fe.exists():
         txt = fe.read_text(errors="ignore").strip()
         if txt:
             return f"SCHISM fatal.error:\n{txt}"
 
-    # 2. Fortran/MPI error in err2.out (SBATCH -e)
     err_log = Path(RUNDIR) / "err2.out"
     if err_log.exists():
         lines = err_log.read_text(errors="ignore").splitlines()
-        # Look for "forrtl:", "ABORT", "srun: error" as diagnostic lines
         diag = [l for l in lines
                 if any(k in l for k in ("forrtl:", "ABORT", "srun: error",
                                         "severe", "error (78)"))]
@@ -318,14 +254,12 @@ def diagnose_failure(job_id: str) -> str:
             snippet = "\n".join(diag[:6])
             return f"Fortran/MPI error in err2.out:\n{snippet}"
 
-    # 3. ABORT keyword in myout (SBATCH -o)
     myout = Path(RUNDIR) / "myout"
     if myout.exists():
         for line in myout.read_text(errors="ignore").splitlines():
             if "ABORT" in line:
                 return f"ABORT in myout: {line.strip()}"
 
-    # 4. Fall back to exit code
     code = job_exit_code(job_id)
     if code > 0:
         return f"Job {job_id} exited with non-zero code {code} (no further details found)."
@@ -334,21 +268,8 @@ def diagnose_failure(job_id: str) -> str:
 
 
 def _clean_partition_hotstarts():
-    """Delete per-rank (partition-based) hotstart files after the combined
-    hotstart has been built.
-
-    combine_hotstart7 merges the per-rank files
-    (hotstart_<6-digit-rank>_<step>.nc, e.g. hotstart_003186_44640.nc) into a
-    single hotstart_it=<step>.nc. Once that combined file exists, the per-rank
-    files are no longer needed and consume a lot of disk (one per MPI rank).
-
-    Deletes every outputs/hotstart_<digits>_<digits>.nc while explicitly
-    preserving the combined hotstart_it=*.nc. MUST be called only after the
-    combined file has been verified to exist.
-    """
+    """Delete per-rank hotstart files after the combined hotstart is built."""
     outdir = Path(RUNDIR) / "outputs"
-    # rank files look like hotstart_000000_44640.nc ; the combined file is
-    # hotstart_it=44640.nc (won't match \d+_\d+).
     pat = re.compile(r"^hotstart_\d+_\d+\.nc$")
     deleted = 0
     freed = 0
@@ -368,20 +289,146 @@ def _clean_partition_hotstarts():
 
 
 def _partition_hotstarts_exist():
-    """True if per-rank end-of-month hotstart files are present.
-
-    combine_hotstart7 consumes per-rank files named
-    ``hotstart_<6-digit-rank>_<NHOT_WRITE>.nc`` to build the combined
-    ``hotstart_it=<NHOT_WRITE>.nc``. If SCHISM finished and wrote these
-    per-rank files but the combine step never ran (e.g. auto_hotstart.py
-    was killed before combine_and_chain), the combined file is missing but
-    the per-rank inputs are still on disk. Detecting them lets us combine
-    instead of pointlessly re-running the whole month.
-    """
     outdir = Path(RUNDIR) / "outputs"
     pat = re.compile(rf"^hotstart_\d+_{NHOT_WRITE}\.nc$")
     return any(pat.match(f.name)
                for f in outdir.glob(f"hotstart_*_{NHOT_WRITE}.nc"))
+
+
+# =============================================================================
+# combine_output11_MPI — UFS-SCHISM old I/O only
+# =============================================================================
+
+def _count_output_stacks() -> int:
+    """Count the number of schout stacks written this month.
+
+    Looks for schout_000000_N.nc files (rank-0 files) in outputs/ to determine
+    how many stacks were written. Returns 0 if none found.
+    """
+    outdir = Path(RUNDIR) / "outputs"
+    stacks = set()
+    for f in outdir.glob("schout_000000_*.nc"):
+        m = re.search(r"schout_000000_(\d+)\.nc$", f.name)
+        if m:
+            stacks.add(int(m.group(1)))
+    return max(stacks) if stacks else 0
+
+
+def _clean_output_partition_files():
+    """Delete per-rank schout partition files after successful combination.
+
+    Deletes schout_NNNNNN_*.nc files (rank-specific) while preserving the
+    combined schout_*.nc files (no rank prefix). Also deletes
+    local_to_global_* files which are no longer needed after combination.
+
+    MUST be called only after combination has been verified successful.
+    """
+    outdir = Path(RUNDIR) / "outputs"
+
+    # Per-rank schout files: schout_000000_1.nc, schout_003193_2.nc, etc.
+    # Pattern: schout_ followed by exactly 6 digits, then underscore, then digits
+    pat_schout = re.compile(r"^schout_\d{6}_\d+\.nc$")
+    deleted_schout = 0
+    freed_schout = 0
+    for f in sorted(outdir.glob("schout_??????_*.nc")):
+        if pat_schout.match(f.name):
+            try:
+                freed_schout += f.stat().st_size
+            except OSError:
+                pass
+            f.unlink(missing_ok=True)
+            deleted_schout += 1
+
+    # local_to_global_* mapping files (needed by combine_output11_MPI but
+    # not after combination is complete)
+    deleted_l2g = 0
+    freed_l2g = 0
+    for f in sorted(outdir.glob("local_to_global_*")):
+        try:
+            freed_l2g += f.stat().st_size
+        except OSError:
+            pass
+        f.unlink(missing_ok=True)
+        deleted_l2g += 1
+
+    total_freed = (freed_schout + freed_l2g) / 1e9
+    log(f"Deleted {deleted_schout} per-rank schout file(s) and "
+        f"{deleted_l2g} local_to_global file(s) "
+        f"(~{total_freed:.1f} GB freed).")
+
+
+def combine_output_stacks():
+    """Run combine_output11_MPI to combine per-rank output stacks.
+
+    Submits run_combine_output (a SLURM job) that runs combine_output11_MPI
+    with mpirun to process all stacks written this month. Waits for completion,
+    verifies the combined files exist, then deletes the partition-specific files.
+
+    This function is only called when COMBINE_OUTPUT_ENABLED is True
+    (UFS-SCHISM old I/O). For SCHISM standalone (New I/O) this is skipped.
+
+    Sentinel: outputs/combine_output.done
+    """
+    if not COMBINE_OUTPUT_ENABLED:
+        return
+
+    outdir = Path(RUNDIR) / "outputs"
+    sentinel = outdir / "combine_output.done"
+
+    if sentinel.exists():
+        log("combine_output: already complete (sentinel found). Skipping.")
+        _clean_output_partition_files()
+        return
+
+    nstacks = _count_output_stacks()
+    if nstacks == 0:
+        log("WARNING: combine_output: no schout_000000_*.nc stacks found. "
+            "Skipping output combination.")
+        return
+
+    log(f"combine_output: combining {nstacks} stack(s) with "
+        f"{COMBINE_OUTPUT_NRANKS} MPI rank(s) ...")
+
+    # Submit the combine job and wait for it to finish
+    comb_jobname = "CO" + RUN_JOBNAME[1:]   # R02_01 -> CO02_01
+    rc, out = sh(
+        f"sbatch --export=ALL,"
+        f"COMBINE_BEGIN=1,COMBINE_END={nstacks},"
+        f"COMBINE_JOBNAME={comb_jobname} "
+        f"{COMBINE_OUTPUT_SBATCH}"
+    )
+    if rc != 0:
+        log(f"ERROR: sbatch {COMBINE_OUTPUT_SBATCH} failed:\n{out}")
+        sys.exit(1)
+    log(f"Submitted combine_output job: {out}")
+
+    # Wait for combine job to leave the queue
+    while squeue_line_for(comb_jobname) is not None:
+        log(f"  waiting for combine_output job ({comb_jobname}) to finish ...")
+        time.sleep(_COMBINE_POLL_SECONDS)
+    time.sleep(10)
+
+    # Verify combined files exist (one schout_N.nc per stack, no rank prefix)
+    missing = []
+    for i in range(1, nstacks + 1):
+        combined_f = outdir / f"schout_{i}.nc"
+        if not combined_f.exists() or combined_f.stat().st_size == 0:
+            missing.append(combined_f.name)
+
+    if missing:
+        log(f"ERROR: combine_output finished but {len(missing)} combined "
+            f"file(s) are missing or empty:")
+        for m in missing[:10]:
+            log(f"  {m}")
+        log("Check the combine_output log for errors. "
+            "Per-rank files are preserved for retry.")
+        sys.exit(1)
+
+    log(f"combine_output: all {nstacks} stack(s) combined successfully.")
+    sentinel.touch()
+
+    # Delete per-rank partition files now that combination is verified
+    _clean_output_partition_files()
 
 
 def combine_and_chain():
@@ -391,7 +438,6 @@ def combine_and_chain():
         comb_jobname = "C" + RUN_JOBNAME[1:]  # R01_01 -> C01_01
         log(f"Submitting run_comb to build {combined.name} ...")
         submit("run_comb")
-        # Wait for the combine job to leave the queue.
         while squeue_line_for(comb_jobname) is not None:
             log("  waiting for combine job to finish ...")
             time.sleep(_COMBINE_POLL_SECONDS)
@@ -404,12 +450,10 @@ def combine_and_chain():
 
     log(f"End-of-month hotstart ready: {combined}")
 
-    # The combined hotstart exists and is verified — the per-rank hotstart
-    # files that combine_hotstart7 consumed are no longer needed. Delete them
-    # to reclaim disk (one file per MPI rank).
+    # Delete per-rank hotstart files to free disk
     _clean_partition_hotstarts()
 
-    # Chain to the next month.
+    # Chain to the next month
     if IS_LAST_MONTH:
         log("This is the last month; no chaining.")
     elif not CHAIN_HOTSTART:
@@ -423,8 +467,6 @@ def combine_and_chain():
         next_hot.symlink_to(combined)
         log(f"Symlinked next month's hotstart: {next_hot} -> {combined}")
 
-    # Sentinel BEFORE launching the next month, so this month is marked done
-    # even if the next month is still running.
     (Path(RUNDIR) / "run.done").touch()
     log(f"Wrote sentinel: {Path(RUNDIR) / 'run.done'}")
 
@@ -434,8 +476,6 @@ def combine_and_chain():
             log(f"ERROR: {next_script} not found; run setup_run for the next month.")
             sys.exit(1)
         log(f"Launching next month: {next_script}")
-        # Blocking: the whole chain runs nested. When this returns, all
-        # downstream months are complete.
         r = subprocess.run([sys.executable, str(next_script)], cwd=str(NEXT_RUNDIR))
         if r.returncode != 0:
             log(f"ERROR: next month ({NEXT_RUNDIR}) failed (exit {r.returncode}).")
@@ -457,32 +497,19 @@ def main():
         log("  setup_run); later months expect the previous month to have chained it.")
         sys.exit(1)
 
-    # Short-circuit: if the SCHISM run already completed, skip re-running the
-    # whole month and go straight to combine_and_chain(). This fires in TWO
-    # recovery cases, both of which combine_and_chain() handles idempotently:
-    #   (a) the combined hotstart_it=<N>.nc already exists (combine ran, but
-    #       run.done / chaining was interrupted), OR
-    #   (b) the per-rank hotstart_<rank>_<N>.nc files exist but were never
-    #       combined (auto_hotstart.py was killed after SCHISM finished but
-    #       before the combine step). This is the common "run succeeded, no
-    #       hotstart_it file" case — we must NOT re-run the month (which would
-    #       _clean_outputs() and destroy those per-rank files); we just combine.
     combined = Path(RUNDIR) / "outputs" / f"hotstart_it={NHOT_WRITE}.nc"
     if run_completed() and (combined.exists() or _partition_hotstarts_exist()):
         log(f"Run already complete; end-of-month hotstart present "
             f"(combined={combined.exists()}, "
             f"per-rank={_partition_hotstarts_exist()}). "
             f"Skipping SCHISM re-run and proceeding to combine/chain.")
-        # The run finished, so the final output stack is complete too. Dispatch
-        # diagnostic plots for any stacks not yet submitted (in particular the
-        # LAST stack, which only becomes 'complete' once the run has finished
-        # and would otherwise be missed on this short-circuit path).
         dispatch_diag_plots(run_finished=True)
+        combine_output_stacks()
         combine_and_chain()
         log(f"=== auto_hotstart for {MONTH} done ===")
         return
 
-    # Submit the initial run.
+    # Submit the initial run
     _clean_outputs()
     job_id = submit("run_test")
     previous_step = -1
@@ -492,25 +519,18 @@ def main():
     while not run_completed():
         _poll_sleep(poll_iter)
         poll_iter += 1
-        elapsed_mins = sum(_POLL_SCHEDULE[:min(poll_iter, len(_POLL_SCHEDULE))]) // 60
-        if poll_iter > len(_POLL_SCHEDULE):
-            elapsed_mins += (poll_iter - len(_POLL_SCHEDULE)) * _POLL_STEADY // 60
         print(f"\n{'%'*72}\n  {datetime.now():%Y-%m-%d %H:%M:%S}  "
               f"(poll #{poll_iter})\n{'%'*72}")
         status = squeue_line_for(RUN_JOBNAME)
         _, full = sh(QUEUE_CMD)
         print(full)
 
-        # Fire diagnostic plots for any newly-completed output stacks.
         dispatch_diag_plots(run_finished=run_completed())
 
         if status is not None:
             m = re.search(r"\b\d+\b", status)
-            job_id = m.group() if m else job_id  # update job_id when visible
+            job_id = m.group() if m else job_id
             if re.search(rf"{re.escape(RUN_JOBNAME)}\s+\S+\s+R", status):
-                # RUNNING — hang detection.
-                # Only check for hangs from poll 4 onward (give the run time
-                # to start writing mirror.out before declaring it hung).
                 if poll_iter >= 4:
                     step = mirror_time_step()
                     if step is None:
@@ -518,7 +538,6 @@ def main():
                     elif step == previous_step:
                         log(f"{RUN_JOBNAME}: HANG detected at TIME STEP {step}; cancelling.")
                         sh(f"scancel {job_id}")
-                        # Loop will find the job gone, diagnose or resubmit.
                     else:
                         log(f"{RUN_JOBNAME}: advancing, TIME STEP {step}.")
                         previous_step = step
@@ -527,14 +546,9 @@ def main():
             else:
                 log(f"{RUN_JOBNAME}: queued (job {job_id}), waiting ...")
         else:
-            # Not in queue. Either finished successfully or stopped early.
             if run_completed():
                 break
 
-            # Diagnose the failure before deciding whether to resubmit.
-            # job_id may be None if the job never appeared in the poll loop
-            # (e.g. it started and finished between polls). Use "?" as a
-            # fallback — sacct will return nothing and we fall back to file checks.
             diag = diagnose_failure(job_id if job_id != "?" else "0")
             exit_code = job_exit_code(job_id if job_id != "?" else "0")
 
@@ -552,15 +566,14 @@ def main():
                 sys.exit(1)
 
             if exit_code > 0:
-                # Non-zero exit but no diagnostic detail found (unexpected).
                 log(f"WARNING: job {job_id} exited with code {exit_code} and "
                     f"no diagnostic detail was found.")
                 log("This is likely a time-limit, node failure, or OOM.")
                 resubmit_count += 1
                 if resubmit_count > _MAX_RESUBMITS:
-                    log(f"ERROR: max resubmit limit ({_MAX_RESUBMITS}) reached for {RUN_JOBNAME}. Exiting.")
+                    log(f"ERROR: max resubmit limit ({_MAX_RESUBMITS}) reached. Exiting.")
                     sys.exit(1)
-                log(f"Resubmitting from hotstart.nc (attempt {resubmit_count}/{_MAX_RESUBMITS}).")
+                log(f"Resubmitting (attempt {resubmit_count}/{_MAX_RESUBMITS}).")
                 previous_step = -1
                 _clean_outputs()
                 submit("run_test")
@@ -569,17 +582,16 @@ def main():
             previous_step = -1
             resubmit_count += 1
             if resubmit_count > _MAX_RESUBMITS:
-                log(f"ERROR: max resubmit limit ({_MAX_RESUBMITS}) reached for {RUN_JOBNAME}. Exiting.")
+                log(f"ERROR: max resubmit limit ({_MAX_RESUBMITS}) reached. Exiting.")
                 sys.exit(1)
             log(f"{RUN_JOBNAME}: not in queue and run incomplete — resubmitting "
-                f"from hotstart.nc (attempt {resubmit_count}/{_MAX_RESUBMITS}).")
+                f"(attempt {resubmit_count}/{_MAX_RESUBMITS}).")
             _clean_outputs()
             submit("run_test")
 
     log(f"{RUN_JOBNAME}: run completed successfully.")
-    # Final diagnostic pass: the last output stack is only 'complete' now that
-    # the run has finished (no out2d_{N+1} will ever appear).
     dispatch_diag_plots(run_finished=True)
+    combine_output_stacks()
     combine_and_chain()
     log(f"=== auto_hotstart for {MONTH} done ===")
 

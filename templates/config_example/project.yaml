@@ -49,6 +49,8 @@ slurm:
   plot_sflux_walltime: "00:30:00"
   plot_sflux_mem: "16G"      # memory per plot_sflux task
   # Phase 5 postprocessing:
+  combine_output_nranks:   80       # MPI ranks for combine_output11_MPI
+  combine_output_walltime: "02:00:00"
   plot_outputs_qos: windfall      # windfall QOS supports large node counts
                                    # (55 nodes for 1092 files). debug QOS has
                                    # node limits that prevent large MPI jobs.
@@ -78,4 +80,6 @@ executables:
   # Phase 4 (run management):
   #schism:           pschism_HERCULES_NO_PARMETIS_PREC_EVAP_BLD_STANDALONE_SH_MEM_COMM_TVD-VL
   ufs_schism: fv3_datm2sch.exe
+  combine_output:   combine_output11_MPI
   combine_hotstart: combine_hotstart7.exe
+

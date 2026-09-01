@@ -3,21 +3,14 @@ models/ufs_schism/run/setup_run.py
 ==================================
 Phase 4, step "setup_run" (interactive, fast).
 
-Populates each R{ID}_YYYYMM/ run directory so a UFS-SCHISM month can
-be launched. Follows the SCHISM setup_run behavior exactly, with the
-following UFS-SCHISM-specific differences:
-
-  * forcing/ replaces the sflux/ directory.
-  * modulefiles/ is symlinked from I{ID}_YYYYMM/modulefiles/.
-  * combine_output11_MPI is copied from bin/ to outputs/ for old I/O combining.
-  * Additional monthly inputs are linked from I{ID}_YYYYMM/:
-      datm_in, datm.streams, fd_ufs.yaml, noahmptable.tbl,
-      model_configure, ufs.configure
-  * The UFS-SCHISM executable (e.g. fv3_datm2sch.exe) is copied from bin/.
-  * auto_hotstart.py is rendered with COMBINE_OUTPUT_ENABLED=True so that
-    after each successful run, combine_output11_MPI combines the per-rank
-    schout_NNNNNN_*.nc files into global schout_*.nc daily files, then
-    deletes the partition-specific files.
+UFS-SCHISM specific additions vs SCHISM:
+  * forcing/ replaces sflux/
+  * modulefiles/ symlinked from I{ID}_YYYYMM/modulefiles/
+  * combine_output11_MPI copied to outputs/
+  * run_combine_output.sbatch rendered for end-of-month combination
+  * run_diag_oldio.sbatch rendered for per-stack combine+diagnostics
+  * auto_hotstart.py rendered with COMBINE_DIAG_ENABLED=True and
+    COMBINE_OUTPUT_ENABLED=True
 
 Sentinel: R{ID}_YYYYMM/setup_run.done
 """
@@ -39,11 +32,9 @@ TEMPLATE_DIR = (
 AUTO_HOTSTART_TEMPLATE = TEMPLATE_DIR / "auto_hotstart.py"
 DIAG_SBATCH_TEMPLATE   = TEMPLATE_DIR / "slurm" / "diag_run.sbatch"
 
-# SLURM template for combine_output11_MPI (lives in ufs_schism templates)
-COMBINE_OUTPUT_SBATCH_TEMPLATE = (
-    Path(__file__).resolve().parent.parent
-    / "templates" / "slurm" / "run_combine_output.sbatch"
-)
+UFS_SLURM_DIR = Path(__file__).resolve().parent.parent / "templates" / "slurm"
+COMBINE_OUTPUT_SBATCH_TEMPLATE  = UFS_SLURM_DIR / "run_combine_output.sbatch"
+COMBINE_DIAG_SBATCH_TEMPLATE    = UFS_SLURM_DIR / "run_diag_oldio.sbatch"
 
 FIX_LINKS = [
     "hgrid.gr3", "hgrid.ll", "vgrid.in", "partition.prop", "tvd.prop",
@@ -53,11 +44,9 @@ FIX_LINKS = [
 ]
 
 INPUT_LINKS = [
-    # SCHISM monthly inputs
     "bctides.in", "param.nml", "source.nc",
     "TEM_3D.th.nc", "SAL_3D.th.nc", "elev2D.th.nc", "uv3D.th.nc",
     "TEM_nu.nc", "SAL_nu.nc",
-    # UFS-SCHISM monthly inputs
     "datm_in", "datm.streams", "fd_ufs.yaml", "noahmptable.tbl",
     "model_configure", "ufs.configure",
 ]
@@ -92,8 +81,8 @@ def check_fix_freshness(cfg: dict, mdir: Path, ym: str) -> list:
     idir = mdir / f"I{pid}" / f"I{pid}_{ym}"
     rdir = mdir / f"R{pid}" / f"R{pid}_{ym}"
     exes = cfg.get("executables", {})
-
     warnings = []
+
     for fix_name, (dest_key, dest_name) in _FIX_FRESHNESS_CHECKS.items():
         src = fix / fix_name
         if not src.exists():
@@ -121,14 +110,14 @@ def check_fix_freshness(cfg: dict, mdir: Path, ym: str) -> list:
 
     combine_exe = exes.get("combine_hotstart")
     if combine_exe:
-        src_combine = bind / combine_exe
-        dst_combine = rdir / "outputs" / combine_exe
-        if src_combine.exists() and dst_combine.exists():
-            if _mtime(src_combine) > _mtime(dst_combine):
+        src_c = bind / combine_exe
+        dst_c = rdir / "outputs" / combine_exe
+        if src_c.exists() and dst_c.exists():
+            if _mtime(src_c) > _mtime(dst_c):
                 warnings.append(
-                    f"  bin/{combine_exe} ({_fmt_mtime(src_combine)}) is NEWER "
+                    f"  bin/{combine_exe} ({_fmt_mtime(src_c)}) is NEWER "
                     f"than the copy in {rdir.name}/outputs/ "
-                    f"({_fmt_mtime(dst_combine)})."
+                    f"({_fmt_mtime(dst_c)})."
                 )
 
     return warnings
@@ -164,8 +153,7 @@ def _set_combine_command(text: str, combine_exe: str, step: int) -> str:
     pattern = re.compile(rf"(?:\S*/)?(?:{escaped})\s+-i\s+\d+")
     new_text, n = pattern.subn(f"./{configured_name} -i {step}", text)
     if n == 0:
-        print("  WARNING: no combine_hotstart7 '-i' line found in run_comb; "
-              "the combine step may not run. Check fix/run_comb.")
+        print("  WARNING: no combine_hotstart7 '-i' line found in run_comb.")
     return new_text
 
 
@@ -180,6 +168,8 @@ def _render_auto_hotstart(run_dir: Path, subs: dict):
 
 def _render_diag_sbatch(cfg: dict, mdir: Path, rdir: Path,
                         config_dir: Path) -> Path:
+    """Render diag_run.sbatch (New I/O, not used for UFS-SCHISM but kept
+    for completeness in case diag_run_plots is enabled)."""
     slurm    = cfg.get("slurm", {})
     var_cfgs = cfg.get("diag_run_vars", [])
     varnames = [v["var_name"] if isinstance(v, dict) else v
@@ -215,39 +205,25 @@ def _render_diag_sbatch(cfg: dict, mdir: Path, rdir: Path,
 
 
 def _render_combine_output_sbatch(cfg: dict, mdir: Path, rdir: Path,
-                                  month_index: int) -> Path:
-    """Render run_combine_output.sbatch into the run directory.
+                                   month_index: int) -> Path:
+    """Render run_combine_output.sbatch for end-of-month full combination."""
+    slurm  = cfg.get("slurm", {})
+    pid    = cfg["project_id"]
 
-    auto_hotstart.py submits this after the run completes to combine
-    per-rank schout files into global daily files.
-    """
-    if not COMBINE_OUTPUT_SBATCH_TEMPLATE.exists():
-        raise FileNotFoundError(
-            f"combine_output sbatch template not found: "
-            f"{COMBINE_OUTPUT_SBATCH_TEMPLATE}"
-        )
-
-    slurm = cfg.get("slurm", {})
-    pid   = cfg["project_id"]
-
-    # Number of ranks for combine_output11_MPI.
-    # Can use fewer than the full job — memory-limited, not CPU-limited.
-    # Default: 80 ranks (1 node). Override with slurm.combine_output_nranks.
     combine_nranks = int(slurm.get("combine_output_nranks", 80))
     combine_nodes  = max(1, (combine_nranks + 79) // 80)
-
-    jobname = f"CO{pid}_{month_index + 1:02d}"
+    jobname        = f"CO{pid}_{month_index + 1:02d}"
 
     subs = {
-        "COMBINE_JOBNAME": jobname,
-        "ACCOUNT":         slurm.get("account",                 "nos-surge"),
-        "PARTITION":       slurm.get("partition",                "hercules-2"),
-        "COMBINE_NODES":   str(combine_nodes),
-        "COMBINE_NRANKS":  str(combine_nranks),
-        "COMBINE_WALLTIME":slurm.get("combine_output_walltime",  "02:00:00"),
-        "LOGDIR":          str(mdir / "logs"),
-        "MAILUSER":        slurm.get("mail_user",
-                                     "felicio.cassalho@noaa.gov"),
+        "COMBINE_JOBNAME":  jobname,
+        "ACCOUNT":          slurm.get("account",                "nos-surge"),
+        "PARTITION":        slurm.get("partition",               "hercules-2"),
+        "COMBINE_NODES":    str(combine_nodes),
+        "COMBINE_NRANKS":   str(combine_nranks),
+        "COMBINE_WALLTIME": slurm.get("combine_output_walltime", "02:00:00"),
+        "LOGDIR":           str(mdir / "logs"),
+        "MAILUSER":         slurm.get("mail_user",
+                                      "felicio.cassalho@noaa.gov"),
     }
     text = COMBINE_OUTPUT_SBATCH_TEMPLATE.read_text()
     for k, v in subs.items():
@@ -255,6 +231,53 @@ def _render_combine_output_sbatch(cfg: dict, mdir: Path, rdir: Path,
     out = rdir / "run_combine_output.sbatch"
     out.write_text(text)
     return out
+
+
+def _render_combine_diag_sbatch(cfg: dict, mdir: Path, rdir: Path,
+                                 month_index: int,
+                                 config_dir: Path) -> Path:
+    """Render run_diag_oldio.sbatch for per-stack combine + diagnostics."""
+    slurm  = cfg.get("slurm", {})
+    pid    = cfg["project_id"]
+
+    # Diagnostic combine uses fewer ranks than full combine —
+    # single-node job, fast enough for one stack.
+    diag_nranks = int(slurm.get("combine_diag_nranks", 16))
+    diag_nodes  = max(1, (diag_nranks + 79) // 80)
+    jobname     = f"CD{pid}_{month_index + 1:02d}"
+
+    # Build the variable list string for the diag worker
+    var_cfgs  = cfg.get("diag_run_vars", [])
+    varnames  = [v["var_name"] if isinstance(v, dict) else v
+                 for v in var_cfgs]
+    varlist   = ",".join(varnames)
+
+    py = env_python(cfg, "diag_run_plots", default="swf_plot")
+
+    subs = {
+        "COMBINE_DIAG_JOBNAME":  jobname,
+        "ACCOUNT":               slurm.get("account",                 "nos-surge"),
+        "PARTITION":             slurm.get("partition",                "hercules-2"),
+        "COMBINE_DIAG_NODES":    str(diag_nodes),
+        "COMBINE_DIAG_NRANKS":   str(diag_nranks),
+        "COMBINE_DIAG_WALLTIME": slurm.get("combine_diag_walltime",   "00:30:00"),
+        "LOGDIR":                str(mdir / "logs"),
+        "MAILUSER":              slurm.get("mail_user",
+                                           "felicio.cassalho@noaa.gov"),
+        "PY":                    py,
+        "SCRIPT":                "-m workflow.models.schism.postprocess"
+                                 ".diag_run_oldio",
+        "CONFIG_DIR":            str(config_dir),
+        "DIAG_VARLIST":          varlist,
+    }
+    text = COMBINE_DIAG_SBATCH_TEMPLATE.read_text()
+    for k, v in subs.items():
+        text = text.replace("{{" + k + "}}", str(v))
+    out = rdir / "run_diag_oldio.sbatch"
+    out.write_text(out.read_text() if False else text)  # write fresh
+    out_path = rdir / "run_diag_oldio.sbatch"
+    out_path.write_text(text)
+    return out_path
 
 
 def _link(src: Path, dst: Path) -> bool:
@@ -287,14 +310,14 @@ def _setup_month(cfg: dict, mdir: Path, ym: str, month_index: int,
     rdir.mkdir(parents=True, exist_ok=True)
 
     # --- validate executables ---
-    exes        = cfg.get("executables", {})
-    ufs_exe     = exes.get("ufs_schism")
-    combine_exe = exes.get("combine_hotstart")
+    exes               = cfg.get("executables", {})
+    ufs_exe            = exes.get("ufs_schism")
+    combine_exe        = exes.get("combine_hotstart")
     combine_output_exe = exes.get("combine_output", "combine_output11_MPI")
 
     if not ufs_exe or not combine_exe:
-        print("  ERROR: executables.ufs_schism and executables.combine_hotstart "
-              "must be set in project.yaml")
+        print("  ERROR: executables.ufs_schism and "
+              "executables.combine_hotstart must be set in project.yaml")
         return False
 
     missing_exes = [str(bind / e) for e in (ufs_exe, combine_exe)
@@ -305,7 +328,6 @@ def _setup_month(cfg: dict, mdir: Path, ym: str, month_index: int,
             print(f"    {m}")
         return False
 
-    # combine_output11_MPI is required for UFS-SCHISM old I/O
     if not (bind / combine_output_exe).exists():
         print(f"  ERROR: {combine_output_exe} not found in bin/. "
               f"Compile and copy it before running setup_run.")
@@ -367,11 +389,10 @@ def _setup_month(cfg: dict, mdir: Path, ym: str, month_index: int,
     # --- month-1: symlink hotstart ---
     if month_index == 0:
         if not _link(idir / "hotstart.nc", rdir / "hotstart.nc"):
-            print(f"  ERROR {ym}: month-1 hotstart missing: "
-                  f"{idir / 'hotstart.nc'}")
+            print(f"  ERROR {ym}: month-1 hotstart missing.")
             return False
 
-    # --- copy UFS-SCHISM MPI executable ---
+    # --- copy executables ---
     shutil.copy2(bind / ufs_exe, rdir / ufs_exe)
 
     # --- outputs/ + placeholders + combine executables ---
@@ -381,16 +402,13 @@ def _setup_month(cfg: dict, mdir: Path, ym: str, month_index: int,
         f = outdir / name
         if not f.exists():
             f.touch()
-    # copy combine_hotstart7 for hotstart combining
-    shutil.copy2(bind / combine_exe, outdir / combine_exe)
-    # copy combine_output11_MPI for output combining
+    shutil.copy2(bind / combine_exe,        outdir / combine_exe)
     shutil.copy2(bind / combine_output_exe, outdir / combine_output_exe)
 
     # --- nhot_write from param.nml ---
     nhot_write = _read_nml_int(idir / "param.nml", "nhot_write")
     if nhot_write is None:
-        print(f"  ERROR {ym}: could not read nhot_write from "
-              f"{idir / 'param.nml'}")
+        print(f"  ERROR {ym}: could not read nhot_write from param.nml")
         return False
 
     # --- adapt run_test ---
@@ -408,11 +426,16 @@ def _setup_month(cfg: dict, mdir: Path, ym: str, month_index: int,
     run_comb     = _set_combine_command(run_comb, combine_exe, nhot_write)
     (rdir / "run_comb").write_text(run_comb)
 
-    # --- render run_combine_output.sbatch ---
+    # --- render end-of-month combine sbatch ---
     combine_output_sbatch = _render_combine_output_sbatch(
         cfg, mdir, rdir, month_index)
 
-    # --- diagnostic hook ---
+    # --- render per-stack combine+diag sbatch ---
+    combine_diag_sbatch = _render_combine_diag_sbatch(
+        cfg, mdir, rdir, month_index, config_dir)
+
+    # --- diagnostic hook (New I/O — not used for UFS-SCHISM but rendered
+    #     in case diag_run_plots is enabled) ---
     diag_enabled       = bool(cfg.get("diag_run_plots", False))
     diag_sbatch        = ""
     diag_vars_manifest = ""
@@ -424,34 +447,39 @@ def _setup_month(cfg: dict, mdir: Path, ym: str, month_index: int,
         diag_nvar          = max(len(cfg.get("diag_run_vars", [])), 1)
 
     # --- render auto_hotstart.py ---
-    # UFS-SCHISM uses old I/O: enable combine_output11_MPI after each run.
-    slurm = cfg.get("slurm", {})
+    slurm          = cfg.get("slurm", {})
     combine_nranks = int(slurm.get("combine_output_nranks", 80))
+    diag_nranks    = int(slurm.get("combine_diag_nranks",   16))
 
     next_rdir = (mdir / f"R{pid}" / f"R{pid}_{next_ym}") if next_ym else None
     _render_auto_hotstart(rdir, {
-        "RUNDIR":                  str(rdir),
-        "NEXT_RUNDIR":             f'r"{next_rdir}"' if next_rdir else "None",
-        "CHAIN_HOTSTART":          bool(cfg.get("chain_hotstart", True)),
-        "IS_LAST_MONTH":           bool(is_last),
-        "NHOT_WRITE":              nhot_write,
-        "MONTH":                   ym,
-        "RUN_JOBNAME":             run_jobname,
-        "DIAG_ENABLED":            diag_enabled,
-        "DIAG_SBATCH":             diag_sbatch,
-        "DIAG_VARS_MANIFEST":      diag_vars_manifest,
-        "DIAG_NVAR":               diag_nvar,
-        # UFS-SCHISM old I/O: enable output combination
-        "COMBINE_OUTPUT_ENABLED":  True,
-        "COMBINE_OUTPUT_EXE":      str(outdir / combine_output_exe),
-        "COMBINE_OUTPUT_NRANKS":   combine_nranks,
-        "COMBINE_OUTPUT_SBATCH":   str(combine_output_sbatch),
+        "RUNDIR":                str(rdir),
+        "NEXT_RUNDIR":           f'r"{next_rdir}"' if next_rdir else "None",
+        "CHAIN_HOTSTART":        bool(cfg.get("chain_hotstart", True)),
+        "IS_LAST_MONTH":         bool(is_last),
+        "NHOT_WRITE":            nhot_write,
+        "MONTH":                 ym,
+        "RUN_JOBNAME":           run_jobname,
+        # New I/O diagnostics (SCHISM standalone) — disabled for UFS-SCHISM
+        "DIAG_ENABLED":          diag_enabled,
+        "DIAG_SBATCH":           diag_sbatch,
+        "DIAG_VARS_MANIFEST":    diag_vars_manifest,
+        "DIAG_NVAR":             diag_nvar,
+        # Old I/O per-stack combine + diagnostics (UFS-SCHISM)
+        "COMBINE_DIAG_ENABLED":  True,
+        "COMBINE_DIAG_SBATCH":   str(combine_diag_sbatch),
+        "COMBINE_DIAG_NRANKS":   diag_nranks,
+        # End-of-month output combination (UFS-SCHISM)
+        "COMBINE_OUTPUT_ENABLED": True,
+        "COMBINE_OUTPUT_EXE":     str(outdir / combine_output_exe),
+        "COMBINE_OUTPUT_NRANKS":  combine_nranks,
+        "COMBINE_OUTPUT_SBATCH":  str(combine_output_sbatch),
     })
 
     (rdir / "setup_run.done").touch()
     print(f"  {ym}: run directory ready  "
           f"(job {run_jobname}, combine step {nhot_write}, "
-          f"combine_output enabled).")
+          f"per-stack diag enabled).")
     return True
 
 
@@ -474,8 +502,8 @@ def run_setup_run(cfg: dict, config_dir=None):
             all_stale.append(f"  [{ym}] {w.strip()}")
     if all_stale:
         print(f"\n  {'!'*58}")
-        print("  WARNING: one or more files in fix/ are NEWER than their")
-        print("  derived counterparts.")
+        print("  WARNING: one or more files in fix/ are NEWER than their "
+              "derived counterparts.")
         for w in all_stale:
             print(w)
         print(f"  {'!'*58}\n")

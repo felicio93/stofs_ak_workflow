@@ -17,18 +17,17 @@ isobaths: [200, 2000]
 # so the hook is baked into the run directories.
 #
 # Variable entry fields (shared by diag_run_vars and plot_outputs_vars):
-#   file_prefix : NetCDF filename prefix without _{N}.nc (e.g. out2d, temperature)
-#   var_name    : exact variable name inside the NetCDF (SCHISM New I/O name)
+#   file_prefix : NetCDF filename prefix without _{N}.nc
+#                 New I/O: e.g. out2d, temperature, salinity
+#                 Old I/O (UFS-SCHISM): ignored — all vars are in schout_N.nc
+#   var_name    : variable name (use New I/O names — old I/O is mapped
+#                 automatically; see variable name mapping table below)
 #   label       : colorbar / title text (include units)
 #   cmap        : matplotlib colormap
 #   vmin / vmax : color limits (null = robust 2nd/98th percentile)
 #   is_3d       : true if the variable has a vertical (sigma) dimension
 #   layer       : "surface" | "bottom" | integer index (only used if is_3d)
-#   loc         : "node" (default) or "elem" (element-centered, e.g.
-#                 verticalVelAtElement) — elem fields are drawn as facecolors
-#
-# Any variable listed here that is NOT found in the model outputs/ is skipped
-# with a warning (so you can keep a full list and only the produced ones plot).
+#   loc         : "node" (default) or "elem" (element-centered)
 #
 # diag_run_vars: the quick health-check subset plotted live during the run.
 diag_run_vars:
@@ -42,49 +41,89 @@ diag_run_dpi: 150
 # =============================================================================
 # plot_outputs — full-run field GIFs (after the run completes)
 # =============================================================================
-# The full SCHISM New I/O variable set. Variables not present in your run's
-# outputs/ (e.g. modules you did not enable, or iof_* output flags left off in
-# param.nml) are skipped with a warning. Trim this list to what you output to
-# save time. 3D variables plot the "surface" layer by default (change `layer`
-# to "bottom" or an integer sigma index).
+#
+# OUTPUT FORMAT NOTE
+# ------------------
+# Works for BOTH output formats automatically:
+#
+#   New I/O (SCHISM standalone): separate per-variable files
+#     (out2d_N.nc, temperature_N.nc, etc.). file_prefix is used to locate
+#     the correct file.
+#
+#   Old I/O (UFS-SCHISM): all variables in schout_N.nc.
+#     file_prefix is IGNORED. Variable names are translated automatically
+#     using the mapping table below.
+#
+# VARIABLE NAME MAPPING (old I/O -> new I/O)
+# ------------------------------------------
+# Use the var_name column (New I/O names) in all configurations.
+# The adapter maps them to old I/O names automatically at runtime.
+#
+#   New I/O var_name        Old I/O variable    Dimensions
+#   ----------------        ----------------    ----------
+#   elevation               elev                2D node
+#   temperature             temp                3D node
+#   salinity                salt                3D node
+#   horizontalVelX          hvel                3D node vector (component 0, eastward)
+#   horizontalVelY          hvel                3D node vector (component 1, northward)
+#   verticalVelocity        vertical_velocity   3D node
+#   waterDensity            water_density       3D node
+#   turbulentKineticEner    TKE                 3D node
+#   mixingLength            mixing_length       3D node
+#   diffusivity             diffusivity         3D node
+#   viscosity               viscosity           3D node
+#   airPressure             air_pressure        2D node
+#   airTemperature          air_temperature     2D node
+#   specificHumidity        specific_humidity   2D node
+#   solarRadiation          solar_radiation     2D node
+#   sensibleHeat            sensible_flux       2D node
+#   latentHeat              latent_heat         2D node
+#   upwardLongwave          upward_longwave     2D node
+#   downwardLongwave        downward_longwave   2D node
+#   totalHeat               total_heat_flux     2D node
+#   evaporationRate         evaporation         2D node
+#   precipitationRate       precipitation       2D node
+#   windSpeedX              wind_speed          2D node vector (component 0)
+#   windSpeedY              wind_speed          2D node vector (component 1)
+#   windStressX             wind_stress         2D node vector (component 0)
+#   windStressY             wind_stress         2D node vector (component 1)
+#
 plot_outputs_vars:
-  # --- 2D node-centered variables (from out2d_*.nc) ---
-  - {file_prefix: out2d, var_name: elevation,         label: "Water Level (m)",              cmap: RdBu_r,   vmin: -2,     vmax: 2,      is_3d: false}
-  - {file_prefix: out2d, var_name: airPressure,       label: "Air Pressure (Pa)",            cmap: viridis,  vmin: 96000,  vmax: 104000, is_3d: false}
-  - {file_prefix: out2d, var_name: airTemperature,    label: "Air Temperature (°C)",         cmap: RdYlBu_r, vmin: -15,    vmax: 25,     is_3d: false}
-  - {file_prefix: out2d, var_name: specificHumidity,  label: "Specific Humidity (kg/kg)",    cmap: YlGnBu,   vmin: 0,      vmax: 0.02,   is_3d: false}
-  - {file_prefix: out2d, var_name: solarRadiation,    label: "Solar Radiation (W/m²)",       cmap: YlOrRd,   vmin: 0,      vmax: 800,    is_3d: false}
-  - {file_prefix: out2d, var_name: sensibleHeat,      label: "Sensible Heat (W/m²)",         cmap: RdBu_r,   vmin: -100,   vmax: 300,    is_3d: false}
-  - {file_prefix: out2d, var_name: latentHeat,        label: "Latent Heat (W/m²)",           cmap: RdBu_r,   vmin: -50,    vmax: 400,    is_3d: false}
-  - {file_prefix: out2d, var_name: upwardLongwave,    label: "Upward Longwave (W/m²)",       cmap: YlOrRd,   vmin: 250,    vmax: 450,    is_3d: false}
-  - {file_prefix: out2d, var_name: downwardLongwave,  label: "Downward Longwave (W/m²)",     cmap: YlOrRd,   vmin: 150,    vmax: 450,    is_3d: false}
-  - {file_prefix: out2d, var_name: totalHeat,         label: "Total Heat Flux (W/m²)",       cmap: RdBu_r,   vmin: -400,   vmax: 400,    is_3d: false}
-  - {file_prefix: out2d, var_name: evaporationRate,   label: "Evaporation (kg/m²/s)",        cmap: YlGnBu,   vmin: 0,      vmax: 1.0e-4, is_3d: false}
-  - {file_prefix: out2d, var_name: precipitationRate, label: "Precipitation (kg/m²/s)",      cmap: YlGnBu,   vmin: 0,      vmax: 5.0e-4, is_3d: false}
-  - {file_prefix: out2d, var_name: windSpeedX,        label: "Wind U (m/s)",                 cmap: RdBu_r,   vmin: -25,    vmax: 25,     is_3d: false}
-  - {file_prefix: out2d, var_name: windSpeedY,        label: "Wind V (m/s)",                 cmap: RdBu_r,   vmin: -25,    vmax: 25,     is_3d: false}
-  - {file_prefix: out2d, var_name: windStressX,       label: "Wind Stress X (Pa)",           cmap: RdBu_r,   vmin: -0.01,  vmax: 0.01,   is_3d: false}
-  - {file_prefix: out2d, var_name: windStressY,       label: "Wind Stress Y (Pa)",           cmap: RdBu_r,   vmin: -0.01,  vmax: 0.01,   is_3d: false}
-  # --- 3D node-centered variables (one file per variable) ---
-  - {file_prefix: temperature,          var_name: temperature,          label: "Temperature (°C)",       cmap: jet,     vmin: -2,      vmax: 12,     is_3d: true, layer: surface}
-  - {file_prefix: salinity,             var_name: salinity,             label: "Salinity (psu)",         cmap: viridis, vmin: 30,      vmax: 34.5,   is_3d: true, layer: surface}
-  - {file_prefix: horizontalVelX,       var_name: horizontalVelX,       label: "Horizontal Vel X (m/s)", cmap: RdBu_r,  vmin: -1.5,    vmax: 1.5,    is_3d: true, layer: surface}
-  - {file_prefix: horizontalVelY,       var_name: horizontalVelY,       label: "Horizontal Vel Y (m/s)", cmap: RdBu_r,  vmin: -1.5,    vmax: 1.5,    is_3d: true, layer: surface}
-  - {file_prefix: verticalVelocity,     var_name: verticalVelocity,     label: "Vertical Velocity (m/s)",cmap: RdBu_r,  vmin: -5.0e-4, vmax: 5.0e-4, is_3d: true, layer: surface}
-  - {file_prefix: waterDensity,         var_name: waterDensity,         label: "Water Density (kg/m³)",  cmap: viridis, vmin: 1015,    vmax: 1028,   is_3d: true, layer: surface}
-  - {file_prefix: diffusivity,          var_name: diffusivity,          label: "Diffusivity (m²/s)",     cmap: viridis, vmin: 0,       vmax: 0.01,   is_3d: true, layer: surface}
-  - {file_prefix: viscosity,            var_name: viscosity,            label: "Viscosity (m²/s)",       cmap: viridis, vmin: 0,       vmax: 0.01,   is_3d: true, layer: surface}
-  - {file_prefix: turbulentKineticEner, var_name: turbulentKineticEner, label: "TKE (m²/s²)",            cmap: viridis, vmin: 0,       vmax: 0.01,   is_3d: true, layer: surface}
-  - {file_prefix: mixingLength,         var_name: mixingLength,         label: "Mixing Length (m)",      cmap: viridis, vmin: 0,       vmax: 0.5,    is_3d: true, layer: surface}
-  # --- 3D element-centered variable (loc: elem) ---
-  - {file_prefix: verticalVelAtElement, var_name: verticalVelAtElement, label: "Vertical Vel @ Elem (m/s)", cmap: RdBu_r, vmin: -0.01, vmax: 0.01,  is_3d: true, layer: surface, loc: elem}
+  # --- 2D node-centered variables ---
+  - {file_prefix: out2d,          var_name: elevation,         label: "Water Level (m)",              cmap: RdBu_r,   vmin: -2,     vmax: 2,      is_3d: false}
+  - {file_prefix: out2d,          var_name: airPressure,       label: "Air Pressure (Pa)",            cmap: viridis,  vmin: 96000,  vmax: 104000, is_3d: false}
+  - {file_prefix: out2d,          var_name: airTemperature,    label: "Air Temperature (°C)",         cmap: RdYlBu_r, vmin: -15,    vmax: 25,     is_3d: false}
+  - {file_prefix: out2d,          var_name: specificHumidity,  label: "Specific Humidity (kg/kg)",    cmap: YlGnBu,   vmin: 0,      vmax: 0.02,   is_3d: false}
+  - {file_prefix: out2d,          var_name: solarRadiation,    label: "Solar Radiation (W/m²)",       cmap: YlOrRd,   vmin: 0,      vmax: 800,    is_3d: false}
+  - {file_prefix: out2d,          var_name: sensibleHeat,      label: "Sensible Heat (W/m²)",         cmap: RdBu_r,   vmin: -100,   vmax: 300,    is_3d: false}
+  - {file_prefix: out2d,          var_name: latentHeat,        label: "Latent Heat (W/m²)",           cmap: RdBu_r,   vmin: -50,    vmax: 400,    is_3d: false}
+  - {file_prefix: out2d,          var_name: upwardLongwave,    label: "Upward Longwave (W/m²)",       cmap: YlOrRd,   vmin: 250,    vmax: 450,    is_3d: false}
+  - {file_prefix: out2d,          var_name: downwardLongwave,  label: "Downward Longwave (W/m²)",     cmap: YlOrRd,   vmin: 150,    vmax: 450,    is_3d: false}
+  - {file_prefix: out2d,          var_name: totalHeat,         label: "Total Heat Flux (W/m²)",       cmap: RdBu_r,   vmin: -400,   vmax: 400,    is_3d: false}
+  - {file_prefix: out2d,          var_name: evaporationRate,   label: "Evaporation (kg/m²/s)",        cmap: YlGnBu,   vmin: 0,      vmax: 1.0e-4, is_3d: false}
+  - {file_prefix: out2d,          var_name: precipitationRate, label: "Precipitation (kg/m²/s)",      cmap: YlGnBu,   vmin: 0,      vmax: 5.0e-4, is_3d: false}
+  - {file_prefix: out2d,          var_name: windSpeedX,        label: "Wind U (m/s)",                 cmap: RdBu_r,   vmin: -25,    vmax: 25,     is_3d: false}
+  - {file_prefix: out2d,          var_name: windSpeedY,        label: "Wind V (m/s)",                 cmap: RdBu_r,   vmin: -25,    vmax: 25,     is_3d: false}
+  - {file_prefix: out2d,          var_name: windStressX,       label: "Wind Stress X (Pa)",           cmap: RdBu_r,   vmin: -0.01,  vmax: 0.01,   is_3d: false}
+  - {file_prefix: out2d,          var_name: windStressY,       label: "Wind Stress Y (Pa)",           cmap: RdBu_r,   vmin: -0.01,  vmax: 0.01,   is_3d: false}
+  # --- 3D node-centered variables ---
+  - {file_prefix: temperature,    var_name: temperature,       label: "Temperature (°C)",             cmap: jet,     vmin: -2,      vmax: 12,     is_3d: true, layer: surface}
+  - {file_prefix: salinity,       var_name: salinity,          label: "Salinity (psu)",               cmap: viridis, vmin: 30,      vmax: 34.5,   is_3d: true, layer: surface}
+  - {file_prefix: horizontalVelX, var_name: horizontalVelX,    label: "Horizontal Vel X (m/s)",       cmap: RdBu_r,  vmin: -1.5,    vmax: 1.5,    is_3d: true, layer: surface}
+  - {file_prefix: horizontalVelY, var_name: horizontalVelY,    label: "Horizontal Vel Y (m/s)",       cmap: RdBu_r,  vmin: -1.5,    vmax: 1.5,    is_3d: true, layer: surface}
+  - {file_prefix: verticalVelocity,    var_name: verticalVelocity,   label: "Vertical Velocity (m/s)",  cmap: RdBu_r,  vmin: -5.0e-4, vmax: 5.0e-4, is_3d: true, layer: surface}
+  - {file_prefix: waterDensity,        var_name: waterDensity,       label: "Water Density (kg/m³)",    cmap: viridis, vmin: 1015,    vmax: 1028,   is_3d: true, layer: surface}
+  - {file_prefix: diffusivity,         var_name: diffusivity,        label: "Diffusivity (m²/s)",       cmap: viridis, vmin: 0,       vmax: 0.01,   is_3d: true, layer: surface}
+  - {file_prefix: viscosity,           var_name: viscosity,          label: "Viscosity (m²/s)",         cmap: viridis, vmin: 0,       vmax: 0.01,   is_3d: true, layer: surface}
+  - {file_prefix: turbulentKineticEner, var_name: turbulentKineticEner, label: "TKE (m²/s²)",           cmap: viridis, vmin: 0,       vmax: 0.01,   is_3d: true, layer: surface}
+  - {file_prefix: mixingLength,        var_name: mixingLength,       label: "Mixing Length (m)",        cmap: viridis, vmin: 0,       vmax: 0.5,    is_3d: true, layer: surface}
 
 # Date range for the GIF (null = whole run). Format YYYY-MM-DD.
 plot_outputs_start: null
 plot_outputs_end:   null
 
-# Temporal cadence in HOURS, independent of file structure. Only timesteps
-# landing on this cadence (from 00:00Z) are plotted. e.g. 6 = 4 frames/day.
+# Temporal cadence in HOURS. Only timesteps landing on this cadence
+# (from 00:00Z) are plotted. e.g. 6 = 4 frames/day.
 plot_outputs_every_hours: 6
 
 # GIF frames per second and per-frame DPI.
@@ -94,10 +133,9 @@ plot_outputs_dpi: 150
 # =============================================================================
 # SST comparison (model vs LEO L3S-DY satellite)
 # =============================================================================
-# The L3S-LEO-DY product is a DAILY collated field (all day/night passes over
-# a 24 h window). Matching options:
+# The L3S-LEO-DY product is a DAILY collated field. Matching options:
 #   daily_mean : arithmetic daily mean of SCHISM surface temperature (default)
-#   nearest    : SCHISM surface temperature nearest 12:00Z (satellite stamp)
+#   nearest    : SCHISM surface temperature nearest 12:00Z
 sst_match: daily_mean
 
 # Date range for the comparison GIF (null = whole run).
@@ -111,188 +149,120 @@ compare_sst_fps:  4
 compare_sst_dpi:  150
 
 # =============================================================================
-# Frame retention (applies to plot_outputs and compare_sst GIFs)
+# Frame retention
 # =============================================================================
 # true  = keep individual JPEG frames after building the GIF
 # false = delete frames once the GIF is written
 keep_frames: true
 
 # =============================================================================
-# CO-OPS station observations (download_coops) + skill assessment (station_skill)
+# CO-OPS station observations (download_coops + station_skill)
 # =============================================================================
-# download_coops (DTN): parses fix/station.in, downloads NOAA CO-OPS
-# observations for every valid CO-OPS station, one CSV per station/product/
-# month, into M{ID}/obs/coops/. CO-OPS 6-minute data is limited to one month
-# per request, hence monthly files (resume-safe: existing months are skipped).
+# download_coops (DTN): downloads observations for CO-OPS stations listed in
+# fix/station.in with source=CO-OPS. Downloads only the products in
+# coops_variables. One CSV per station/product/month into M{ID}/obs/coops/.
 #
-# download_ndbc (DTN): parses fix/station.in, downloads NOAA NDBC standard-met
-# observations for every NDBC station, one CSV per station/year into
-# M{ID}/obs/ndbc/. Past years use the annual historical file; the current year
-# is assembled from the completed-month files plus the realtime 45-day file.
+# Supported variable tokens for CO-OPS:
+#   WL / ELEV      water level        (tide gauge water level)
+#   T / TEMP       water temperature
+#   AIR_PRESSURE / AIRPRESSURE / PATM / PRESSURE   barometric pressure
+#   WIND / WINDX / WINDY               wind speed + direction (-> u,v)
 #
-# station_skill (interactive, swf_plot): reads obs/coops/ + obs/ndbc/ and model
-# R{ID}_YYYYMM/outputs/staout_*, plots obs vs model with skill metrics, and
-# writes P{ID}/P{ID}_station_skill/skill_metrics.csv. Only the variables named
-# in each station's station.in VARS bracket are assessed. Re-run with different
-# station_skill_start/end to assess different sub-periods (no re-download).
+# These tokens must appear in each station's VARS bracket in station.in
+# e.g.: ![WL,T,AIR_PRESSURE,WIND],9462620,CO-OPS,Unalaska
 
-# Water-level datum for the CO-OPS water_level product (mandatory for that
-# product). Common choices: MSL, MLLW, MHHW, NAVD, STND.
+# Water-level datum for CO-OPS water_level product.
+# Common choices: MSL, MLLW, MHHW, NAVD, STND.
 coops_datum: MSL
 
-# Which variables to download for CO-OPS. Supported this release:
-#   WL (water level), T (water temperature), air_pressure, wind.
-# (Currents and salinity are parsed from station.in but not yet handled.)
-# NDBC always downloads the full stdmet table; station_skill selects only the
-# variables listed in each station's VARS bracket (T->WTMP, air_pressure->PRES,
-# wind->WSPD/WDIR). NDBC has no water level.
+# Which CO-OPS products to download. Only products listed here are fetched.
 coops_variables: [WL, T, air_pressure, wind]
 
+# =============================================================================
+# NDBC buoy observations (download_ndbc + station_skill)
+# =============================================================================
+# download_ndbc (DTN): downloads observations for NDBC stations listed in
+# fix/station.in with source=NDBC. Always downloads the FULL stdmet table
+# regardless of VARS tokens — the stdmet format is not split by variable.
+# One CSV per station/year into M{ID}/obs/ndbc/.
+#
+# Supported variable tokens for NDBC (stdmet column mapping):
+#   T / TEMP       water temperature  -> WTMP column
+#   AIR_PRESSURE / AIRPRESSURE / PATM / PRESSURE  -> PRES column
+#   WIND / WINDX / WINDY  wind speed+direction -> WSPD + WDIR columns (-> u,v)
+#
+# Note: NDBC has NO water level. WL/ELEV tokens are silently skipped for NDBC.
+#
+# These tokens must appear in each station's VARS bracket in station.in
+# e.g.: ![T,AIR_PRESSURE],46035,NDBC,Central Bering Sea
+#
+# ndbc_variables: optional filter restricting which NDBC variables are
+# ASSESSED in station_skill (does NOT affect what is downloaded).
+# null = assess all variables listed in each station's VARS bracket.
+# Set to a list to restrict, e.g.: [T, AIR_PRESSURE, WIND]
+ndbc_variables: null
+
+# =============================================================================
+# station_skill — obs vs model time-series plots + skill CSV
+# =============================================================================
+# Reads obs/coops/ + obs/ndbc/ and model R{ID}/R{ID}_YYYYMM/outputs/staout_*
+# Produces obs-vs-model time-series plots (bias/RMSE/R² in the legend) and a
+# skill_metrics.csv under P{ID}/P{ID}_station_skill/.
+#
+# Only the variables named in each station's VARS bracket are assessed.
+# Re-run for any sub-period by setting station_skill_start/end and deleting
+# the station_skill.done sentinel — no re-download needed.
+
 # Skill-assessment comparison window (null = use the run's start_date/end_date).
-# Narrow these to focus the plots/metrics on a sub-period; format YYYY-MM-DD.
 station_skill_start: null
 station_skill_end:   null
 
-# Resample interval used when computing skill metrics (pandas offset alias),
-# e.g. "1H" hourly, "6H", "1D". Both obs and model are averaged to this cadence
-# before bias/RMSE/R^2 are computed.
+# Resample interval for skill metrics. Both obs and model are averaged to this
+# cadence before bias/RMSE/R² are computed.
 station_skill_resample: "1h"
 
 # =============================================================================
 # Argo float collocation (download_argo + collocate_argo)
 # =============================================================================
-# download_argo (DTN, swf_plot): downloads Argo float profiles from the IFREMER
-# GDAC via OCSTrack's get_argo, cropped to the domain bounding box (domain.yaml
-# lon/lat bounds, converted to the -180..180 GDAC frame; a "360" domain that
-# spans the 180 meridian is handled as a dateline-crossing box), into
-# M{ID}/obs/argo/{region}/processed/.
-#
-# collocate_argo (interactive, swf_plot): OCSTrack 3-D collocation of SCHISM
-# temperature/salinity profiles against those Argo profiles. Loops over the run
-# months (R{ID}_{YYYYMM}/outputs/{temperature,salinity,zCoordinates}_*.nc +
-# the run dir hgrid.gr3), collocates each month with ocstrack.Collocate
-# (var_type='3D_Profile'), and concatenates the per-month NetCDFs into one file
-# per variable under P{ID}/P{ID}_collocate_argo/.
-#
-# NOTE: collocate_argo requires SCHISM 3-D output for temperature, salinity, and
-# zCoordinates to be enabled in param.nml (iof_hydro). Argo coverage in the
-# Bering Sea is sparse; widen the window if no matches are found.
-
-# Argo GDAC ocean region for the domain. The Alaska/Bering Sea domain lives in
-# pacific_ocean. See https://data-argo.ifremer.fr/geo for the full list.
 argo_region: pacific_ocean
-
-# Which SCHISM variables to collocate against Argo (subset of the two below).
 collocate_argo_vars: [temperature, salinity]
-
-# Number of nearest mesh nodes used for horizontal inverse-distance weighting.
 collocate_argo_n_nearest: 3
-
-# Linear temporal interpolation of the model onto each Argo profile time
-# (true) vs. nearest model timestep (false).
 collocate_argo_temporal_interp: true
-
-# Distance threshold for cleaning the collocated dataset. After the full
-# collocation is saved, a companion collocated_{var}_clean.nc is written that
-# contains only profiles whose nearest mesh node is within this distance.
-# The threshold is applied in 3-D geocentric (WGS-84) metres, so it is
-# latitude-independent (5 km is 5 km even at 78°N). The clean file is what
-# plot_argo reads automatically.
-# Default: 5 km — adjust upward if your mesh is coarser than ~5 km.
 collocate_argo_dist_threshold_km: 5
-
-# Collocation window (null = use the run's start_date/end_date). Format
-# YYYY-MM-DD. Narrow to focus on a sub-period without re-downloading Argo.
 collocate_argo_start: null
 collocate_argo_end:   null
 
-# plot_argo settings (used by the plot_argo step below).
-# Max depth for the histogram and profile matrix plots (metres).
-# Set this to the approximate maximum shelf depth of your domain.
-# The Alaska/Bering Sea shelf is ~200 m; deep Argo floats reach >5000 m
-# but SCHISM sigma layers only cover the actual model bathymetry, so
-# obs/model overlap is limited to the shallowest levels. A value of
-# 300 m captures most shelf-sea collocation skill.
-# SLURM parallelization settings for the two-stage collocate_argo job.
-# Stage 1: one array task per day.
-#   collocate_argo_array_throttle  max concurrent array tasks (default 50)
-#   collocate_argo_mem             memory per array task (default 48G)
-#   collocate_argo_walltime        wall-time per array task (default 01:00:00)
-# Stage 2: serial merge.
-#   collocate_argo_merge_mem       memory for merge job (default 32G)
-#   collocate_argo_merge_walltime  wall-time for merge job (default 01:00:00)
-# These go into the slurm: block of project.yaml, not here — listed here
-# for reference only.
-#   slurm.collocate_argo_array_throttle: 50
-#   slurm.collocate_argo_mem: 48G   (single-day Argo: ~1 MB; model stack
-#                                    pair: ~26 GB; KDTree + overhead ~6 GB)
-#   slurm.collocate_argo_walltime: "01:00:00"
-#   slurm.collocate_argo_merge_mem: 32G
-#   slurm.collocate_argo_merge_walltime: "01:00:00"
-# Stage 3: plot_argo (auto-chained after merge when plot_argo: true).
-#   slurm.collocate_argo_plot_mem: 16G
-#   slurm.collocate_argo_plot_walltime: "00:30:00"
-
-# =============================================================================
-# plot_argo — all axis limits, colormaps and style settings
-# =============================================================================
-# Depth filter for all plots (metres). Set to the shelf depth of your domain.
+# plot_argo settings
 collocate_argo_plot_max_depth: 300
-
-# Optional secondary distance filter (null = use the already-filtered clean file).
 collocate_argo_plot_max_dist_km: null
-
-# DPI for all four Argo diagnostic plots.
 collocate_argo_plot_dpi: 150
 
 # --- Plot 1: Location map ---
-collocate_argo_plot_location_cmap: turbo   # date colormap
-collocate_argo_plot_location_s: 14         # scatter marker size
+collocate_argo_plot_location_cmap: turbo
+collocate_argo_plot_location_s: 14
 
 # --- Plot 2: Skill histograms ---
 collocate_argo_plot_hist_bins: 40
 collocate_argo_plot_r2_xlim: [0, 1]
-# Per-variable bias/RMSE histogram x-ranges (null = auto 99th-pct of data).
-collocate_argo_plot_temp_bias_xlim: null    # e.g. [-3, 3]
-collocate_argo_plot_temp_rmse_xlim: null    # e.g. [0, 3]
-collocate_argo_plot_psal_bias_xlim: null    # e.g. [-1, 1]
-collocate_argo_plot_psal_rmse_xlim: null    # e.g. [0, 1]
-# Histogram bar colours.
+collocate_argo_plot_temp_bias_xlim: null
+collocate_argo_plot_temp_rmse_xlim: null
+collocate_argo_plot_psal_bias_xlim: null
+collocate_argo_plot_psal_rmse_xlim: null
 collocate_argo_plot_temp_hist_color: royalblue
 collocate_argo_plot_psal_hist_color: teal
 
 # --- Plot 3: Profile matrix ---
-# x-axis limits for obs/model profile panels (null = auto 1st–99th pct of obs).
-collocate_argo_plot_temp_xlim: null         # e.g. [-2, 20]
-collocate_argo_plot_psal_xlim: null         # e.g. [28, 36]
-# Bias and RMSE x-limits (shared with histogram xlim keys above; null = auto).
-# Profile line colours.
+collocate_argo_plot_temp_xlim: null
+collocate_argo_plot_psal_xlim: null
 collocate_argo_plot_temp_color: royalblue
 collocate_argo_plot_psal_color: teal
-# Individual profile line style.
 collocate_argo_plot_profile_alpha: 0.15
 collocate_argo_plot_profile_lw: 0.8
 
 # --- Plot 4: Spatial skill map ---
-collocate_argo_plot_rmse_cmap: plasma       # RMSE scatter colormap
-collocate_argo_plot_r2_cmap: RdYlGn        # R² scatter colormap (red=bad, green=good)
-# Depth used when COMPUTING skill metrics for the skill map.
-# null = full water column (recommended: uses all available overlapping levels
-# so even deep Argo floats with only a few shallow SCHISM sigma-layer matches
-# still appear as coloured rather than gray). Set to a number (metres) to
-# restrict metrics to a shallower depth range.
+collocate_argo_plot_rmse_cmap: plasma
+collocate_argo_plot_r2_cmap: RdYlGn
 collocate_argo_plot_skill_max_depth: null
-# RMSE colour scale upper limit (null = auto 99th pct of data per variable).
-collocate_argo_plot_temp_rmse_vmax: null    # e.g. 3.0  (°C)
-collocate_argo_plot_psal_rmse_vmax: null    # e.g. 1.0  (PSU)
-collocate_argo_plot_skill_s: 20             # scatter marker size
-
-# =============================================================================
-# Optional SLURM overrides for Phase 5 jobs (else defaults from the code).
-# Add to the slurm: block in project.yaml:
-#   diag_run_mem / diag_run_walltime
-#   plot_outputs_mem / plot_outputs_walltime
-#   plot_outputs_gif_mem / plot_outputs_gif_walltime
-#   compare_sst_mem / compare_sst_walltime
-#   compare_sst_gif_mem / compare_sst_gif_walltime
-# =============================================================================
+collocate_argo_plot_temp_rmse_vmax: null
+collocate_argo_plot_psal_rmse_vmax: null
+collocate_argo_plot_skill_s: 20

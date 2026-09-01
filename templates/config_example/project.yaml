@@ -69,7 +69,12 @@ slurm:
   compare_sst_gif_mem: "16G"
   diag_run_walltime: "00:10:00"
   diag_run_mem: "16G"        # per-stack diagnostic frames during the run
-
+  # UFS-SCHISM end-of-month output combination
+  combine_output_nranks:   80         # MPI ranks for end-of-month full combine
+  combine_output_walltime: "02:00:00" # walltime for end-of-month full combine
+  # UFS-SCHISM per-stack diagnostic combine (runs during the model run)
+  combine_diag_nranks:     16         # MPI ranks for per-stack diag combine
+  combine_diag_walltime:   "00:30:00" # walltime per stack (adjust if needed)
 # -----------------------------------------------------------------------------
 # SCHISM executable names (must be present in M{id}/bin/).
 # -----------------------------------------------------------------------------

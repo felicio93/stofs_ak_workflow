@@ -19,7 +19,7 @@ from dateutil.relativedelta import relativedelta
 # (project.yaml) and loaded if present; it is optional until the model's
 # phase-3 steps are used. Naming convention: <model_type>.yaml.
 BASE_CONFIG_FILES = ("project.yaml", "domain.yaml", "steps.yaml", "envs.yaml")
-KNOWN_MODEL_TYPES = ("schism", "schism_wwm", "schism_mice", "ufs_coastal", "ufs_schism")
+KNOWN_MODEL_TYPES = ("schism", "schism_wwm", "schism_mice", "ufs_schism")
 
 
 def load_config(config_dir: Path) -> dict:

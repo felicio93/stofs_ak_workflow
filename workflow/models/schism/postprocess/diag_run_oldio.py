@@ -175,16 +175,24 @@ def _maybe_write_stack_sentinel(cfg: dict, ym: str, stack: int,
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Old I/O diagnostic frames for one stack variable")
+        description="Old I/O diagnostic frames for one stack")
     ap.add_argument("--config", required=True)
-    ap.add_argument("--month",  required=True, help="YYYYMM")
-    ap.add_argument("--stack",  required=True, type=int)
-    ap.add_argument("--var",    required=True,
-                    help="Variable name (New I/O name, e.g. temperature)")
+    ap.add_argument("--month",   required=True, help="YYYYMM")
+    ap.add_argument("--stack",   required=True, type=int)
+    # Accept either --var (single) or --varlist (comma-separated)
+    group = ap.add_mutually_exclusive_group(required=True)
+    group.add_argument("--var",     help="Single variable name")
+    group.add_argument("--varlist", help="Comma-separated variable names")
     args = ap.parse_args()
     cfg  = load_config(Path(args.config))
-    diag_stack_var_oldio(cfg, args.month, args.stack, args.var)
 
+    if args.varlist:
+        varnames = [v.strip() for v in args.varlist.split(",") if v.strip()]
+    else:
+        varnames = [args.var]
+
+    for varname in varnames:
+        diag_stack_var_oldio(cfg, args.month, args.stack, varname)
 
 if __name__ == "__main__":
     main()

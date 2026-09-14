@@ -181,6 +181,8 @@ def _render_diag_sbatch(cfg: dict, mdir: Path, rdir: Path,
     nvar = max(len(varnames), 1)
     subs = {
         "WORKDIR":            str(rdir),
+        "RUNDIR":             str(rdir),
+        "OUTPUTS_DIR":        str(rdir / "outputs"), 
         "JOBNAME":            f"diag_{rdir.name}",
         "ACCOUNT":            slurm.get("account",          "nos-surge"),
         "PARTITION":          slurm.get("partition",         "hercules-2"),

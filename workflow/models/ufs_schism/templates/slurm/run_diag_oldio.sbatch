@@ -1,18 +1,5 @@
 #!/bin/bash --login
-# =============================================================================
-# SLURM job for UFS-SCHISM per-stack combine + diagnostic frames.
-# Submitted by auto_hotstart.py once per completed output stack.
-#
-# Steps:
-#   1. Combine schout_??????_N.nc -> schout_N.nc (all variables)
-#   2. For each configured diag_run_var, render diagnostic frames
-#   3. Delete per-rank partition files for this stack
-#
-# Environment variables passed via --export at submit time:
-#   COMBINE_DIAG_STACK : stack number to process (e.g. 1, 2, 3, ...)
-#   COMBINE_DIAG_MONTH : YYYYMM label for logging
-# =============================================================================
-#SBATCH -D ./outputs
+#SBATCH -D {{OUTPUTS_DIR}}
 #SBATCH -J {{COMBINE_DIAG_JOBNAME}}
 #SBATCH -A {{ACCOUNT}}
 #SBATCH -p {{PARTITION}}
@@ -28,13 +15,12 @@
 set -e
 ulimit -s unlimited
 
-module use modulefiles
+module use {{RUNDIR}}/modulefiles
 module load modules.fv3_datm2sch
 
 echo "=== diag_oldio: stack ${COMBINE_DIAG_STACK} month ${COMBINE_DIAG_MONTH} ==="
 echo "Working dir: $(pwd)"
 
-# --- Step 1: Combine this stack (all variables) ---
 COMBINED="schout_${COMBINE_DIAG_STACK}.nc"
 
 if [ -f "${COMBINED}" ]; then
@@ -49,10 +35,8 @@ else
     echo "  Combine complete: ${COMBINED}"
 fi
 
-# Touch intermediate sentinel so we know combine succeeded
 touch "combine_${COMBINE_DIAG_STACK}.done"
 
-# --- Step 2: Render diagnostic frames (one array task per variable) ---
 echo "  Rendering diagnostic frames..."
 {{PY}} {{SCRIPT}} \
     --config {{CONFIG_DIR}} \
@@ -60,7 +44,6 @@ echo "  Rendering diagnostic frames..."
     --stack  ${COMBINE_DIAG_STACK} \
     --varlist "{{DIAG_VARLIST}}"
 
-# --- Step 3: Delete per-rank partition files for this stack ---
 echo "  Cleaning partition files for stack ${COMBINE_DIAG_STACK}..."
 n_deleted=0
 freed_bytes=0

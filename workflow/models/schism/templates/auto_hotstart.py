@@ -373,7 +373,6 @@ def _clean_output_partition_files():
         log(f"End-of-month cleanup: deleted {deleted_schout} partition file(s) "
             f"and {deleted_l2g} local_to_global file(s) (~{total:.1f} GB freed).")
 
-
 def combine_output_stacks():
     """Combine any remaining uncombined output stacks at end of month.
 
@@ -405,6 +404,35 @@ def combine_output_stacks():
         if m
     }
     remaining = sorted(rank0_stacks - combined_stacks)
+
+    # Wait for any in-progress per-stack diag/combine jobs to finish
+    # before submitting the end-of-month combine, to avoid two MPI jobs
+    # running combine_output11_MPI in the same outputs/ dir simultaneously.
+    if remaining:
+        comb_jobname_prefix = "CD" + RUN_JOBNAME[1:]
+        log(f"combine_output: waiting for per-stack diag jobs "
+            f"({comb_jobname_prefix}*) to finish before end-of-month "
+            f"combine ({len(remaining)} stacks still need combining)...")
+        while True:
+            _, qout = sh(QUEUE_CMD)
+            cd_jobs = [l for l in qout.splitlines()
+                       if comb_jobname_prefix in l]
+            if not cd_jobs:
+                break
+            log(f"  {len(cd_jobs)} per-stack diag job(s) still running, "
+                f"waiting 60s ...")
+            time.sleep(60)
+        log("  All per-stack diag jobs finished. Proceeding with "
+            "end-of-month combine.")
+        # Recompute remaining after waiting — per-stack jobs may have
+        # combined additional stacks while we were waiting.
+        combined_stacks = {
+            int(m.group(1))
+            for f in outdir.glob("schout_*.nc")
+            for m in [re.match(r"^schout_(\d+)\.nc$", f.name)]
+            if m
+        }
+        remaining = sorted(rank0_stacks - combined_stacks)
 
     if not remaining:
         log("combine_output: all stacks already combined during run. "

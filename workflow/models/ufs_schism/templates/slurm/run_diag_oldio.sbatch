@@ -56,5 +56,5 @@ for f in schout_??????_${COMBINE_DIAG_STACK}.nc; do
 done
 freed_gb=$(echo "scale=2; $freed_bytes / 1073741824" | bc 2>/dev/null || echo "?")
 echo "  Deleted ${n_deleted} partition file(s) (~${freed_gb} GB freed)."
-
+touch "diag_oldio_${COMBINE_DIAG_STACK}.done"
 echo "=== diag_oldio stack ${COMBINE_DIAG_STACK} complete ==="

@@ -178,6 +178,21 @@ def load_mesh(nc_path: Path):
 # Vertical-layer extraction
 # =============================================================================
 
+def _has_vertical_dim(da) -> bool:
+    """Return True if the DataArray has a vertical (sigma/vgrid) dimension.
+
+    Checks for dimension names containing 'vgrid' or 'layer', which covers
+    both New I/O ('nSCHISM_vgrid_layers') and any other naming convention.
+    This is needed because after isel(time=t) a 3D variable (time, node, nVert)
+    becomes 2D (node, nVert) — ndim==2 but still needs layer extraction.
+    Using ndim > 2 as the guard incorrectly skips extraction in this case.
+    """
+    return any(
+        "vgrid" in d.lower() or "layer" in d.lower()
+        for d in da.dims
+    )
+
+
 def extract_layer(da, layer_spec):
     """Reduce a 3-D SCHISM field to 2-D by extracting a vertical layer.
 
@@ -235,10 +250,16 @@ def extract_oldio_var(ds, new_varname: str, layer_spec):
       - Vector component extraction (e.g. hvel[:,:,:,0] -> horizontalVelX)
       - Layer extraction for 3D variables
 
+    Works correctly whether ds is a full Dataset (with time dimension) or
+    a single-timestep slice from isel(time=t) (without time dimension).
+    The vertical dimension check uses _has_vertical_dim() rather than
+    ndim > 2 so that post-isel 2D arrays (node, nVert) are still correctly
+    reduced to 1D (node,) by extract_layer().
+
     Parameters
     ----------
     ds : xarray.Dataset
-        Opened schout_*.nc dataset.
+        Opened schout_*.nc dataset, or a single-time isel slice.
     new_varname : str
         New I/O variable name (as used in postprocess.yaml).
     layer_spec : str or int
@@ -246,7 +267,8 @@ def extract_oldio_var(ds, new_varname: str, layer_spec):
 
     Returns
     -------
-    numpy.ndarray of shape (time, nodes) or (time, elements)
+    numpy.ndarray of shape (nodes,) for a single-time slice, or
+                           (time, nodes) for a full dataset.
     """
     import numpy as np
 
@@ -255,7 +277,8 @@ def extract_oldio_var(ds, new_varname: str, layer_spec):
         # Try direct match (variable already in old I/O name)
         if new_varname in ds:
             da = ds[new_varname]
-            return extract_layer(da, layer_spec) if da.ndim > 2 else np.array(da)
+            return extract_layer(da, layer_spec) if _has_vertical_dim(da) \
+                else np.array(da)
         raise KeyError(
             f"Variable '{new_varname}' not found in old I/O dataset. "
             f"Available: {list(ds.data_vars)}"
@@ -270,7 +293,8 @@ def extract_oldio_var(ds, new_varname: str, layer_spec):
     da = ds[old_varname]
 
     # Handle vector fields: shape is (time, nodes, levels, 2) for 3D
-    # or (time, nodes, 2) for 2D
+    # or (time, nodes, 2) for 2D, or (nodes, levels, 2) / (nodes, 2)
+    # after isel(time=t).
     comp_idx = VECTOR_COMPONENT.get(new_varname)
     if comp_idx is not None:
         arr = np.array(da)
@@ -283,17 +307,17 @@ def extract_oldio_var(ds, new_varname: str, layer_spec):
             )
         # Extract the component
         arr = np.take(arr, comp_idx, axis=two_ax)
-        # Now arr is (time, nodes) or (time, nodes, levels)
-        # Wrap back into a simple array for extract_layer
+        # Rebuild dims without the 'two' axis for extract_layer
         import xarray as xr
-        # Rebuild dims without the 'two' axis
         new_dims = [d for i, d in enumerate(da.dims) if i != two_ax]
         da_comp = xr.DataArray(arr, dims=new_dims)
-        return extract_layer(da_comp, layer_spec) if da_comp.ndim > 2 \
+        return extract_layer(da_comp, layer_spec) if _has_vertical_dim(da_comp) \
             else np.array(da_comp)
 
-    # Simple scalar variable
-    if da.ndim > 2:
+    # Simple scalar variable — use _has_vertical_dim instead of ndim > 2
+    # so that post-isel(time=t) arrays of shape (node, nVert) are correctly
+    # reduced to (node,) rather than returned as-is.
+    if _has_vertical_dim(da):
         return extract_layer(da, layer_spec)
     return np.array(da)
 

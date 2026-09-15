@@ -88,17 +88,31 @@ def squeue_line_for(jobname):
             return line.strip()
     return None
 
-
 def _clean_outputs():
     """Delete stale output stacks and mirror.out before (re)submitting."""
     outdir = Path(RUNDIR) / "outputs"
     deleted = []
+    # Delete per-rank partition files (*_NNNNNN_N.nc pattern)
     for f in sorted(outdir.glob("*_*.nc")):
         if f.name.startswith("hotstart_it="):
             continue
         if re.search(r"_\d+$", f.stem):
             f.unlink()
             deleted.append(f.name)
+    # Also delete any already-combined schout_N.nc files — these may be
+    # stale from a previous run attempt if a CD job combined them after
+    # auto_hotstart already restarted SCHISM from scratch.
+    for f in sorted(outdir.glob("schout_*.nc")):
+        if re.match(r"^schout_\d+\.nc$", f.name):
+            f.unlink()
+            deleted.append(f.name)
+    # Delete combine and diag sentinels so stacks are reprocessed
+    for f in sorted(outdir.glob("combine_*.done")):
+        f.unlink()
+        deleted.append(f.name)
+    for f in sorted(outdir.glob("diag_oldio_*.done")):
+        f.unlink()
+        deleted.append(f.name)
     mirror = outdir / "mirror.out"
     if mirror.exists():
         mirror.unlink()
@@ -108,8 +122,7 @@ def _clean_outputs():
         for name in deleted:
             log(f"  deleted: {name}")
     else:
-        log("outputs/ is clean (no stale stacks or mirror.out to remove).")
-
+        log("outputs/ is clean (no stale stacks or mirror.out to remove.")
 
 def submit(script):
     rc, out = sh(f"sbatch {script}")

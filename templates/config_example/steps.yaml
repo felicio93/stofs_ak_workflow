@@ -47,6 +47,9 @@ gen_hotstart: false   # Step F: create hotstart.nc (once, first month only, SLUR
 gen_3Dth:     false   # Step G: create *[23D].th.nc files (SLURM array, one job per month)
 gen_nudge:    false   # Step H: create TEM/SAL_nu.nc files (SLURM array, one job per month)
 
+# SCHISM Modules
+gen_wwminput: false   # Step WWM: generate wwminput.nml from template + param.nml + station.in
+
 # =============================================================================
 # Phase 4 — Run management
 # Run with:  stofs-ak --run --phase run --config <config_dir>

@@ -1,0 +1,40 @@
+# =============================================================================
+# schism_wwm.yaml — SCHISM+WWM coupled model specific parameters
+# =============================================================================
+# Copied into your project's config/ directory when model_type: schism_wwm.
+# Loaded automatically by workflow.core.config.load_config.
+#
+# This file controls only the parameters that cannot be derived from
+# param.nml or station.in. All WWM physics parameters (source terms,
+# numerical methods, boundary conditions, etc.) are taken directly from
+# the user-provided fix/wwminput.nml template.
+
+# -----------------------------------------------------------------------------
+# WWM station output settings
+# -----------------------------------------------------------------------------
+# Cutoff frequency [Hz] applied to all stations in the STATION block.
+# Corresponds to CUTOFF in wwminput.nml (format: N*value).
+wwm_cutoff_freq: 0.35
+
+# Station output format: 'NC' (netCDF), 'STE', or 'NO' (no output).
+wwm_outstyle_station: 'NC'
+
+# 1D spectral output at stations (LSP1D in wwminput.nml)
+wwm_lsp1d: true
+
+# 2D spectral output at stations (LSP2D in wwminput.nml)
+wwm_lsp2d: true
+
+# -----------------------------------------------------------------------------
+# WWM hotfile output settings
+# -----------------------------------------------------------------------------
+# Hotfile output interval in seconds (DELTC in &HOTFILE).
+# Should be set to match nhot_write * dt in param.nml so that SCHISM and
+# WWM hotstarts are written at the same time.
+wwm_deltc_hotfile: 86400.0
+
+# -----------------------------------------------------------------------------
+# WWM project name (PROCNAME in &PROC)
+# If null, defaults to R{project_id}_{YYYYMM} (e.g. R01_202409)
+# -----------------------------------------------------------------------------
+wwm_procname: null

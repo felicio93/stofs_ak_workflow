@@ -222,7 +222,7 @@ def _render_combine_output_sbatch(cfg: dict, mdir: Path, rdir: Path,
         "PARTITION":        slurm.get("partition",               "hercules-2"),
         "COMBINE_NODES":    str(combine_nodes),
         "COMBINE_NRANKS":   str(combine_nranks),
-        "COMBINE_WALLTIME": slurm.get("combine_output_walltime", "02:00:00"),
+        "COMBINE_WALLTIME": slurm.get("combine_output_walltime", "04:00:00"),
         "LOGDIR":           str(mdir / "logs"),
         "MAILUSER":         slurm.get("mail_user",
                                       "felicio.cassalho@noaa.gov"),
@@ -264,7 +264,7 @@ def _render_combine_diag_sbatch(cfg: dict, mdir: Path, rdir: Path,
         "PARTITION":             slurm.get("partition",                "hercules-2"),
         "COMBINE_DIAG_NODES":    str(diag_nodes),
         "COMBINE_DIAG_NRANKS":   str(diag_nranks),
-        "COMBINE_DIAG_WALLTIME": slurm.get("combine_diag_walltime",   "01:00:00"),
+        "COMBINE_DIAG_WALLTIME": slurm.get("combine_diag_walltime",   "04:00:00"),
         "LOGDIR":                str(mdir / "logs"),
         "MAILUSER":              slurm.get("mail_user",
                                            "felicio.cassalho@noaa.gov"),
@@ -277,8 +277,6 @@ def _render_combine_diag_sbatch(cfg: dict, mdir: Path, rdir: Path,
     text = COMBINE_DIAG_SBATCH_TEMPLATE.read_text()
     for k, v in subs.items():
         text = text.replace("{{" + k + "}}", str(v))
-    out = rdir / "run_diag_oldio.sbatch"
-    out.write_text(out.read_text() if False else text)  # write fresh
     out_path = rdir / "run_diag_oldio.sbatch"
     out_path.write_text(text)
     return out_path

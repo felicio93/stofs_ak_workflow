@@ -266,7 +266,7 @@ def _oldio_completed_stacks(run_finished: bool = False) -> list:
             continue
         # Complete if next stack exists or run finished
         next_exists = (outdir / f"schout_000000_{n + 1}.nc").exists()
-        if next_exists or (run_finished and n == max_stack):
+        if next_exists or run_finished: #(run_finished and n == max_stack):
             complete.append(n)
 
     return complete

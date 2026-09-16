@@ -3,7 +3,7 @@
 # SLURM job array template for gen_3Dth (one task per group).
 # Rendered/submitted by workflow.models.schism.preprocess.gen_hycom_utils.
 # gen_3Dth_from_nc.in is written per-group into I{ID}_{group_id}/ by
-# gen_hycom_utils.py and symlinked from there (not from bin/).
+# gen_hycom_utils.py — it is already present in IDIR, no symlink needed.
 # =============================================================================
 #SBATCH -D {{WORKDIR}}
 #SBATCH -J {{JOBNAME}}
@@ -45,10 +45,16 @@ for f in hgrid.gr3 hgrid.ll vgrid.in estuary.gr3; do
     [ -L "$f" ] || ln -sf {{FIXDIR}}/$f .
 done
 
-# Symlink .in file from IDIR (written per-group by gen_hycom_utils.py)
-# and executable from bin/
-[ -L "gen_3Dth_from_nc.in" ] || ln -sf "${IDIR}/gen_3Dth_from_nc.in" .
-[ -L "{{GEN3DTH_EXE}}" ]     || ln -sf {{BINDIR}}/{{GEN3DTH_EXE}} .
+# gen_3Dth_from_nc.in is already in IDIR (written by gen_hycom_utils.py)
+# — no symlink needed, just verify it exists
+if [ ! -f "gen_3Dth_from_nc.in" ]; then
+    echo "ERROR: gen_3Dth_from_nc.in not found in ${IDIR}"
+    echo "  Run:  stofs-ak --run --only gen_3Dth --config <cfg>"
+    exit 1
+fi
+
+# Symlink executable from bin/
+[ -L "{{GEN3DTH_EXE}}" ] || ln -sf {{BINDIR}}/{{GEN3DTH_EXE}} .
 
 echo ""
 echo "  REMINDER: _noscaling executable -- expects unpacked floats."

@@ -5,9 +5,21 @@ UfsSchismDriver — orchestrates all phases for the UFS-SCHISM model.
 
 Works for all grouping modes (monthly, ndays/weekly/daily).
 Group IDs are either YYYYMM (monthly) or YYYYMMDD (ndays).
+
+Resilience against all-flags-on steps.yaml
+-------------------------------------------
+DTN-only Phase 1 download steps (download_hycom, download_era5,
+download_glofas) catch DtnRequiredError and print [N/A] instead of
+crashing, allowing --phase all to continue on a login node.
 """
 
 from workflow.models.base import ModelDriver
+from workflow.core.environment import DtnRequiredError
+
+
+def _na(step: str, reason: str):
+    """Print a standardised [N/A] line for a skipped step."""
+    print(f"[N/A]  {step}  ({reason})")
 
 
 class UfsSchismDriver(ModelDriver):
@@ -39,30 +51,49 @@ class UfsSchismDriver(ModelDriver):
             print("[SKIP] inspect_mesh")
 
         # =====================================================================
-        # Phase 1: downloads (DTN, internet required)
+        # Phase 1: downloads (DTN only)
+        # Catch DtnRequiredError so --phase all on a login node
+        # skips gracefully instead of crashing.
         # =====================================================================
         if en("download_hycom"):
-            print("[STEP] download_hycom")
-            from workflow.downloaders.hycom import run_download
-            run_download(cfg)
+            try:
+                print("[STEP] download_hycom")
+                from workflow.downloaders.hycom import (
+                    run_download,
+                )
+                run_download(cfg)
+            except DtnRequiredError as exc:
+                _na("download_hycom",
+                    f"DTN required — run separately on the "
+                    f"DTN.\n         {exc}")
         else:
             print("[SKIP] download_hycom")
 
         if en("download_era5"):
-            print("[STEP] download_era5")
-            from workflow.downloaders.era5 import (
-                run_download_era5,
-            )
-            run_download_era5(cfg)
+            try:
+                print("[STEP] download_era5")
+                from workflow.downloaders.era5 import (
+                    run_download_era5,
+                )
+                run_download_era5(cfg)
+            except DtnRequiredError as exc:
+                _na("download_era5",
+                    f"DTN required — run separately on the "
+                    f"DTN.\n         {exc}")
         else:
             print("[SKIP] download_era5")
 
         if en("download_glofas"):
-            print("[STEP] download_glofas")
-            from workflow.downloaders.glofas import (
-                run_download_glofas,
-            )
-            run_download_glofas(cfg)
+            try:
+                print("[STEP] download_glofas")
+                from workflow.downloaders.glofas import (
+                    run_download_glofas,
+                )
+                run_download_glofas(cfg)
+            except DtnRequiredError as exc:
+                _na("download_glofas",
+                    f"DTN required — run separately on the "
+                    f"DTN.\n         {exc}")
         else:
             print("[SKIP] download_glofas")
 
@@ -300,6 +331,15 @@ class UfsSchismDriver(ModelDriver):
         else:
             print("[SKIP] gen_nudge")
 
+        # =====================================================================
+        # WWM-only steps: skip silently for UFS-SCHISM
+        # =====================================================================
+        for step in ("gen_wwmbnd", "gen_wwminput"):
+            if en(step):
+                _na(step,
+                    "SCHISM+WWM only, skipped for "
+                    "model_type=ufs_schism")
+
         return _slurm_jobs
 
     # -------------------------------------------------------------------------
@@ -315,6 +355,7 @@ class UfsSchismDriver(ModelDriver):
     # Phase 5 — Post-processing
     # UFS-SCHISM produces identical SCHISM output so the SCHISM
     # postprocessing pipeline is reused without modification.
+    # DTN-step resilience is handled inside postprocess_phase().
     # -------------------------------------------------------------------------
     def postprocess(self, only: str = None):
         from workflow.models.schism.postprocess import (

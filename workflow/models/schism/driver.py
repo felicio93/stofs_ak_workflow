@@ -5,11 +5,43 @@ SchismDriver — orchestrates all phases for the standalone SCHISM model.
 
 Works for all grouping modes (monthly, ndays/weekly/daily).
 Group IDs are either YYYYMM (monthly) or YYYYMMDD (ndays).
+
+Resilience against all-flags-on steps.yaml
+-------------------------------------------
+* UFS-SCHISM-only steps (gen_datm, copy_fd_ufs, etc.) are silently
+  skipped with a [N/A] tag — they are irrelevant for model_type=schism.
+* SCHISM+WWM-only steps (gen_wwmbnd, gen_wwminput) are similarly
+  skipped with [N/A].
+* DTN-only Phase 1 download steps (download_hycom, download_era5,
+  download_glofas) catch DtnRequiredError and print [N/A] instead of
+  crashing, allowing --phase all to continue on a login node.
 """
 
 from pathlib import Path
 
 from workflow.models.base import ModelDriver
+from workflow.core.environment import DtnRequiredError
+
+# Steps that belong to UFS-SCHISM only.
+# Silently skipped when model_type is schism or schism_wwm.
+_UFS_ONLY_STEPS = {
+    "gen_datm", "plot_datm", "gen_esmf_mesh",
+    "gen_datm_in", "gen_datm_streams",
+    "copy_fd_ufs", "copy_noahmptable",
+    "gen_model_configure", "copy_modulefiles",
+    "gen_ufs_configure",
+}
+
+# Steps that belong to SCHISM+WWM only.
+# Silently skipped when model_type is schism (standalone).
+_WWM_ONLY_STEPS = {
+    "gen_wwmbnd", "gen_wwminput",
+}
+
+
+def _na(step: str, reason: str):
+    """Print a standardised [N/A] line for a skipped step."""
+    print(f"[N/A]  {step}  ({reason})")
 
 
 class SchismDriver(ModelDriver):
@@ -26,7 +58,7 @@ class SchismDriver(ModelDriver):
 
         _slurm_jobs = []
 
-        # --- Phase 0: mesh diagnostics ---
+        # ---- Phase 0: mesh diagnostics ----
         if en("inspect_mesh"):
             print("[STEP] inspect_mesh")
             from workflow.diagnostics.submit_inspect_mesh import (
@@ -38,33 +70,67 @@ class SchismDriver(ModelDriver):
         else:
             print("[SKIP] inspect_mesh")
 
-        # --- Phase 1: downloads (DTN) ---
+        # ---- Phase 1: downloads (DTN only) ----
+        # Catch DtnRequiredError so --phase all on a login node
+        # skips gracefully instead of crashing.
+
         if en("download_hycom"):
-            print("[STEP] download_hycom")
-            from workflow.downloaders.hycom import run_download
-            run_download(cfg)
+            try:
+                print("[STEP] download_hycom")
+                from workflow.downloaders.hycom import (
+                    run_download,
+                )
+                run_download(cfg)
+            except DtnRequiredError as exc:
+                _na("download_hycom",
+                    f"DTN required — run separately on the "
+                    f"DTN.\n         {exc}")
         else:
             print("[SKIP] download_hycom")
 
         if en("download_era5"):
-            print("[STEP] download_era5")
-            from workflow.downloaders.era5 import (
-                run_download_era5,
-            )
-            run_download_era5(cfg)
+            try:
+                print("[STEP] download_era5")
+                from workflow.downloaders.era5 import (
+                    run_download_era5,
+                )
+                run_download_era5(cfg)
+            except DtnRequiredError as exc:
+                _na("download_era5",
+                    f"DTN required — run separately on the "
+                    f"DTN.\n         {exc}")
         else:
             print("[SKIP] download_era5")
 
         if en("download_glofas"):
-            print("[STEP] download_glofas")
-            from workflow.downloaders.glofas import (
-                run_download_glofas,
-            )
-            run_download_glofas(cfg)
+            try:
+                print("[STEP] download_glofas")
+                from workflow.downloaders.glofas import (
+                    run_download_glofas,
+                )
+                run_download_glofas(cfg)
+            except DtnRequiredError as exc:
+                _na("download_glofas",
+                    f"DTN required — run separately on the "
+                    f"DTN.\n         {exc}")
         else:
             print("[SKIP] download_glofas")
 
-        # --- Phase 2: processing ---
+        # ---- UFS-only steps: skip silently ----
+        for step in sorted(_UFS_ONLY_STEPS):
+            if en(step):
+                _na(step,
+                    "UFS-SCHISM only, skipped for "
+                    "model_type=schism")
+
+        # ---- WWM-only steps: skip silently ----
+        for step in sorted(_WWM_ONLY_STEPS):
+            if en(step):
+                _na(step,
+                    "SCHISM+WWM only, skipped for "
+                    "model_type=schism")
+
+        # ---- Phase 2: processing ----
         if en("aggregate_hycom"):
             print("[STEP] aggregate_hycom")
             from workflow.models.schism.preprocess.aggregate_hycom import (
@@ -111,7 +177,7 @@ class SchismDriver(ModelDriver):
         else:
             print("[SKIP] plot_sflux")
 
-        # --- Phase 3: SCHISM preprocessing ---
+        # ---- Phase 3: SCHISM preprocessing ----
         if en("gen_estuary"):
             print("[STEP] gen_estuary")
             from workflow.models.schism.preprocess.gen_estuary import (

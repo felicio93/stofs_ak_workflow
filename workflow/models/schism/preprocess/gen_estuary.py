@@ -3,27 +3,25 @@ models/schism/preprocess/gen_estuary.py
 ==============
 Step A (interactive, run once before any SCHISM Fortran steps).
 
-Does three things:
+Does two things:
 1. Reads fix/hgrid.gr3, applies the estuary depth threshold from domain.yaml,
    and writes fix/estuary.gr3 (0 = open ocean, 1 = estuary/shallow).
-2. Generates the three Fortran .in control files into M{ID}/bin/:
-       gen_hot_from_nc.in
-       gen_3Dth_from_nc.in
-       gen_nudge_from_nc.in
-3. Prints important reminders about the lon convention and no-scaling
-   assumption that must be respected when running the Fortran executables.
+2. Generates gen_hot_from_nc.in into M{ID}/bin/ (this file does not
+   contain a stack ceiling so it is safe to write once).
+
+NOTE: gen_3Dth_from_nc.in and gen_nudge_from_nc.in are NO LONGER written
+here. They are written per-group by gen_hycom_utils.py because they contain
+the stack ceiling value which depends on the group length.
 
 All outputs are skipped if they already exist (safe to re-run).
 
 IMPORTANT NOTES printed at runtime:
   LON CONVENTION : The Fortran line 'lon=lon-360' is commented out in the
-                   _noscaling executables.  This is correct ONLY when both
+                   _noscaling executables. This is correct ONLY when both
                    hgrid.ll AND the HYCOM files use the same 0-360 convention.
   NO SCALING     : The _noscaling executables expect UNPACKED float data.
                    Our HYCOM files are unpacked at download (ncpdq -U).
-                   DO NOT use the stock SCHISM executables -- they apply
-                   scale_factor/add_offset a second time, giving wrong values.
-                   rjunk = -29999.0 (fill-value detection for unpacked data).
+                   DO NOT use the stock SCHISM executables.
 """
 
 import sys
@@ -50,6 +48,12 @@ REMINDERS = """
   ║     DO NOT use stock SCHISM executables -- they apply    ║
   ║     scale_factor/add_offset again -> completely wrong.   ║
   ║     Fill value detection: rjunk = -29999.0               ║
+  ║                                                          ║
+  ║  3. STACK CEILING (.in files)                            ║
+  ║     gen_3Dth_from_nc.in and gen_nudge_from_nc.in are     ║
+  ║     written per-group by gen_hycom_utils.py because they ║
+  ║     encode the stack ceiling which depends on group      ║
+  ║     length. Do NOT copy them from bin/ manually.         ║
   ╚══════════════════════════════════════════════════════════╝
 """
 
@@ -59,16 +63,13 @@ def _already_done(paths):
     return all(p.exists() and p.stat().st_size > 0 for p in paths)
 
 
-def generate_estuary_gr3(hgrid_path: Path, out_path: Path, threshold: float):
-    """
-    Read hgrid.gr3 and write estuary.gr3 with the same node/element
-    connectivity but with depth replaced by:
+def generate_estuary_gr3(hgrid_path: Path, out_path: Path,
+                         threshold: float):
+    """Read hgrid.gr3 and write estuary.gr3.
+
+    Node value:
         1  if  depth <= threshold  (estuary / shallow)
         0  otherwise               (open ocean)
-
-    Uses workflow.core.mesh_parser.read_nodes to parse the node block, then
-    reads the raw file a second time only to preserve the exact original
-    formatting of the element and boundary lines unchanged.
     """
     from workflow.core.mesh_parser import read_nodes
 
@@ -81,13 +82,11 @@ def generate_estuary_gr3(hgrid_path: Path, out_path: Path, threshold: float):
     print(f"  Depth threshold: {threshold} m  "
           f"-> {n_estuary:,} estuary nodes / {np_nodes:,} total")
 
-    # Build new node lines with flag replacing depth
     new_node_lines = [
         f"{node_ids[i]} {lons[i]} {lats[i]} {flags[i]:.1f}\n"
         for i in range(np_nodes)
     ]
 
-    # Read the original file to capture ne, and preserve element + boundary lines
     with open(hgrid_path) as f:
         lines = f.readlines()
     ne, _ = map(int, lines[1].split())
@@ -102,56 +101,33 @@ def generate_estuary_gr3(hgrid_path: Path, out_path: Path, threshold: float):
     print(f"  Written: {out_path}")
 
 
-def generate_in_files(bin_dir: Path, cfg: dict):
-    """Generate the three Fortran .in control files into bin_dir."""
+def generate_hot_in(bin_dir: Path, cfg: dict):
+    """Generate gen_hot_from_nc.in into bin_dir.
 
+    This file does NOT contain the stack ceiling, so it is safe to
+    write once and reuse across all groups.
+    """
     et  = float(cfg.get("estuary_temp", 10.0))
     es  = float(cfg.get("estuary_sal",  0.0))
     ot  = float(cfg.get("outside_temp", 10.0))
     os_ = float(cfg.get("outside_sal",  0.0))
-    dt  = float(cfg.get("hycom_dt",     86400.0))
-    ns  = int(cfg.get("nudge_stride",   1))
-    nb  = int(cfg.get("nbin",           60000))
-    mb  = int(cfg.get("mne_bin",        1600))
-    obs = cfg.get("open_boundaries", [1, 2])
-    nob = len(obs)
-    obs_str = " ".join(str(i) for i in obs)
+    nb  = int(cfg.get("nbin",    60000))
+    mb  = int(cfg.get("mne_bin", 1600))
 
-    # --- gen_hot_from_nc.in ---
     hot_in = bin_dir / "gen_hot_from_nc.in"
     hot_content = (
-        f"1                      !1: include vel+elev in hotstart; 0: T,S only\n"
-        f"{et} {es}              !T,S for estuary points (estuary.gr3)\n"
-        f"{ot} {os_}             !T,S for nodes outside HYCOM grid\n"
+        f"1                      "
+        f"!1: include vel+elev in hotstart; 0: T,S only\n"
+        f"{et} {es}              "
+        f"!T,S for estuary points (estuary.gr3)\n"
+        f"{ot} {os_}             "
+        f"!T,S for nodes outside HYCOM grid\n"
         f"1                      !is_xy\n"
         f"{nb}                   !nbin\n"
         f"{mb}                   !mne_bin\n"
     )
     hot_in.write_text(hot_content)
     print(f"  Written: {hot_in}")
-
-    # --- gen_3Dth_from_nc.in ---
-    th_in = bin_dir / "gen_3Dth_from_nc.in"
-    th_content = (
-        f"{ot} {os_}             !T,S for nodes outside HYCOM grid\n"
-        f"{dt}                   !time step in .nc [sec]\n"
-        f"{nob} {obs_str}        !# of open bnds; list of IDs\n"
-        f"34                     !# of days needed (matches the 34-record stack ceiling)\n"
-        f"1                      !# of HYCOM stacks\n"
-    )
-    th_in.write_text(th_content)
-    print(f"  Written: {th_in}")
-
-    # --- gen_nudge_from_nc.in ---
-    nu_in = bin_dir / "gen_nudge_from_nc.in"
-    nu_content = (
-        f"0                      !inu_or_surf (0=nudging output; 1=surface restore)\n"
-        f"{ot} {os_}             !T,S for nodes outside HYCOM grid\n"
-        f"{dt} {ns}              !time step in .nc [sec]; output stride\n"
-        f"1                      !# of nc files (stacks)\n"
-    )
-    nu_in.write_text(nu_content)
-    print(f"  Written: {nu_in}")
 
 
 def run_gen_estuary(cfg: dict):
@@ -166,11 +142,10 @@ def run_gen_estuary(cfg: dict):
     hgrid   = fix_dir / "hgrid.gr3"
     estuary = fix_dir / "estuary.gr3"
     hot_in  = bin_dir / "gen_hot_from_nc.in"
-    th_in   = bin_dir / "gen_3Dth_from_nc.in"
-    nu_in   = bin_dir / "gen_nudge_from_nc.in"
 
     if not hgrid.exists():
-        print(f"ERROR: {hgrid} not found. Copy hgrid.gr3 to fix/ first.")
+        print(f"ERROR: {hgrid} not found. "
+              "Copy hgrid.gr3 to fix/ first.")
         sys.exit(1)
 
     print(f"\n{'='*60}")
@@ -181,18 +156,20 @@ def run_gen_estuary(cfg: dict):
 
     # --- estuary.gr3 ---
     if estuary.exists() and estuary.stat().st_size > 0:
-        print(f"  fix/estuary.gr3 already exists, skipping.")
+        print("  fix/estuary.gr3 already exists, skipping.")
     else:
         generate_estuary_gr3(hgrid, estuary, threshold)
 
-    # --- .in files ---
-    if _already_done([hot_in, th_in, nu_in]):
-        print(f"  bin/*.in files already exist, skipping.")
+    # --- gen_hot_from_nc.in (no stack ceiling — safe to write once) ---
+    if hot_in.exists() and hot_in.stat().st_size > 0:
+        print("  bin/gen_hot_from_nc.in already exists, skipping.")
     else:
-        print(f"\n  Generating Fortran .in control files ...")
-        generate_in_files(bin_dir, cfg)
+        print("\n  Generating gen_hot_from_nc.in ...")
+        generate_hot_in(bin_dir, cfg)
 
     print(f"\n{'='*60}")
     print("  gen_estuary complete.")
+    print("  NOTE: gen_3Dth_from_nc.in and gen_nudge_from_nc.in are")
+    print("  written per-group when gen_3Dth / gen_nudge are submitted.")
     print("  Next: set gen_hotstart/gen_3Dth/gen_nudge = true in steps.yaml")
     print(f"{'='*60}\n")

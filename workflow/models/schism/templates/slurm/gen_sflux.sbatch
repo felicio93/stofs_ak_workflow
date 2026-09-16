@@ -1,13 +1,14 @@
 #!/bin/bash --login
 # =============================================================================
 # SLURM job array template for gen_sflux (ERA5 raw -> SCHISM sflux).
-# One task per month. Rendered/submitted by workflow.models.schism.preprocess.submit_era5.
+# One task per group. Works for monthly (YYYYMM) and ndays (YYYYMMDD) IDs.
+# Rendered/submitted by workflow.models.schism.preprocess.submit_era5.
 # =============================================================================
 #SBATCH -D {{WORKDIR}}
 #SBATCH -J {{JOBNAME}}
 #SBATCH -A {{ACCOUNT}}
 #SBATCH -p {{PARTITION}}
-#SBATCH --array=1-{{NMONTHS}}
+#SBATCH --array=1-{{NGROUPS}}
 #SBATCH -n 1
 #SBATCH --mem={{MEM}}
 #SBATCH -t {{WALLTIME}}
@@ -18,15 +19,15 @@
 
 set -e
 
-MONTH=$(sed -n "${SLURM_ARRAY_TASK_ID}p" {{MANIFEST}})
-echo "=== gen_sflux: array task ${SLURM_ARRAY_TASK_ID} -> month ${MONTH} ==="
+GROUP=$(sed -n "${SLURM_ARRAY_TASK_ID}p" {{MANIFEST}})
+echo "=== gen_sflux: array task ${SLURM_ARRAY_TASK_ID} -> group ${GROUP} ==="
 
 # Skip if already complete (resume safety)
-SENTINEL={{IBASEDIR}}/I{{PID}}_${MONTH}/sflux/gen_sflux.done
+SENTINEL={{IBASEDIR}}/I{{PID}}_${GROUP}/sflux/gen_sflux.done
 if [ -f "${SENTINEL}" ]; then
     echo "Sentinel found -- already complete, exiting."
     exit 0
 fi
 
-{{PY}} {{SCRIPT}} --config {{CONFIG_DIR}} --month "${MONTH}"
-echo "=== gen_sflux complete for month ${MONTH} ==="
+{{PY}} {{SCRIPT}} --config {{CONFIG_DIR}} --group "${GROUP}"
+echo "=== gen_sflux complete for group ${GROUP} ==="

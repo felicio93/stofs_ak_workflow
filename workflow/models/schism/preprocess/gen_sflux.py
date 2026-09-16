@@ -1,79 +1,111 @@
 """
 models/schism/preprocess/gen_sflux.py
 ============
-SLURM worker — converts one month of raw ERA5 data into SCHISM sflux files.
+SLURM worker — converts one group of raw ERA5 data into SCHISM sflux files.
 
-For month YYYYMM, reads raw/era5/YYYY/era5_YYYYMM.nc and writes:
-    I{ID}_YYYYMM/sflux/sflux_air_1.{N}.nc   (N = 1..ndays+1)
-    I{ID}_YYYYMM/sflux/sflux_prc_1.{N}.nc
-    I{ID}_YYYYMM/sflux/sflux_rad_1.{N}.nc
-    I{ID}_YYYYMM/sflux/sflux_inputs.txt
+For group group_id, reads raw/era5/YYYY/era5_YYYYMM.nc (one or more monthly
+ERA5 files covering the group date range) and writes:
+    I{ID}_{group_id}/sflux/sflux_air_1.{N}.nc   (N = 1..ndays+1)
+    I{ID}_{group_id}/sflux/sflux_prc_1.{N}.nc
+    I{ID}_{group_id}/sflux/sflux_rad_1.{N}.nc
+    I{ID}_{group_id}/sflux/sflux_inputs.txt
 
-One EXTRA daily stack (N = ndays+1) covering the first day of the following
-month is always written. SCHISM's sflux reader requires a bracket
-input_times(i) <= t <= input_times(i+1) at every timestep INCLUDING the last
-(t = run end = next month day 1 00Z). Without a record strictly after the run
-end, SCHISM aborts at the final step with "no appropriate time exists for:
-sflux_air_1 ... got_suitable_bracket = F". The extra day extends the combined
-sflux timeline past the run end so the final step always brackets.
-The extra day is read from the next month's ERA5 file when available
-(era5_{next}.nc); otherwise the current month's last day is repeated.
+One EXTRA daily stack (N = ndays+1) covering the first day after the group
+end is always written as a read-ahead bracket so SCHISM never runs out of
+sflux records at the final timestep.
 
-Each daily file contains 25 hourly timesteps (00Z day N to 00Z day N+1),
-matching the pyschism convention for overlap between consecutive files.
-
-SCHISM sflux file naming uses UNPADDED integers (current SCHISM source):
-    sflux_air_1.1.nc, sflux_air_1.2.nc ... sflux_air_1.30.nc
+Each daily file contains 25 hourly timesteps (00Z day N to 00Z day N+1).
 
 Variable derivation:
-    spfh: specific humidity computed from 2m dewpoint (d2m) and MSL pressure
-          using the Magnus formula (same as pyschism):
-          e  = 6.112 * exp(17.67 * Td / (Td + 243.5))    [hPa]
-          spfh = 0.622 * e / (msl*0.01 - 0.378 * e)      [kg/kg]
-    All other variables are passed through directly.
-
-Longitude convention: 0-360 (matching the Bering Sea mesh and HYCOM files).
-ERA5 CDS returns lons in 0-360 for domains east of 180 — no conversion needed.
+    spfh: specific humidity from 2m dewpoint (d2m) and MSL pressure (msl)
+    All other variables passed through directly.
 
 Usage (called by SLURM via workflow.models.schism.preprocess.submit_era5):
-    python -m workflow.models.schism.preprocess.gen_sflux --config <dir> --month YYYYMM
+    python -m workflow.models.schism.preprocess.gen_sflux \
+        --config <dir> --group <group_id>
+
+For backward compatibility --month is also accepted as an alias for --group.
 """
 
 import argparse
 import sys
-from calendar import monthrange
 from datetime import date, timedelta
 from pathlib import Path
 
 import numpy as np
 import netCDF4 as nc4
 
-from workflow.core.config import load_config, model_dir
+from workflow.core.config import (
+    load_config,
+    model_dir,
+    group_date_range,
+    get_group_ndays,
+)
 
 SFLUX_CONVENTIONS = "CF-1.0"
 
 
-def dewpoint_to_spfh(d2m_K: np.ndarray, msl_Pa: np.ndarray) -> np.ndarray:
+# =============================================================================
+# ERA5 file helpers
+# =============================================================================
+
+def _era5_path(mdir: Path, d: date) -> Path:
+    """Return the ERA5 raw file path for a given date."""
+    return mdir / "raw" / "era5" / str(d.year) / f"era5_{d.year}{d.month:02d}.nc"
+
+
+def _open_era5_for_date(mdir: Path, d: date):
+    """Open the ERA5 NetCDF dataset that contains the given date.
+    Returns (nc4.Dataset, time_index) or raises FileNotFoundError.
     """
-    Convert 2m dewpoint (K) and MSL pressure (Pa) to specific humidity (kg/kg).
-    Uses the Magnus formula — same as pyschism.
+    nc_path = _era5_path(mdir, d)
+    if not (nc_path.exists() and nc_path.stat().st_size > 0):
+        raise FileNotFoundError(f"ERA5 file not found: {nc_path}")
+
+    ds         = nc4.Dataset(str(nc_path))
+    times_nc   = ds.variables["valid_time"]
+    all_times  = nc4.num2date(times_nc[:], units=times_nc.units,
+                              only_use_cftime_datetimes=False)
+
+    # Find 00Z of the requested date
+    idx_start = None
+    for i, t in enumerate(all_times):
+        if t.year == d.year and t.month == d.month \
+                and t.day == d.day and t.hour == 0:
+            idx_start = i
+            break
+
+    if idx_start is None:
+        ds.close()
+        raise ValueError(
+            f"00Z for {d} not found in {nc_path.name}")
+
+    return ds, idx_start, all_times
+
+
+# =============================================================================
+# Specific humidity derivation
+# =============================================================================
+
+def dewpoint_to_spfh(d2m_K: np.ndarray,
+                     msl_Pa: np.ndarray) -> np.ndarray:
+    """Convert 2m dewpoint (K) and MSL pressure (Pa) to specific humidity
+    (kg/kg) using the Magnus formula — same as pyschism.
     """
-    Td   = d2m_K - 273.15          # Kelvin → Celsius
-    e    = 6.112 * np.exp((17.67 * Td) / (Td + 243.5))   # vapour pressure [hPa]
-    spfh = (0.622 * e) / (msl_Pa * 0.01 - 0.378 * e)     # specific humidity [kg/kg]
+    Td   = d2m_K - 273.15
+    e    = 6.112 * np.exp((17.67 * Td) / (Td + 243.5))
+    spfh = (0.622 * e) / (msl_Pa * 0.01 - 0.378 * e)
     return spfh.astype(np.float32)
 
+
+# =============================================================================
+# sflux NetCDF writer
+# =============================================================================
 
 def write_sflux_file(path: Path, ftype: str, day_date: date,
                      lon2d: np.ndarray, lat2d: np.ndarray,
                      times_days: np.ndarray, data: dict):
-    """
-    Write one daily sflux NetCDF file (NETCDF3_CLASSIC format).
-
-    ftype: 'air' | 'prc' | 'rad'
-    times_days: array of time in days since midnight of day_date (25 values)
-    data: dict of {varname: array (ntime, ny, nx)}
-    """
+    """Write one daily sflux NetCDF file (NETCDF3_CLASSIC format)."""
     ny, nx = lon2d.shape
     ntime  = len(times_days)
 
@@ -81,44 +113,54 @@ def write_sflux_file(path: Path, ftype: str, day_date: date,
         dst.setncatts({"Conventions": SFLUX_CONVENTIONS})
         dst.createDimension("nx_grid", nx)
         dst.createDimension("ny_grid", ny)
-        dst.createDimension("time", None)   # unlimited
+        dst.createDimension("time", None)
 
-        # lon
         v = dst.createVariable("lon", "f4", ("ny_grid", "nx_grid"))
         v.long_name = "Longitude"; v.standard_name = "longitude"
-        v.units = "degrees_east"
-        v[:] = lon2d
+        v.units = "degrees_east"; v[:] = lon2d
 
-        # lat
         v = dst.createVariable("lat", "f4", ("ny_grid", "nx_grid"))
         v.long_name = "Latitude"; v.standard_name = "latitude"
-        v.units = "degrees_north"
-        v[:] = lat2d
+        v.units = "degrees_north"; v[:] = lat2d
 
-        # time
         v = dst.createVariable("time", "f4", ("time",))
         v.long_name = "Time"; v.standard_name = "time"
-        v.units = f"days since {day_date.year}-{day_date.month}-{day_date.day} 00:00 UTC"
+        v.units = (f"days since {day_date.year}-{day_date.month}"
+                   f"-{day_date.day} 00:00 UTC")
         v.base_date = (day_date.year, day_date.month, day_date.day, 0)
         v[:] = times_days
 
-        # data variables
         var_meta = {
-            "prmsl": ("Pressure reduced to MSL",        "air_pressure_at_sea_level",             "Pa"),
-            "spfh":  ("Surface Specific Humidity (2m AGL)", "specific_humidity",                  "1"),
-            "stmp":  ("Surface Air Temperature (2m AGL)", "air_temperature",                      "K"),
-            "uwind": ("Surface Eastward Air Velocity (10m AGL)", "eastward_wind",                "m/s"),
-            "vwind": ("Surface Northward Air Velocity (10m AGL)", "northward_wind",              "m/s"),
-            "prate": ("Surface Precipitation Rate",      "precipitation_flux",             "kg/m^2/s"),
-            "dlwrf": ("Downward Long Wave Radiation Flux", "surface_downwelling_longwave_flux_in_air", "W/m^2"),
-            "dswrf": ("Downward Short Wave Radiation Flux", "surface_downwelling_shortwave_flux_in_air", "W/m^2"),
+            "prmsl": ("Pressure reduced to MSL",
+                      "air_pressure_at_sea_level", "Pa"),
+            "spfh":  ("Surface Specific Humidity (2m AGL)",
+                      "specific_humidity", "1"),
+            "stmp":  ("Surface Air Temperature (2m AGL)",
+                      "air_temperature", "K"),
+            "uwind": ("Surface Eastward Air Velocity (10m AGL)",
+                      "eastward_wind", "m/s"),
+            "vwind": ("Surface Northward Air Velocity (10m AGL)",
+                      "northward_wind", "m/s"),
+            "prate": ("Surface Precipitation Rate",
+                      "precipitation_flux", "kg/m^2/s"),
+            "dlwrf": ("Downward Long Wave Radiation Flux",
+                      "surface_downwelling_longwave_flux_in_air", "W/m^2"),
+            "dswrf": ("Downward Short Wave Radiation Flux",
+                      "surface_downwelling_shortwave_flux_in_air", "W/m^2"),
         }
         for varname, arr in data.items():
             meta = var_meta[varname]
-            v = dst.createVariable(varname, "f4", ("time", "ny_grid", "nx_grid"))
-            v.long_name = meta[0]; v.standard_name = meta[1]; v.units = meta[2]
+            v = dst.createVariable(
+                varname, "f4", ("time", "ny_grid", "nx_grid"))
+            v.long_name = meta[0]
+            v.standard_name = meta[1]
+            v.units = meta[2]
             v[:] = arr
 
+
+# =============================================================================
+# Per-day sflux data reader
+# =============================================================================
 
 def _pad_last(arr, n):
     """Persist the last time record until arr has n records along axis 0."""
@@ -129,323 +171,225 @@ def _pad_last(arr, n):
     return np.concatenate([arr] + [last] * reps, axis=0)
 
 
-def _next_month_first_step(mdir, year, month):
-    """Return the first (00Z) atmospheric fields of the month after
-    (year, month), read from era5_{YYYYMM+1}.nc, as a dict of 2-D arrays
-    keyed by ERA5 raw variable name (lat DESCENDING, matching the raw file).
-    Returns None if the next-month ERA5 file is not available.
+def _read_day_fields(mdir: Path, d: date) -> dict:
+    """Read the 25-hour ERA5 field block for day d (00Z -> next day 00Z).
 
-    Only the single first time record is read (the 00Z field), which is the
-    25th step of the current month's last day.
+    Returns a dict with keys: u10, v10, msl, t2m, d2m, mtpr, dlwrf, dswrf.
+    All arrays have shape (25, ny, nx) with lat in ASCENDING order.
+    Pads the 25th record if it falls in the next month's file.
+    Returns None if the ERA5 file for d is missing.
     """
-    ny = year + 1 if month == 12 else year
-    nm = 1 if month == 12 else month + 1
-    nxt_path = mdir / "raw" / "era5" / str(ny) / f"era5_{ny}{nm:02d}.nc"
-    if not (nxt_path.exists() and nxt_path.stat().st_size > 0):
+    try:
+        ds, idx_start, all_times = _open_era5_for_date(mdir, d)
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"  WARNING: could not open ERA5 for {d}: {exc}")
         return None
 
-    out = {}
-    with nc4.Dataset(nxt_path) as ds:
-        # First record only (index 0 = 00Z of the next month's day 1).
-        def r(v):
-            return ds.variables[v][0, :, :].astype(np.float32)
-        out["u10"] = r("u10"); out["v10"] = r("v10")
-        out["msl"] = r("msl"); out["t2m"] = r("t2m"); out["d2m"] = r("d2m")
-        prc = "mtpr" if "mtpr" in ds.variables else \
-              "avg_tprate" if "avg_tprate" in ds.variables else None
-        if prc:
-            out["mtpr"] = r(prc)
-        lw = "msdwlwrf" if "msdwlwrf" in ds.variables else \
-             "avg_sdlwrf" if "avg_sdlwrf" in ds.variables else None
-        if lw:
-            out["dlwrf"] = r(lw)
-        sw = "msdwswrf" if "msdwswrf" in ds.variables else \
-             "avg_sdswrf" if "avg_sdswrf" in ds.variables else None
-        if sw:
-            out["dswrf"] = r(sw)
-    return out
-
-
-def _read_next_month_extra_day(mdir, year, month):
-    """Read the FIRST day (25 hourly records: day 1 00Z -> day 2 00Z) of the
-    month following (year, month) from era5_{next}.nc.
-
-    Returns a dict of arrays keyed by sflux variable name
-    (uwind/vwind/prmsl/stmp/spfh derived vars are NOT computed here; raw ERA5
-    fields are returned so the caller derives spfh consistently), with lat
-    already flipped to ASCENDING order to match the main loop, and a matching
-    'day_date' for the extra stack. Returns None if the next-month ERA5 file
-    is unavailable (caller falls back to repeating the current last day).
-    """
-    ny = year + 1 if month == 12 else year
-    nm = 1 if month == 12 else month + 1
-    nxt_path = mdir / "raw" / "era5" / str(ny) / f"era5_{ny}{nm:02d}.nc"
-    if not (nxt_path.exists() and nxt_path.stat().st_size > 0):
-        return None
-
-    with nc4.Dataset(nxt_path) as ds:
-        times_nc  = ds.variables["valid_time"]
-        all_times = nc4.num2date(times_nc[:], units=times_nc.units,
-                                 only_use_cftime_datetimes=False)
-        # First record of the next month must be day 1 00Z.
-        idx_start = None
-        for i, t in enumerate(all_times):
-            if t.year == ny and t.month == nm and t.day == 1 and t.hour == 0:
-                idx_start = i
-                break
-        if idx_start is None:
-            return None
-        idx_end = min(idx_start + 25, len(all_times))
-        sl = slice(idx_start, idx_end)
+    try:
+        idx_end    = idx_start + 25
+        actual_end = min(idx_end, len(all_times))
+        sl         = slice(idx_start, actual_end)
 
         def rd(name_opts):
-            for nm_ in name_opts:
-                if nm_ in ds.variables:
-                    return ds.variables[nm_][sl, ::-1, :].astype(np.float32)
+            for nm in name_opts:
+                if nm in ds.variables:
+                    return ds.variables[nm][sl, ::-1, :].astype(np.float32)
             return None
 
-        out = {
-            "u10": rd(["u10"]), "v10": rd(["v10"]),
-            "msl": rd(["msl"]), "t2m": rd(["t2m"]), "d2m": rd(["d2m"]),
+        fields = {
+            "u10":   rd(["u10"]),
+            "v10":   rd(["v10"]),
+            "msl":   rd(["msl"]),
+            "t2m":   rd(["t2m"]),
+            "d2m":   rd(["d2m"]),
             "mtpr":  rd(["mtpr", "avg_tprate"]),
             "dlwrf": rd(["msdwlwrf", "avg_sdlwrf"]),
             "dswrf": rd(["msdwswrf", "avg_sdswrf"]),
         }
-    out["day_date"] = date(ny, nm, 1)
-    return out
+
+        # Pad to 25 records if we ran out of data in this file
+        n_actual = fields["u10"].shape[0]
+        if n_actual < 25:
+            # Try the 00Z record from the next day's ERA5 file
+            d_next = d + timedelta(days=1)
+            try:
+                ds_next, idx_next, _ = _open_era5_for_date(mdir, d_next)
+                def rd_next(name_opts):
+                    for nm in name_opts:
+                        if nm in ds_next.variables:
+                            return (ds_next.variables[nm]
+                                    [idx_next:idx_next+1, ::-1, :]
+                                    .astype(np.float32))
+                    return None
+                nxt = {
+                    "u10":   rd_next(["u10"]),
+                    "v10":   rd_next(["v10"]),
+                    "msl":   rd_next(["msl"]),
+                    "t2m":   rd_next(["t2m"]),
+                    "d2m":   rd_next(["d2m"]),
+                    "mtpr":  rd_next(["mtpr", "avg_tprate"]),
+                    "dlwrf": rd_next(["msdwlwrf", "avg_sdlwrf"]),
+                    "dswrf": rd_next(["msdwswrf", "avg_sdswrf"]),
+                }
+                ds_next.close()
+                for k in fields:
+                    if fields[k] is not None and nxt[k] is not None:
+                        fields[k] = np.concatenate(
+                            [fields[k], nxt[k]], axis=0)
+                print(f"  {d}: 25th step read from next ERA5 file.")
+            except Exception:
+                pass   # fall through to _pad_last below
+
+        # Final pad for any remaining shortfall
+        for k in fields:
+            if fields[k] is not None:
+                fields[k] = _pad_last(fields[k], 25)
+            else:
+                # Variable missing from file — fill with zeros and warn
+                ny = fields["u10"].shape[1]
+                nx = fields["u10"].shape[2]
+                fields[k] = np.zeros((25, ny, nx), dtype=np.float32)
+                print(f"  WARNING: ERA5 variable missing for {d}, "
+                      f"key={k!r} — filled with zeros.")
+
+        return fields
+
+    finally:
+        ds.close()
 
 
-def gen_sflux_month(cfg: dict, ym: str):
+# =============================================================================
+# Main sflux generation
+# =============================================================================
+
+def gen_sflux_group(cfg: dict, group_id: str):
+    """Generate sflux files for one group (group_id is YYYYMM or YYYYMMDD)."""
     pid   = cfg["project_id"]
     mdir  = model_dir(cfg)
-    year  = int(ym[:4])
-    month = int(ym[4:])
-    ndays = monthrange(year, month)[1]
 
-    raw_path  = mdir / "raw" / "era5" / str(year) / f"era5_{ym}.nc"
-    sflux_dir = mdir / f"I{pid}" / f"I{pid}_{ym}" / "sflux"
+    gstart, gend = group_date_range(cfg, group_id)
+    ndays        = get_group_ndays(cfg, group_id)
+
+    sflux_dir = mdir / f"I{pid}" / f"I{pid}_{group_id}" / "sflux"
     sentinel  = sflux_dir / "gen_sflux.done"
 
     if sentinel.exists():
-        print(f"  gen_sflux: {ym} already complete (sentinel found). Skipping.")
+        print(f"  gen_sflux: {group_id} already complete "
+              f"(sentinel found). Skipping.")
         return
 
-    if not raw_path.exists():
-        print(f"ERROR: raw ERA5 file not found: {raw_path}")
+    sflux_dir.mkdir(parents=True, exist_ok=True)
+    print(f"\n--- gen_sflux {group_id}  "
+          f"({gstart} -> {gend}, {ndays} days) -> {sflux_dir} ---")
+
+    # Read coordinates from the ERA5 file for the group start date
+    era5_first = _era5_path(mdir, gstart)
+    if not (era5_first.exists() and era5_first.stat().st_size > 0):
+        print(f"ERROR: ERA5 file not found: {era5_first}")
         sys.exit(1)
 
-    sflux_dir.mkdir(parents=True, exist_ok=True)
-    print(f"\n--- gen_sflux {ym} -> {sflux_dir} ---")
+    with nc4.Dataset(str(era5_first)) as ds:
+        lons_1d = ds.variables["longitude"][:]    # 0..360
+        lats_1d = ds.variables["latitude"][::-1]  # ascending
+    lon2d, lat2d = np.meshgrid(lons_1d, lats_1d)
 
-    _last = None   # last day's fields, for the extra-stack pad fallback
-    with nc4.Dataset(raw_path) as ds:
-        # Coordinates — ERA5 returns lat in descending order; flip to ascending
-        lons_1d = ds.variables["longitude"][:]   # 0..360
-        lats_1d = ds.variables["latitude"][::-1] # ascending
-        lon2d, lat2d = np.meshgrid(lons_1d, lats_1d)
+    _last_fields = None   # saved for read-ahead pad fallback
 
-        times_nc  = ds.variables["valid_time"]
-        all_times = nc4.num2date(times_nc[:], units=times_nc.units,
-                                 only_use_cftime_datetimes=False)
+    # --- Write one daily stack per group day ---
+    for day_offset in range(ndays):
+        d     = gstart + timedelta(days=day_offset)
+        stack = str(day_offset + 1)   # 1-based, unpadded
 
-        for iday in range(1, ndays + 1):
-            day_date = date(year, month, iday)
+        fields = _read_day_fields(mdir, d)
+        if fields is None:
+            print(f"  ERROR: could not read ERA5 for {d}. "
+                  f"Check that download_era5 has run.")
+            sys.exit(1)
 
-            # Find the 25-hour window for this day (00Z → next day 00Z)
-            day_str = day_date.strftime("%Y-%m-%d")
-            idx_start = None
-            for i, t in enumerate(all_times):
-                if (t.year == year and t.month == month and
-                        t.day == iday and t.hour == 0):
-                    idx_start = i
-                    break
+        spfh       = dewpoint_to_spfh(fields["d2m"], fields["msl"])
+        times_days = np.array([h / 24.0 for h in range(25)],
+                              dtype=np.float32)
 
-            if idx_start is None:
-                print(f"  WARNING: could not find 00Z for {day_str} in ERA5 file, skipping.")
-                continue
+        write_sflux_file(
+            sflux_dir / f"sflux_air_1.{stack}.nc", "air", d,
+            lon2d, lat2d, times_days,
+            {"prmsl": fields["msl"], "spfh": spfh,
+             "stmp":  fields["t2m"],
+             "uwind": fields["u10"], "vwind": fields["v10"]})
+        write_sflux_file(
+            sflux_dir / f"sflux_prc_1.{stack}.nc", "prc", d,
+            lon2d, lat2d, times_days,
+            {"prate": fields["mtpr"]})
+        write_sflux_file(
+            sflux_dir / f"sflux_rad_1.{stack}.nc", "rad", d,
+            lon2d, lat2d, times_days,
+            {"dlwrf": fields["dlwrf"], "dswrf": fields["dswrf"]})
 
-            # 25 timesteps: 00Z day N to 00Z day N+1
-            idx_end = idx_start + 25
-            # If last day of file, we may only have 24 hours — pad with last value
-            actual_end = min(idx_end, len(all_times))
-            sl = slice(idx_start, actual_end)
+        print(f"  {d}: air+prc+rad written (stack {stack})")
+        _last_fields = fields
 
-            # Read raw fields (flip lat to match ascending order)
-            u10  = ds.variables["u10"][sl, ::-1, :].astype(np.float32)
-            v10  = ds.variables["v10"][sl, ::-1, :].astype(np.float32)
-            msl  = ds.variables["msl"][sl, ::-1, :].astype(np.float32)
-            t2m  = ds.variables["t2m"][sl, ::-1, :].astype(np.float32)
-            d2m  = ds.variables["d2m"][sl, ::-1, :].astype(np.float32)
+    # --- Extra read-ahead stack (ndays+1) ---
+    extra_stack = str(ndays + 1)
+    d_extra     = gend + timedelta(days=1)
 
-            # Precipitation: try both variable name conventions
-            prc_var = "mtpr" if "mtpr" in ds.variables else \
-                      "avg_tprate" if "avg_tprate" in ds.variables else None
-            if prc_var:
-                mtpr = ds.variables[prc_var][sl, ::-1, :].astype(np.float32)
-            else:
-                mtpr = np.zeros_like(u10)
-                print(f"  WARNING: precipitation variable not found for {day_str}")
+    fields_extra = _read_day_fields(mdir, d_extra)
+    if fields_extra is not None:
+        src_note = f"from ERA5 ({d_extra})"
+    elif _last_fields is not None:
+        # Repeat last day shifted to the next calendar day
+        fields_extra = _last_fields
+        src_note     = "pad-repeated from last day (next ERA5 unavailable)"
+    else:
+        fields_extra = None
+        src_note     = "SKIPPED (no next ERA5 and no last day)"
 
-            # Radiation: try both variable name conventions
-            lw_var = "msdwlwrf" if "msdwlwrf" in ds.variables else \
-                     "avg_sdlwrf" if "avg_sdlwrf" in ds.variables else None
-            sw_var = "msdwswrf" if "msdwswrf" in ds.variables else \
-                     "avg_sdswrf" if "avg_sdswrf" in ds.variables else None
+    if fields_extra is not None:
+        spfh       = dewpoint_to_spfh(fields_extra["d2m"],
+                                      fields_extra["msl"])
+        times_days = np.array([h / 24.0 for h in range(25)],
+                              dtype=np.float32)
+        write_sflux_file(
+            sflux_dir / f"sflux_air_1.{extra_stack}.nc", "air", d_extra,
+            lon2d, lat2d, times_days,
+            {"prmsl": fields_extra["msl"], "spfh": spfh,
+             "stmp":  fields_extra["t2m"],
+             "uwind": fields_extra["u10"], "vwind": fields_extra["v10"]})
+        write_sflux_file(
+            sflux_dir / f"sflux_prc_1.{extra_stack}.nc", "prc", d_extra,
+            lon2d, lat2d, times_days,
+            {"prate": fields_extra["mtpr"]})
+        write_sflux_file(
+            sflux_dir / f"sflux_rad_1.{extra_stack}.nc", "rad", d_extra,
+            lon2d, lat2d, times_days,
+            {"dlwrf": fields_extra["dlwrf"],
+             "dswrf": fields_extra["dswrf"]})
+        print(f"  {d_extra}: EXTRA read-ahead stack {extra_stack} "
+              f"written ({src_note}).")
+    else:
+        print(f"  WARNING: extra read-ahead stack {extra_stack} {src_note}.")
 
-            dlwrf = ds.variables[lw_var][sl, ::-1, :].astype(np.float32) if lw_var else np.zeros_like(u10)
-            dswrf = ds.variables[sw_var][sl, ::-1, :].astype(np.float32) if sw_var else np.zeros_like(u10)
-
-            if lw_var is None:
-                print(f"  WARNING: longwave radiation variable not found for {day_str}")
-            if sw_var is None:
-                print(f"  WARNING: shortwave radiation variable not found for {day_str}")
-
-            # Pad to 25 if needed.
-            #
-            # The current month's ERA5 file ends at 23Z of the last calendar
-            # day, so the last day's 25th step (00Z of the next month's first
-            # day) is not in this file. For all days EXCEPT the last, the 25th
-            # step is the next day's 00Z which IS present, so no padding runs.
-            #
-            # For the LAST day of the month we read the true 00Z field from the
-            # next month's ERA5 file (era5_{YYYYMM+1}.nc) instead of persisting
-            # the 23Z value. This gives a correct, continuous atmospheric
-            # forcing across the month boundary. If the next-month file is not
-            # available (e.g. the final project month), we fall back to padding.
-            n_actual = u10.shape[0]
-            if n_actual < 25 and iday == ndays:
-                nxt = _next_month_first_step(mdir, year, month)
-                if nxt is not None:
-                    def app(arr, key):
-                        return np.concatenate([arr, nxt[key][np.newaxis, ::-1, :]], axis=0)
-                    u10  = app(u10,  "u10");  v10  = app(v10,  "v10")
-                    msl  = app(msl,  "msl");  t2m  = app(t2m,  "t2m")
-                    d2m  = app(d2m,  "d2m")
-                    mtpr = app(mtpr, "mtpr") if "mtpr" in nxt else _pad_last(mtpr, 25)
-                    dlwrf = app(dlwrf, "dlwrf") if "dlwrf" in nxt else _pad_last(dlwrf, 25)
-                    dswrf = app(dswrf, "dswrf") if "dswrf" in nxt else _pad_last(dswrf, 25)
-                    print(f"    {day_str}: 25th step read from next month's ERA5 00Z.")
-                    n_actual = u10.shape[0]
-
-            # Any remaining shortfall (e.g. last project month with no next
-            # file, or a mid-file gap) is filled by persisting the last value.
-            if n_actual < 25:
-                u10 = _pad_last(u10, 25); v10 = _pad_last(v10, 25)
-                msl = _pad_last(msl, 25); t2m = _pad_last(t2m, 25)
-                d2m = _pad_last(d2m, 25); mtpr = _pad_last(mtpr, 25)
-                dlwrf = _pad_last(dlwrf, 25); dswrf = _pad_last(dswrf, 25)
-
-            spfh = dewpoint_to_spfh(d2m, msl)
-
-            # Time axis: days since midnight of this day (0/24 ... 24/24)
-            times_days = np.array([h / 24.0 for h in range(25)], dtype=np.float32)
-
-            # Stack index (1-based, unpadded — current SCHISM convention)
-            stack = str(iday)
-
-            # Write sflux_air
-            write_sflux_file(
-                sflux_dir / f"sflux_air_1.{stack}.nc", "air", day_date,
-                lon2d, lat2d, times_days,
-                {"prmsl": msl, "spfh": spfh, "stmp": t2m,
-                 "uwind": u10, "vwind": v10})
-
-            # Write sflux_prc
-            write_sflux_file(
-                sflux_dir / f"sflux_prc_1.{stack}.nc", "prc", day_date,
-                lon2d, lat2d, times_days,
-                {"prate": mtpr})
-
-            # Write sflux_rad
-            write_sflux_file(
-                sflux_dir / f"sflux_rad_1.{stack}.nc", "rad", day_date,
-                lon2d, lat2d, times_days,
-                {"dlwrf": dlwrf, "dswrf": dswrf})
-
-            print(f"  {day_str}: air+prc+rad written (stack {stack})")
-
-            # Remember the LAST day's fields for the extra-stack pad fallback.
-            if iday == ndays:
-                _last = {
-                    "u10": u10, "v10": v10, "msl": msl, "t2m": t2m, "d2m": d2m,
-                    "mtpr": mtpr, "dlwrf": dlwrf, "dswrf": dswrf,
-                }
-
-        # -------------------------------------------------------------------
-        # EXTRA stack (ndays+1): first day of the NEXT month.
-        #
-        # SCHISM's sflux reader needs a bracket input_times(i) <= t <=
-        # input_times(i+1) at EVERY step, including the final one at the run
-        # end (next month day 1 00Z). Without a record strictly after the run
-        # end it aborts with "no appropriate time exists for: sflux_air_1".
-        # We write one more daily stack covering next-month day 1 00Z -> day 2
-        # 00Z, read from the next month's ERA5 file when available (option A),
-        # else by repeating the current month's last day (option B).
-        # -------------------------------------------------------------------
-        extra_stack = ndays + 1
-        nxt = _read_next_month_extra_day(mdir, year, month)
-        if nxt is not None and nxt.get("u10") is not None:
-            xd   = nxt["day_date"]
-            u10  = _pad_last(nxt["u10"], 25); v10 = _pad_last(nxt["v10"], 25)
-            msl  = _pad_last(nxt["msl"], 25); t2m = _pad_last(nxt["t2m"], 25)
-            d2m  = _pad_last(nxt["d2m"], 25)
-            mtpr = _pad_last(nxt["mtpr"], 25) if nxt["mtpr"] is not None else np.zeros_like(u10)
-            dlwrf = _pad_last(nxt["dlwrf"], 25) if nxt["dlwrf"] is not None else np.zeros_like(u10)
-            dswrf = _pad_last(nxt["dswrf"], 25) if nxt["dswrf"] is not None else np.zeros_like(u10)
-            src_note = f"from next month's ERA5 ({xd})"
-        elif _last is not None:
-            # Option B: repeat the current month's last day, shifted to the
-            # next calendar day for a correct base_date.
-            xd = date(year, month, ndays) + timedelta(days=1)
-            u10  = _last["u10"];  v10  = _last["v10"]
-            msl  = _last["msl"];  t2m  = _last["t2m"];  d2m = _last["d2m"]
-            mtpr = _last["mtpr"]; dlwrf = _last["dlwrf"]; dswrf = _last["dswrf"]
-            src_note = "pad-repeated from last day (next-month ERA5 unavailable)"
-        else:
-            xd = None
-            src_note = "SKIPPED (no next-month ERA5 and no last day available)"
-
-        if xd is not None:
-            spfh = dewpoint_to_spfh(d2m, msl)
-            times_days = np.array([h / 24.0 for h in range(25)], dtype=np.float32)
-            stack = str(extra_stack)
-
-            write_sflux_file(
-                sflux_dir / f"sflux_air_1.{stack}.nc", "air", xd,
-                lon2d, lat2d, times_days,
-                {"prmsl": msl, "spfh": spfh, "stmp": t2m,
-                 "uwind": u10, "vwind": v10})
-            write_sflux_file(
-                sflux_dir / f"sflux_prc_1.{stack}.nc", "prc", xd,
-                lon2d, lat2d, times_days,
-                {"prate": mtpr})
-            write_sflux_file(
-                sflux_dir / f"sflux_rad_1.{stack}.nc", "rad", xd,
-                lon2d, lat2d, times_days,
-                {"dlwrf": dlwrf, "dswrf": dswrf})
-            print(f"  {xd}: EXTRA read-ahead stack {stack} written ({src_note}).")
-        else:
-            print(f"  WARNING: extra read-ahead stack {extra_stack} {src_note}.")
-
-    # Write sflux_inputs.txt as a minimal empty namelist.
-    # SCHISM uses this file only to override defaults; an empty namelist
-    # causes SCHISM to use its hardcoded defaults for all sflux parameters
-    # (air_1_file='sflux_air_1', max_window_hours=120, etc.), which are
-    # exactly what we want. Writing only &sflux_inputs\n/ is safe across
-    # all SCHISM versions: older builds that still have start_year in the
-    # namelist don't need it here (SCHISM reads start_date from param.nml),
-    # and newer builds that removed those variables won't crash on them.
+    # sflux_inputs.txt — empty namelist, SCHISM uses its defaults
     (sflux_dir / "sflux_inputs.txt").write_text("&sflux_inputs\n/\n")
-    print(f"  Written: sflux_inputs.txt")
+    print("  Written: sflux_inputs.txt")
 
     sentinel.touch()
     print(f"  Sentinel: {sentinel}")
 
 
+# =============================================================================
+# CLI
+# =============================================================================
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Generate sflux files for one month")
+    parser = argparse.ArgumentParser(
+        description="Generate sflux files for one group")
     parser.add_argument("--config", required=True)
-    parser.add_argument("--month",  required=True, help="YYYYMM")
+    # Accept both --group (new) and --month (legacy alias)
+    group_arg = parser.add_mutually_exclusive_group(required=True)
+    group_arg.add_argument("--group", dest="group_id",
+                           help="Group ID (YYYYMM or YYYYMMDD)")
+    group_arg.add_argument("--month", dest="group_id",
+                           help="Group ID — legacy alias for --group")
     args = parser.parse_args()
-    cfg = load_config(Path(args.config))
-    gen_sflux_month(cfg, args.month)
+    cfg  = load_config(Path(args.config))
+    gen_sflux_group(cfg, args.group_id)

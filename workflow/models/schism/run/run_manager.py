@@ -3,15 +3,14 @@ models/schism/run/run_manager.py
 ================================
 Phase 4 dispatcher — SCHISM run management.
 
-Called by SchismDriver.run(). Dispatches the enabled Phase 4 steps in order:
+Called by SchismDriver.run(). Dispatches the enabled Phase 4 steps:
 
-  setup_run   Populate R{ID}_YYYYMM/ run directories (symlinks, executables,
-              job cards, auto_hotstart.py). Interactive and fast.
-  submit_run  Launch auto_hotstart.py month-by-month, chaining end-of-month
-              hotstarts into the next month. BLOCKING — run inside screen/tmux.
+  setup_run   Populate R{ID}_{group_id}/ run directories (interactive, fast).
+  submit_run  Launch auto_hotstart.py group-by-group, chaining end-of-group
+              hotstarts into the next group. BLOCKING — run inside
+              screen/tmux.
 
-Hotstart chaining (chain_hotstart in schism.yaml) is handled entirely inside
-each run directory's auto_hotstart.py, so there is no separate chain step here.
+Works for all grouping modes (monthly, ndays/weekly/daily).
 """
 
 
@@ -23,14 +22,18 @@ def run_phase(cfg: dict, config_dir, only: str = None):
 
     if enabled("setup_run"):
         print("[STEP] setup_run")
-        from workflow.models.schism.run.setup_run import run_setup_run
+        from workflow.models.schism.run.setup_run import (
+            run_setup_run,
+        )
         run_setup_run(cfg, config_dir)
     else:
         print("[SKIP] setup_run")
 
     if enabled("submit_run"):
         print("[STEP] submit_run")
-        from workflow.models.schism.run.submit_run import run_submit_run
+        from workflow.models.schism.run.submit_run import (
+            run_submit_run,
+        )
         run_submit_run(cfg)
     else:
         print("[SKIP] submit_run")

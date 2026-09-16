@@ -40,7 +40,13 @@ from datetime import date
 
 from dateutil.relativedelta import relativedelta
 
-from workflow.core.config import load_config, KNOWN_MODEL_TYPES
+from workflow.core.config import (
+    load_config,
+    KNOWN_MODEL_TYPES,
+    KNOWN_GROUPINGS,
+    list_groups,
+    model_dir,
+)
 from workflow.models.base import make_driver
 
 # =============================================================================
@@ -54,9 +60,18 @@ def validate_config(cfg: dict):
         print(f"ERROR: project_id must be a two-digit string, got: {pid!r}")
         sys.exit(1)
 
-    if cfg.get("grouping") != "monthly":
-        print("ERROR: only grouping: monthly is currently supported")
+    # grouping is already normalised by load_config; just check the result
+    grouping = cfg.get("grouping")
+    if grouping not in ("monthly", "ndays"):
+        print(f"ERROR: grouping resolved to unexpected value '{grouping}'. "
+              f"Valid project.yaml options: {', '.join(sorted(KNOWN_GROUPINGS))}")
         sys.exit(1)
+
+    if grouping == "ndays":
+        n = cfg.get("group_ndays")
+        if not isinstance(n, int) or n < 1:
+            print(f"ERROR: group_ndays must be a positive integer, got: {n!r}")
+            sys.exit(1)
 
     try:
         start = date.fromisoformat(cfg["start_date"])
@@ -109,7 +124,7 @@ POSTPROCESS_STEPS = {
 def _phase_mismatch_warnings(cfg: dict, phase: str, only: str):
     """Warn when steps belonging to a different phase are enabled."""
     if only is not None:
-        return  # --only is explicit; no ambiguity
+        return
 
     if phase == "preprocess":
         run_on  = [s for s in RUN_PHASE_STEPS   if cfg.get(s, False)]
@@ -134,8 +149,9 @@ def _phase_mismatch_warnings(cfg: dict, phase: str, only: str):
         pre_on = [s for s in cfg
                   if s not in RUN_PHASE_STEPS | POSTPROCESS_STEPS
                   and s not in ("project_id", "project_dir", "start_date",
-                                "end_date", "grouping", "slurm", "executables",
-                                "model_type", "conda_base", "conda_envs",
+                                "end_date", "grouping", "group_ndays",
+                                "slurm", "executables", "model_type",
+                                "conda_base", "conda_envs",
                                 "lon_min", "lon_max", "lat_min", "lat_max",
                                 "lon_reference", "estuary_depth_threshold",
                                 "chain_hotstart")
@@ -156,16 +172,16 @@ def _phase_mismatch_warnings(cfg: dict, phase: str, only: str):
 def init_project(cfg: dict):
     """Create the full project directory tree."""
     pid         = cfg["project_id"]
-    project_dir = Path(cfg["project_dir"])
-    start       = date.fromisoformat(cfg["start_date"])
-    end         = date.fromisoformat(cfg["end_date"])
-
-    # Use mdir (not model_dir) to avoid shadowing the imported helper function.
-    mdir = project_dir / f"M{pid}"
+    mdir        = model_dir(cfg)
+    groups      = list_groups(cfg)
+    grouping    = cfg.get("grouping", "monthly")
+    group_ndays = cfg.get("group_ndays", "")
 
     print(f"\n{'='*60}")
     print(f"  Initializing project M{pid}")
-    print(f"  Root: {mdir}")
+    print(f"  Root:     {mdir}")
+    print(f"  Grouping: {grouping}"
+          + (f"  (group_ndays={group_ndays})" if grouping == "ndays" else ""))
     print(f"{'='*60}\n")
 
     # --- Top-level fixed directories ---
@@ -195,29 +211,20 @@ def init_project(cfg: dict):
         d.mkdir(parents=True, exist_ok=True)
         print(f"  Created: {d}")
 
-    # --- Generate monthly time groups ---
-    months = []
-    current = date(start.year, start.month, 1)
-    while current <= date(end.year, end.month, 1):
-        months.append(current.strftime("%Y%m"))
-        current += relativedelta(months=1)
+    print(f"\n  Generating {len(groups)} group(s) "
+          f"({groups[0]} -> {groups[-1]})\n")
 
-    print(f"\n  Generating {len(months)} monthly time groups "
-          f"({months[0]} -> {months[-1]})\n")
-
-    # --- I, R, D directories with monthly subdirectories ---
-    # P{ID}/ uses topic-based subdirectories created on-demand by each
-    # postprocessing step — not pre-created monthly subdirectories.
+    # --- I, R, D directories with per-group subdirectories ---
     for prefix, label in [("I", "Inputs"), ("R", "Run"), ("D", "Debug plots")]:
         parent = mdir / f"{prefix}{pid}"
         parent.mkdir(parents=True, exist_ok=True)
         print(f"  Created: {parent}  ({label})")
-        for ym in months:
-            sub = parent / f"{prefix}{pid}_{ym}"
+        for gid in groups:
+            sub = parent / f"{prefix}{pid}_{gid}"
             sub.mkdir(parents=True, exist_ok=True)
             print(f"    {sub.name}/")
 
-    # P{ID} top-level directory only.
+    # P{ID} top-level directory only (subdirs created on-demand by postprocess).
     (mdir / f"P{pid}").mkdir(parents=True, exist_ok=True)
     print(f"  Created: {mdir / f'P{pid}'}  (Postprocessing)")
 
@@ -249,10 +256,7 @@ def run_workflow(cfg: dict, config_dir: Path, phase: str = "preprocess",
       all                   — preprocess -> run -> postprocess in sequence
 
     When phase='all', the orchestrator inserts a wait barrier between the
-    preprocess and run phases: it collects the SLURM job IDs of all async
-    SLURM submissions made during preprocessing and polls squeue until they
-    all leave the queue. This prevents setup_run from checking for output
-    files before the SLURM jobs have written them.
+    preprocess and run phases.
     """
     _phase_mismatch_warnings(cfg, phase, only)
 
@@ -262,10 +266,16 @@ def run_workflow(cfg: dict, config_dir: Path, phase: str = "preprocess",
 
     _preprocess_slurm_jobs = []
 
+    grouping = cfg.get("grouping", "monthly")
+    group_info = (f"grouping={grouping}"
+                  + (f", group_ndays={cfg['group_ndays']}"
+                     if grouping == "ndays" else ""))
+
     for ph in phases:
         print(f"\n{'='*60}")
         print(f"  {driver.name} workflow -- "
               f"project M{cfg['project_id']} -- phase: {ph}")
+        print(f"  {group_info}")
         if only:
             print(f"  (restricted to step: {only})")
         print(f"{'='*60}\n")
@@ -276,7 +286,6 @@ def run_workflow(cfg: dict, config_dir: Path, phase: str = "preprocess",
                 _preprocess_slurm_jobs = [j for j in result if j]
 
         elif ph == "run":
-            # If running all phases, wait for preprocess SLURM jobs first.
             if phase == "all" and _preprocess_slurm_jobs:
                 from workflow.core.slurm import wait_for_slurm_jobs
                 wait_for_slurm_jobs(
@@ -285,7 +294,6 @@ def run_workflow(cfg: dict, config_dir: Path, phase: str = "preprocess",
                     label="Phase 3 SLURM jobs "
                           "(gen_hotstart/gen_3Dth/gen_nudge/gen_sflux/...)"
                 )
-                # Lustre/NFS metadata propagation pause.
                 print("  Waiting 15 s for filesystem metadata propagation ...")
                 time.sleep(15)
             driver.run(only=only)
@@ -302,10 +310,8 @@ def run_workflow(cfg: dict, config_dir: Path, phase: str = "preprocess",
 # --refresh: delete all sentinel files so the workflow re-runs from scratch
 # =============================================================================
 
-# All sentinel filenames, keyed by the directory they live in relative to
-# each per-month subdirectory.
 _SENTINELS = {
-    # Preprocessing sentinels (in I{pid}/I{pid}_{ym}/)
+    # Preprocessing sentinels (in I{pid}/{prefix}_{gid}/)
     "idir": [
         "gen_hotstart.done",
         "gen_3Dth.done",
@@ -323,12 +329,12 @@ _SENTINELS = {
         "copy_noahmptable.done",
         "modulefiles/copy_modulefiles.done",
     ],
-    # Run sentinels (in R{pid}/R{pid}_{ym}/)
+    # Run sentinels (in R{pid}/{prefix}_{gid}/)
     "rdir": [
         "setup_run.done",
         "run.done",
     ],
-    # Diagnostics sentinels (in D{pid}/D{pid}_{ym}/)
+    # Diagnostics sentinels (in D{pid}/{prefix}_{gid}/)
     "ddir": [
         "plot_hycom.done",
         "plot_sflux.done",
@@ -338,7 +344,6 @@ _SENTINELS = {
     ],
 }
 
-# Top-level (non-monthly) sentinels.
 _TOP_LEVEL_SENTINELS = [
     "inspect_mesh.done",
 ]
@@ -348,14 +353,11 @@ def reset_sentinels(cfg: dict):
     """Delete every sentinel file in the project so the workflow re-runs
     from scratch on the next invocation.
 
-    Raw downloaded data and generated NetCDF outputs are NOT deleted — only
-    the *.done sentinels that control resume logic.
+    Raw downloaded data and generated NetCDF outputs are NOT deleted.
     """
-    from workflow.core.config import list_months, model_dir
-
     pid    = cfg["project_id"]
     mdir   = model_dir(cfg)
-    months = list_months(cfg)
+    groups = list_groups(cfg)
 
     deleted = []
     missing = []
@@ -367,12 +369,12 @@ def reset_sentinels(cfg: dict):
         else:
             missing.append(path)
 
-    # --- Per-month sentinels ---
-    for ym in months:
+    # --- Per-group sentinels ---
+    for gid in groups:
         dirs = {
-            "idir": mdir / f"I{pid}" / f"I{pid}_{ym}",
-            "rdir": mdir / f"R{pid}" / f"R{pid}_{ym}",
-            "ddir": mdir / f"D{pid}" / f"D{pid}_{ym}",
+            "idir": mdir / f"I{pid}" / f"I{pid}_{gid}",
+            "rdir": mdir / f"R{pid}" / f"R{pid}_{gid}",
+            "ddir": mdir / f"D{pid}" / f"D{pid}_{gid}",
         }
         for key, names in _SENTINELS.items():
             base = dirs[key]
@@ -397,9 +399,15 @@ def reset_sentinels(cfg: dict):
             _remove(pdir / subdir / name)
 
     # --- Summary ---
+    grouping = cfg.get("grouping", "monthly")
+    group_info = (f"grouping={grouping}"
+                  + (f", group_ndays={cfg['group_ndays']}"
+                     if grouping == "ndays" else ""))
+
     print(f"\n{'='*60}")
     print(f"  --refresh: sentinel reset for M{pid}")
-    print(f"  {len(months)} month(s): {months[0]} -> {months[-1]}")
+    print(f"  {len(groups)} group(s): {groups[0]} -> {groups[-1]}")
+    print(f"  ({group_info})")
     print(f"{'='*60}")
     if deleted:
         print(f"\n  Deleted {len(deleted)} sentinel(s):")

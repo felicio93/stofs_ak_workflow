@@ -2,7 +2,7 @@
 # =============================================================================
 # SLURM job template for inspect_mesh (single job, diagnostic plots).
 # Rendered/submitted by workflow.diagnostics.submit_inspect_mesh.
-# Placeholders in {{ }} are substituted before submission.
+# Grouping-agnostic: runs once, writes to D{ID}/D{ID}_fix/.
 # =============================================================================
 #SBATCH -D {{WORKDIR}}
 #SBATCH -J {{JOBNAME}}
@@ -21,6 +21,5 @@ set -e
 echo "=== inspect_mesh: generating fix/ diagnostic plots ==="
 echo "Working dir: $(pwd)"
 
-# Run using the swf_plot interpreter directly (no conda activate needed).
 {{PY}} {{SCRIPT}} --config {{CONFIG_DIR}}
 echo "=== inspect_mesh complete ==="

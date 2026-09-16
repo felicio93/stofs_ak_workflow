@@ -10,81 +10,144 @@ project_id: "01"
 # Which model configuration to run. Selects the driver under
 # workflow/models/<model_type>/. Supported:
 #   schism       SCHISM standalone (implemented)
-#   schism_wwm   SCHISM + WWM, internally coupled (planned)
+#   schism_wwm   SCHISM + WWM, internally coupled (implemented)
 #   schism_mice  SCHISM + MICE, internally coupled (planned)
-#   ufs_schism  UFS-Coastal based variants (implemented)
-model_type: ufs_schism #schism
+#   ufs_schism   UFS-Coastal based variants (implemented)
+model_type: schism
 
 # Absolute path to the project directory on the HPC filesystem.
 # The workflow will create M{id}/ and all subdirectories here.
 project_dir: /work2/noaa/nos-surge/felicioc/STOFS_3D_AK
 
 # Simulation start and end dates (inclusive). Format: YYYY-MM-DD
-# The workflow will generate one time group per calendar month
-# between these dates.
 start_date: "2025-09-01"
 end_date:   "2025-12-31"
 
-# Time grouping for inputs and run directories.
-# Only "monthly" is supported at this time.
+# =============================================================================
+# Time grouping
+# =============================================================================
+# Controls how the simulation period is divided into run units.
+# Each group gets its own I{id}_{group_id}/ input directory and
+# R{id}_{group_id}/ run directory. Hotstart chaining works identically
+# regardless of grouping — each group's end-of-run hotstart is
+# automatically passed to the next group.
+#
+# Options
+# -------
+#   monthly   : one group per calendar month (28-31 days depending on
+#               the month). Group IDs are 'YYYYMM' strings.
+#               This is the original behavior and is fully
+#               backward-compatible with existing projects.
+#               Example groups: 202509, 202510, 202511, 202512
+#
+#   ndays     : fixed N-day groups. Group IDs are 'YYYYMMDD' strings
+#               (the start date of each group). The last group may be
+#               shorter than group_ndays if end_date is not a multiple
+#               of group_ndays from start_date.
+#               Requires group_ndays to be set (see below).
+#               Example (group_ndays: 7):
+#                 20250901, 20250908, 20250915, ...
+#
+#   weekly    : convenience alias for ndays with group_ndays: 7.
+#               Useful for SCHISM+WWM which is too expensive for
+#               month-long runs on most HPC allocations.
+#               Example groups: 20250901, 20250908, 20250915, ...
+#
+#   biweekly  : convenience alias for ndays with group_ndays: 14.
+#               Example groups: 20250901, 20250915, 20250929, ...
+#
+#   daily     : convenience alias for ndays with group_ndays: 1.
+#               Intended for debugging only — run one day at a time,
+#               inspect outputs, verify model health before committing
+#               to a longer run. Not recommended for production.
+#               Example groups: 20250901, 20250902, 20250903, ...
+#
+# Stack ceiling
+# -------------
+# All forcing stacks (HYCOM SSH/TS/UV, source.nc, sflux, DATM) are
+# built to group_ndays + 3 daily records. The 3-day read-ahead buffer
+# ensures SCHISM's internal read-ahead never runs out of records
+# regardless of group length.
+#   monthly  : up to 34 records (31 days + 3)
+#   weekly   :        10 records ( 7 days + 3)
+#   daily    :         4 records ( 1 day  + 3)
+#
+# Choosing a grouping
+# -------------------
+# Model              Recommended grouping
+# ---------------    --------------------
+# SCHISM standalone  monthly   (runs complete in one SLURM job)
+# UFS-SCHISM         monthly   (runs complete in one SLURM job)
+# SCHISM+WWM         weekly    (WWM is expensive; 7-day chunks fit
+#                               typical HPC walltime limits)
+# Debugging any      daily     (one day per run; easy to inspect)
+#
 grouping: monthly
 
-# -----------------------------------------------------------------------------
-# SLURM settings (used by steps that submit jobs, e.g. plot_hycom).
-# -----------------------------------------------------------------------------
+# group_ndays: number of simulation days per group.
+# Required when grouping is 'ndays'.
+# Ignored when grouping is 'monthly', 'weekly', 'biweekly', or 'daily'
+# (those aliases set group_ndays automatically).
+#
+# Examples:
+#   group_ndays: 7    # equivalent to grouping: weekly
+#   group_ndays: 14   # equivalent to grouping: biweekly
+#   group_ndays: 10   # 10-day groups (no alias available)
+#   group_ndays: 1    # equivalent to grouping: daily
+#
+# group_ndays: 7
+
+# =============================================================================
+# SLURM settings (used by steps that submit jobs)
+# =============================================================================
 slurm:
   account: nos-surge
   partition: hercules-2
   mail_user: felicio.cassalho@noaa.gov
   plot_walltime: "00:20:00"
-  plot_mem: "16G"            # memory per plotting task; increase if OOM errors occur
+  plot_mem: "16G"
   inspect_walltime: "00:10:00"
-  inspect_mem: "16G"         # memory for inspect_mesh job
+  inspect_mem: "16G"
   schism_walltime: "01:00:00"
-  schism_mem: "8G"           # memory for gen_3Dth and gen_nudge (open boundary only)
+  schism_mem: "8G"
   hotstart_walltime: "01:00:00"
-  hotstart_mem: "64G"        # memory for gen_hotstart (full 3M-node mesh x 50 levels)
+  hotstart_mem: "64G"
   gen_sflux_walltime: "01:00:00"
-  gen_sflux_mem: "8G"        # memory per gen_sflux task
+  gen_sflux_mem: "8G"
   plot_sflux_walltime: "00:30:00"
-  plot_sflux_mem: "16G"      # memory per plot_sflux task
+  plot_sflux_mem: "16G"
   # Phase 5 postprocessing:
-  combine_output_nranks:   80       # MPI ranks for combine_output11_MPI
+  combine_output_nranks:   80
   combine_output_walltime: "02:00:00"
-  plot_outputs_qos: windfall      # windfall QOS supports large node counts
-                                   # (55 nodes for 1092 files). debug QOS has
-                                   # node limits that prevent large MPI jobs.
-                                   # Override to 'debug' only for small runs.
+  plot_outputs_qos: windfall
   plot_outputs_walltime: "02:00:00"
-  plot_outputs_mem: "16G"    # memory per MPI rank (one output file per rank;
-                             # 20 ranks/node → ~25 GB headroom on 512 GB nodes)
-  plot_outputs_max_ntasks:   # optional cap on MPI ranks (default: one per file)
+  plot_outputs_mem: "16G"
+  plot_outputs_max_ntasks:
   plot_outputs_gif_walltime: "00:30:00"
-  plot_outputs_gif_mem: "32G"    # serial GIF assembly (loads all frames)
+  plot_outputs_gif_mem: "32G"
   compare_sst_walltime: "01:00:00"
-  compare_sst_mem: "24G"     # memory per MPI rank (one day per rank;
-                             # 10 ranks/node → ~51 GB headroom on 512 GB nodes)
-  compare_sst_max_ntasks:    # optional cap on MPI ranks (default: one per day)
+  compare_sst_mem: "24G"
+  compare_sst_max_ntasks:
   compare_sst_gif_walltime: "00:30:00"
   compare_sst_gif_mem: "16G"
   diag_run_walltime: "00:10:00"
-  diag_run_mem: "16G"        # per-stack diagnostic frames during the run
-  # UFS-SCHISM end-of-month output combination
-  combine_output_nranks:   80         # MPI ranks for end-of-month full combine
-  combine_output_walltime: "02:00:00" # walltime for end-of-month full combine
-  # UFS-SCHISM per-stack diagnostic combine (runs during the model run)
-  combine_diag_nranks:     80         # MPI ranks for per-stack diag combine
-  combine_diag_walltime:   "01:00:00" # walltime per stack (adjust if needed)
-# -----------------------------------------------------------------------------
+  diag_run_mem: "16G"
+  combine_diag_nranks:     80
+  combine_diag_walltime:   "01:00:00"
+
+# =============================================================================
 # SCHISM executable names (must be present in M{id}/bin/).
-# -----------------------------------------------------------------------------
+# =============================================================================
 executables:
   gen_hotstart: gen_hot_from_hycom_0_noscaling.exe
   gen_3Dth:     gen_3Dth_from_hycom_noscaling.exe
   gen_nudge:    gen_nudge_from_hycom_noscaling.exe
-  # Phase 4 (run management):
-  #schism:           pschism_HERCULES_NO_PARMETIS_PREC_EVAP_BLD_STANDALONE_SH_MEM_COMM_TVD-VL
-  ufs_schism: fv3_datm2sch.exe
+  # Phase 4 (run management) — uncomment the one matching your model_type:
+  # SCHISM standalone:
+  # schism:           pschism_HERCULES_NO_PARMETIS_PREC_EVAP_BLD_STANDALONE_SH_MEM_COMM_TVD-VL
+  # SCHISM+WWM:
+  # schism_wwm:       pschism_HERCULES_WWM_NO_PARMETIS_PREC_EVAP_BLD_STANDALONE_SH_MEM_COMM_TVD-VL
+  # UFS-SCHISM:
+  # ufs_schism:       fv3_datm2sch.exe
   combine_output:   combine_output11_MPI
   combine_hotstart: combine_hotstart7.exe
-

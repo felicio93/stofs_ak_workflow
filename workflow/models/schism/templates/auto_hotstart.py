@@ -41,18 +41,18 @@ DIAG_VARS_MANIFEST  = r"{{DIAG_VARS_MANIFEST}}"
 DIAG_NVAR           = {{DIAG_NVAR}}
 
 # --- End-of-month output combination (UFS-SCHISM old I/O) ---
-# Per-stack combine during run is DISABLED. All stacks are combined
-# in one batch job at the end of the month after the run completes.
 COMBINE_OUTPUT_ENABLED  = {{COMBINE_OUTPUT_ENABLED}}
 COMBINE_OUTPUT_EXE      = r"{{COMBINE_OUTPUT_EXE}}"
 COMBINE_OUTPUT_NRANKS   = {{COMBINE_OUTPUT_NRANKS}}
 COMBINE_OUTPUT_SBATCH   = r"{{COMBINE_OUTPUT_SBATCH}}"
 # =============================================================================
 
-_POLL_SCHEDULE = [0, 60, 60, 60, 60, 60, 300, 1200, 1800]
-_POLL_STEADY   = 1800
+_POLL_SCHEDULE  = [0, 60, 60, 60, 60, 60, 300, 1200, 1800]
+_POLL_STEADY    = 1800
 _COMBINE_POLL_SECONDS = 60
-_MAX_RESUBMITS = 5
+_MAX_RESUBMITS  = 5
+_GRACE_CHECKS   = 10   # x 30s = 5 min grace period after job leaves queue
+_GRACE_SLEEP    = 30
 
 QUEUE_CMD = f"squeue -u {os.environ.get('USER', os.environ.get('LOGNAME', ''))}"
 
@@ -86,17 +86,14 @@ def _clean_outputs():
     """Delete stale output stacks and mirror.out before (re)submitting."""
     outdir = Path(RUNDIR) / "outputs"
     deleted = []
-    # Delete per-rank partition files (*_NNNNNN_N.nc pattern)
     for f in sorted(outdir.glob("schout_??????_*.nc")):
         if re.match(r"^schout_\d{6}_\d+\.nc$", f.name):
             f.unlink(missing_ok=True)
             deleted.append(f.name)
-    # Delete any already-combined schout_N.nc files from a previous attempt
     for f in sorted(outdir.glob("schout_*.nc")):
         if re.match(r"^schout_\d+\.nc$", f.name):
             f.unlink(missing_ok=True)
             deleted.append(f.name)
-    # Delete combine sentinels
     for f in sorted(outdir.glob("combine_*.done")):
         f.unlink(missing_ok=True)
         deleted.append(f.name)
@@ -195,9 +192,6 @@ _diag_submitted = set()
 
 
 def dispatch_diag_plots(run_finished: bool = False):
-    """Submit diag_run job arrays for newly-completed New I/O stacks.
-    Only used for SCHISM standalone (New I/O). Not called for UFS-SCHISM.
-    """
     if not DIAG_ENABLED or not DIAG_SBATCH:
         return
     outdir = Path(RUNDIR) / "outputs"
@@ -225,34 +219,12 @@ def dispatch_diag_plots(run_finished: bool = False):
 
 # =============================================================================
 # End-of-month output combination (UFS-SCHISM old I/O)
-# All stacks are combined in one batch job after the run completes.
 # =============================================================================
 
-def _count_output_stacks() -> int:
-    """Count total output stacks (combined + uncombined) in outputs/."""
-    outdir = Path(RUNDIR) / "outputs"
-    combined = {
-        int(m.group(1))
-        for f in outdir.glob("schout_*.nc")
-        for m in [re.match(r"^schout_(\d+)\.nc$", f.name)]
-        if m
-    }
-    rank0 = {
-        int(m.group(1))
-        for f in outdir.glob("schout_000000_*.nc")
-        for m in [re.match(r"^schout_000000_(\d+)\.nc$", f.name)]
-        if m
-    }
-    all_stacks = combined | rank0
-    return max(all_stacks) if all_stacks else 0
-
-
 def _clean_output_partition_files():
-    """Delete ALL per-rank schout partition files and local_to_global_* files."""
     outdir = Path(RUNDIR) / "outputs"
     pat_schout = re.compile(r"^schout_\d{6}_\d+\.nc$")
-    deleted_schout = 0
-    freed_schout   = 0
+    deleted_schout = freed_schout = 0
     for f in sorted(outdir.glob("schout_??????_*.nc")):
         if pat_schout.match(f.name):
             try:
@@ -262,8 +234,7 @@ def _clean_output_partition_files():
             f.unlink(missing_ok=True)
             deleted_schout += 1
 
-    deleted_l2g = 0
-    freed_l2g   = 0
+    deleted_l2g = freed_l2g = 0
     for f in sorted(outdir.glob("local_to_global_*")):
         try:
             freed_l2g += f.stat().st_size
@@ -279,12 +250,6 @@ def _clean_output_partition_files():
 
 
 def combine_output_stacks():
-    """Combine ALL output stacks at end of month using one SLURM job.
-
-    Called once after the run completes successfully, before hotstart
-    combination. All schout_NNNNNN_N.nc partition files are combined
-    into schout_N.nc global files.
-    """
     if not COMBINE_OUTPUT_ENABLED:
         return
 
@@ -296,7 +261,6 @@ def combine_output_stacks():
         _clean_output_partition_files()
         return
 
-    # Find all stacks that need combining
     rank0_stacks = {
         int(m.group(1))
         for f in outdir.glob("schout_000000_*.nc")
@@ -328,13 +292,11 @@ def combine_output_stacks():
         sys.exit(1)
     log(f"Submitted combine_output job: {out}")
 
-    # Wait for combine job to finish
     while squeue_line_for(comb_jobname) is not None:
         log(f"  waiting for combine_output job ({comb_jobname}) ...")
         time.sleep(_COMBINE_POLL_SECONDS)
     time.sleep(10)
 
-    # Verify combined files were created
     missing = [f"schout_{i}.nc" for i in rank0_stacks
                if not (outdir / f"schout_{i}.nc").exists()]
     if missing:
@@ -353,7 +315,6 @@ def combine_output_stacks():
 # =============================================================================
 
 def _clean_partition_hotstarts():
-    """Delete per-rank hotstart files after combined hotstart is built."""
     outdir = Path(RUNDIR) / "outputs"
     pat    = re.compile(r"^hotstart_\d+_\d+\.nc$")
     deleted = freed = 0
@@ -380,7 +341,6 @@ def _partition_hotstarts_exist():
 
 
 def combine_and_chain():
-    """Submit run_comb, wait, verify combined hotstart, clean up, then chain."""
     combined = Path(RUNDIR) / "outputs" / f"hotstart_it={NHOT_WRITE}.nc"
     if not combined.exists():
         comb_jobname = "C" + RUN_JOBNAME[1:]
@@ -469,7 +429,6 @@ def main():
         _, full = sh(QUEUE_CMD)
         print(full)
 
-        # Only dispatch New I/O diagnostics (SCHISM standalone)
         dispatch_diag_plots(run_finished=False)
 
         if status is not None:
@@ -497,46 +456,63 @@ def main():
             if run_completed():
                 break
 
-            diag      = diagnose_failure(job_id if job_id != "?" else "0")
-            exit_code = job_exit_code(job_id if job_id != "?" else "0")
+            # Grace period: the job may have just finished and mirror.out
+            # may not have been flushed to disk yet (Lustre latency).
+            # Wait up to 5 minutes and re-check before concluding incomplete.
+            log(f"{RUN_JOBNAME}: not in queue — waiting up to "
+                f"{_GRACE_CHECKS * _GRACE_SLEEP}s for mirror.out to flush ...")
+            for _grace in range(_GRACE_CHECKS):
+                time.sleep(_GRACE_SLEEP)
+                if run_completed():
+                    log(f"{RUN_JOBNAME}: run completed successfully "
+                        f"(detected after {(_grace+1)*_GRACE_SLEEP}s grace period).")
+                    break
+            else:
+                # Still not completed after grace period — genuinely incomplete
+                diag      = diagnose_failure(job_id if job_id != "?" else "0")
+                exit_code = job_exit_code(job_id if job_id != "?" else "0")
 
-            if diag:
-                log("ERROR: SCHISM run failed with a non-recoverable error.")
-                log("Do NOT resubmit until the problem is fixed.")
-                log("Details:")
-                for line in diag.splitlines()[:12]:
-                    log(f"  {line}")
-                log(f"SLURM output log: {Path(RUNDIR) / 'myout'}")
-                log(f"SLURM error log:  {Path(RUNDIR) / 'err2.out'}")
-                log(f"SCHISM abort:     "
-                    f"{Path(RUNDIR) / 'outputs' / 'fatal.error'}")
-                log("Fix the input, then re-run:")
-                log("  stofs-ak --run --phase run --only submit_run "
-                    "--config <cfg>")
-                sys.exit(1)
+                if diag:
+                    log("ERROR: SCHISM run failed with a non-recoverable error.")
+                    log("Do NOT resubmit until the problem is fixed.")
+                    log("Details:")
+                    for line in diag.splitlines()[:12]:
+                        log(f"  {line}")
+                    log(f"SLURM output log: {Path(RUNDIR) / 'myout'}")
+                    log(f"SLURM error log:  {Path(RUNDIR) / 'err2.out'}")
+                    log(f"SCHISM abort:     "
+                        f"{Path(RUNDIR) / 'outputs' / 'fatal.error'}")
+                    log("Fix the input, then re-run:")
+                    log("  stofs-ak --run --phase run --only submit_run "
+                        "--config <cfg>")
+                    sys.exit(1)
 
-            if exit_code > 0:
-                log(f"WARNING: job {job_id} exited with code {exit_code}.")
+                if exit_code > 0:
+                    log(f"WARNING: job {job_id} exited with code {exit_code}.")
+                    resubmit_count += 1
+                    if resubmit_count > _MAX_RESUBMITS:
+                        log(f"ERROR: max resubmit limit reached. Exiting.")
+                        sys.exit(1)
+                    log(f"Resubmitting "
+                        f"(attempt {resubmit_count}/{_MAX_RESUBMITS}).")
+                    previous_step = -1
+                    _clean_outputs()
+                    submit("run_test")
+                    continue
+
+                previous_step = -1
                 resubmit_count += 1
                 if resubmit_count > _MAX_RESUBMITS:
                     log(f"ERROR: max resubmit limit reached. Exiting.")
                     sys.exit(1)
-                log(f"Resubmitting "
+                log(f"{RUN_JOBNAME}: not in queue and run incomplete after "
+                    f"grace period — resubmitting "
                     f"(attempt {resubmit_count}/{_MAX_RESUBMITS}).")
-                previous_step = -1
                 _clean_outputs()
                 submit("run_test")
-                continue
 
-            previous_step = -1
-            resubmit_count += 1
-            if resubmit_count > _MAX_RESUBMITS:
-                log(f"ERROR: max resubmit limit reached. Exiting.")
-                sys.exit(1)
-            log(f"{RUN_JOBNAME}: not in queue and run incomplete — "
-                f"resubmitting (attempt {resubmit_count}/{_MAX_RESUBMITS}).")
-            _clean_outputs()
-            submit("run_test")
+            if run_completed():
+                break
 
     log(f"{RUN_JOBNAME}: run completed successfully.")
     dispatch_diag_plots(run_finished=True)

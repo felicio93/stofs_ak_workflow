@@ -130,20 +130,53 @@ def mirror_time_step():
             return int(m.group(1))
     return None
 
-
 def run_completed():
-    mo = Path(RUNDIR) / "outputs" / "mirror.out"
-    if not mo.exists():
-        return False
-    try:
-        lines = mo.read_text(errors="ignore").splitlines()
-    except Exception:
-        return False
-    for line in reversed(lines[-25:]):
-        if "Run completed successfully" in line:
-            return True
-    return False
+    """Detect successful run completion.
 
+    Supports both:
+      - SCHISM standalone (New I/O): looks for "Run completed successfully"
+        in outputs/mirror.out
+      - UFS-SCHISM (Old I/O): UFS shuts down SCHISM externally so
+        "Run completed successfully" is never written. Instead check:
+        1. "hot start written" in mirror.out (SCHISM wrote the hotstart), AND
+        2. "HAS ENDED" in myout (UFS coupler exited cleanly)
+    """
+    mo = Path(RUNDIR) / "outputs" / "mirror.out"
+    myout = Path(RUNDIR) / "myout"
+
+    # SCHISM standalone: standard completion message
+    if mo.exists():
+        try:
+            lines = mo.read_text(errors="ignore").splitlines()
+        except Exception:
+            lines = []
+        for line in reversed(lines[-25:]):
+            if "Run completed successfully" in line:
+                return True
+
+    # UFS-SCHISM: hotstart written + UFS ended cleanly
+    hotstart_written = False
+    if mo.exists():
+        try:
+            content = mo.read_text(errors="ignore")
+            if "hot start written" in content:
+                hotstart_written = True
+        except Exception:
+            pass
+
+    ufs_ended = False
+    if myout.exists():
+        try:
+            content = myout.read_text(errors="ignore")
+            if "HAS ENDED" in content:
+                ufs_ended = True
+        except Exception:
+            pass
+
+    if hotstart_written and ufs_ended:
+        return True
+
+    return False
 
 def job_exit_code(job_id: str) -> int:
     rc, out = sh(f"sacct -n -X -o ExitCode -j {job_id}")

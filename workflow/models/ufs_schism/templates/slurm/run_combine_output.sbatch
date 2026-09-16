@@ -26,7 +26,7 @@
 set -e
 ulimit -s unlimited
 
-module use modulefiles
+module use {{RUNDIR}}/modulefiles
 module load modules.fv3_datm2sch
 
 echo "=== combine_output11_MPI: stacks ${COMBINE_BEGIN} to ${COMBINE_END} ==="

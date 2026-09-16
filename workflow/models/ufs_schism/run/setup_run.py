@@ -230,6 +230,7 @@ def _render_combine_output_sbatch(cfg: dict, mdir: Path, rdir: Path,
         "COMBINE_NRANKS":   str(combine_nranks),
         "COMBINE_WALLTIME": slurm.get("combine_output_walltime", "04:00:00"),
         "LOGDIR":           str(mdir / "logs"),
+        "RUNDIR":           str(rdir),
         "MAILUSER":         slurm.get("mail_user",
                                       "felicio.cassalho@noaa.gov"),
     }

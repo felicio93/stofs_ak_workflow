@@ -4,32 +4,35 @@ models/ufs_schism/driver.py
 UfsSchismDriver — orchestrates all phases for the UFS-SCHISM model.
 
 Works for all grouping modes (monthly, ndays/weekly/daily).
-Group IDs are either YYYYMM (monthly) or YYYYMMDD (ndays).
 
 Resilience against all-flags-on steps.yaml
 -------------------------------------------
-DTN-only Phase 1 download steps (download_hycom, download_era5,
-download_glofas) catch DtnRequiredError and print [N/A] instead of
-crashing, allowing --phase all to continue on a login node.
+DTN-only Phase 1 download steps catch DtnRequiredError and print [N/A].
+
+Sequencing fix
+--------------
+gen_datm and gen_esmf_mesh run as SLURM jobs. The interactive config
+steps (gen_datm_in, gen_datm_streams, gen_model_configure, etc.) depend
+on their output. A wait_for_slurm_jobs barrier is inserted between the
+two groups so the interactive steps never race against the SLURM jobs.
 """
+
+import time
 
 from workflow.models.base import ModelDriver
 from workflow.core.environment import DtnRequiredError
 
 
 def _na(step: str, reason: str):
-    """Print a standardised [N/A] line for a skipped step."""
     print(f"[N/A]  {step}  ({reason})")
 
 
 class UfsSchismDriver(ModelDriver):
     name = "UFS_SCHISM"
 
-    # -------------------------------------------------------------------------
-    # Phase 0-3 — Pre-processing
-    # -------------------------------------------------------------------------
     def preprocess(self, only: str = None):
         from workflow.core.config import list_groups
+        from workflow.core.slurm import wait_for_slurm_jobs
 
         cfg, config_dir = self.cfg, self.config_dir
         en = lambda step: self.enabled(step, only)
@@ -37,7 +40,7 @@ class UfsSchismDriver(ModelDriver):
         _slurm_jobs = []
 
         # =====================================================================
-        # Phase 0: mesh diagnostics
+        # Phase 0
         # =====================================================================
         if en("inspect_mesh"):
             print("[STEP] inspect_mesh")
@@ -52,15 +55,11 @@ class UfsSchismDriver(ModelDriver):
 
         # =====================================================================
         # Phase 1: downloads (DTN only)
-        # Catch DtnRequiredError so --phase all on a login node
-        # skips gracefully instead of crashing.
         # =====================================================================
         if en("download_hycom"):
             try:
                 print("[STEP] download_hycom")
-                from workflow.downloaders.hycom import (
-                    run_download,
-                )
+                from workflow.downloaders.hycom import run_download
                 run_download(cfg)
             except DtnRequiredError as exc:
                 _na("download_hycom",
@@ -147,7 +146,7 @@ class UfsSchismDriver(ModelDriver):
             print("[SKIP] plot_sflux")
 
         # =====================================================================
-        # Phase 2: UFS-SCHISM / DATM forcing
+        # Phase 2: UFS-SCHISM / DATM forcing (SLURM jobs)
         # =====================================================================
         if en("gen_datm"):
             print("[STEP] gen_datm")
@@ -176,6 +175,7 @@ class UfsSchismDriver(ModelDriver):
         else:
             print("[SKIP] plot_datm")
 
+        _gen_esmf_jobid = ""
         if en("gen_esmf_mesh"):
             print("[STEP] gen_esmf_mesh")
             from workflow.models.ufs_schism.preprocess.submit_esmf_mesh import (
@@ -186,11 +186,34 @@ class UfsSchismDriver(ModelDriver):
                 after_jobid=_gen_datm_jobid)
             if jid:
                 _slurm_jobs.append(jid)
+                _gen_esmf_jobid = jid
         else:
             print("[SKIP] gen_esmf_mesh")
 
         # =====================================================================
+        # BARRIER — wait for gen_datm + gen_esmf_mesh before running
+        # the interactive UFS config steps that read their output files.
+        # Without this barrier gen_datm_in races against gen_datm and
+        # fails because forcing/datm_*.nc does not exist yet.
+        # =====================================================================
+        _datm_barrier_jobs = [
+            j for j in [_gen_datm_jobid, _gen_esmf_jobid] if j
+        ]
+        if _datm_barrier_jobs and only is None:
+            print(f"\n  [UFS barrier] Waiting for "
+                  f"gen_datm + gen_esmf_mesh to complete "
+                  f"before gen_datm_in / gen_datm_streams ...")
+            wait_for_slurm_jobs(
+                _datm_barrier_jobs,
+                poll_seconds=30,
+                label="gen_datm/gen_esmf_mesh SLURM jobs")
+            print("  [UFS barrier] Done. "
+                  "Running interactive config steps.")
+            time.sleep(10)   # filesystem propagation
+
+        # =====================================================================
         # Phase 2: UFS configuration files (interactive, local)
+        # These run AFTER the barrier so gen_datm output is available.
         # =====================================================================
         if en("gen_datm_in"):
             print("[STEP] gen_datm_in")
@@ -260,7 +283,7 @@ class UfsSchismDriver(ModelDriver):
             print("[SKIP] gen_ufs_configure")
 
         # =====================================================================
-        # Phase 3: SCHISM preprocessing (identical to SchismDriver)
+        # Phase 3: SCHISM preprocessing
         # =====================================================================
         if en("gen_estuary"):
             print("[STEP] gen_estuary")
@@ -331,9 +354,7 @@ class UfsSchismDriver(ModelDriver):
         else:
             print("[SKIP] gen_nudge")
 
-        # =====================================================================
         # WWM-only steps: skip silently for UFS-SCHISM
-        # =====================================================================
         for step in ("gen_wwmbnd", "gen_wwminput"):
             if en(step):
                 _na(step,
@@ -343,7 +364,7 @@ class UfsSchismDriver(ModelDriver):
         return _slurm_jobs
 
     # -------------------------------------------------------------------------
-    # Phase 4 — Run management
+    # Phase 4
     # -------------------------------------------------------------------------
     def run(self, only: str = None):
         from workflow.models.ufs_schism.run.run_manager import (
@@ -352,10 +373,7 @@ class UfsSchismDriver(ModelDriver):
         run_phase(self.cfg, self.config_dir, only=only)
 
     # -------------------------------------------------------------------------
-    # Phase 5 — Post-processing
-    # UFS-SCHISM produces identical SCHISM output so the SCHISM
-    # postprocessing pipeline is reused without modification.
-    # DTN-step resilience is handled inside postprocess_phase().
+    # Phase 5
     # -------------------------------------------------------------------------
     def postprocess(self, only: str = None):
         from workflow.models.schism.postprocess import (

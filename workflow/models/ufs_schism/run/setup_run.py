@@ -1,21 +1,16 @@
 """
-models/schism/run/setup_run.py
-==============================
+models/ufs_schism/run/setup_run.py
+==================================
 Phase 4, step "setup_run" (interactive, fast).
 
-Populates each R{ID}_YYYYMM/ run directory so a SCHISM month can be launched:
-
-  * Checks fix/ freshness warnings
-  * Symlinks the large static mesh/forcing files from fix/
-  * Symlinks the monthly boundary/nudging/source inputs from I{ID}_YYYYMM/
-  * Symlinks the whole sflux/ directory from I{ID}_YYYYMM/
-  * For month 1 only: symlinks hotstart.nc -> I{ID}_{first}/hotstart.nc
-  * Copies the SCHISM MPI executable into the run dir
-  * Creates outputs/ with empty placeholder files SCHISM requires
-  * Adapts fix/run_test  -> R{ID}_YYYYMM/run_test  (unique job name)
-  * Adapts fix/run_comb  -> R{ID}_YYYYMM/run_comb  (unique job name,
-    combine step -i <nhot_write>)
-  * Renders auto_hotstart.py into the run dir
+UFS-SCHISM specific additions vs SCHISM:
+  * forcing/ replaces sflux/
+  * modulefiles/ symlinked from I{ID}_YYYYMM/modulefiles/
+  * combine_output11_MPI copied to outputs/
+  * run_combine_output.sbatch rendered for end-of-month full combination
+  * auto_hotstart.py rendered with COMBINE_OUTPUT_ENABLED=True
+    (per-stack combine during run is DISABLED; all stacks are combined
+     in one batch job after the run completes successfully)
 
 Sentinel: R{ID}_YYYYMM/setup_run.done
 """
@@ -30,11 +25,16 @@ from pathlib import Path
 from workflow.core.config import list_months, model_dir
 from workflow.core.environment import env_python
 
-TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
+TEMPLATE_DIR = (
+    Path(__file__).resolve().parent.parent.parent
+    / "schism" / "templates"
+)
 AUTO_HOTSTART_TEMPLATE = TEMPLATE_DIR / "auto_hotstart.py"
 DIAG_SBATCH_TEMPLATE   = TEMPLATE_DIR / "slurm" / "diag_run.sbatch"
 
-# Static files symlinked from fix/. Missing files are skipped with a NOTE.
+UFS_SLURM_DIR = Path(__file__).resolve().parent.parent / "templates" / "slurm"
+COMBINE_OUTPUT_SBATCH_TEMPLATE = UFS_SLURM_DIR / "run_combine_output.sbatch"
+
 FIX_LINKS = [
     "hgrid.gr3", "hgrid.ll", "vgrid.in", "partition.prop", "tvd.prop",
     "albedo.gr3", "diffmin.gr3", "diffmax.gr3", "watertype.gr3",
@@ -42,17 +42,16 @@ FIX_LINKS = [
     "estuary.gr3", "TEM_nudge.gr3", "SAL_nudge.gr3", "station.in",
 ]
 
-# Monthly inputs symlinked from I{ID}_YYYYMM/. These MUST exist.
 INPUT_LINKS = [
     "bctides.in", "param.nml", "source.nc",
     "TEM_3D.th.nc", "SAL_3D.th.nc", "elev2D.th.nc", "uv3D.th.nc",
     "TEM_nu.nc", "SAL_nu.nc",
+    "datm_in", "datm.streams", "fd_ufs.yaml", "noahmptable.tbl",
+    "model_configure", "ufs.configure",
 ]
 
-# Empty placeholder files SCHISM expects under outputs/ at startup.
 OUTPUT_PLACEHOLDERS = [f"staout_{i}" for i in range(1, 21)] + ["flux.out"]
 
-# fix/ freshness check map
 _FIX_FRESHNESS_CHECKS = {
     "param.nml": ("idir", "param.nml"),
     "run_test":  ("rdir", "run_test"),
@@ -65,7 +64,6 @@ _FIX_FRESHNESS_CHECKS = {
 # =============================================================================
 
 def _mtime(p: Path) -> float:
-    """Return mtime following symlinks. -inf if missing."""
     try:
         return p.stat().st_mtime
     except OSError:
@@ -80,17 +78,12 @@ def _fmt_mtime(p: Path) -> str:
 
 
 def check_fix_freshness(cfg: dict, mdir: Path, ym: str) -> list:
-    """Compare fix/ source files against deployed counterparts.
-
-    Returns warning strings for any file newer than its deployed counterpart.
-    """
     pid  = cfg["project_id"]
     fix  = mdir / "fix"
     bind = mdir / "bin"
     idir = mdir / f"I{pid}" / f"I{pid}_{ym}"
     rdir = mdir / f"R{pid}" / f"R{pid}_{ym}"
     exes = cfg.get("executables", {})
-
     warnings = []
 
     for fix_name, (dest_key, dest_name) in _FIX_FRESHNESS_CHECKS.items():
@@ -107,15 +100,27 @@ def check_fix_freshness(cfg: dict, mdir: Path, ym: str) -> list:
                 f"{dest_dir.name}/{dest_name} ({_fmt_mtime(dst)})."
             )
 
-    schism_exe = exes.get("schism")
-    if schism_exe:
-        src_exe = bind / schism_exe
-        dst_exe = rdir / schism_exe
+    ufs_exe = exes.get("ufs_schism")
+    if ufs_exe:
+        src_exe = bind / ufs_exe
+        dst_exe = rdir / ufs_exe
         if src_exe.exists() and dst_exe.exists():
             if _mtime(src_exe) > _mtime(dst_exe):
                 warnings.append(
-                    f"  bin/{schism_exe} ({_fmt_mtime(src_exe)}) is NEWER "
-                    f"than the copy in {rdir.name}/ ({_fmt_mtime(dst_exe)})."
+                    f"  bin/{ufs_exe} ({_fmt_mtime(src_exe)}) is NEWER than "
+                    f"the copy in {rdir.name}/ ({_fmt_mtime(dst_exe)})."
+                )
+
+    combine_exe = exes.get("combine_hotstart")
+    if combine_exe:
+        src_c = bind / combine_exe
+        dst_c = rdir / "outputs" / combine_exe
+        if src_c.exists() and dst_c.exists():
+            if _mtime(src_c) > _mtime(dst_c):
+                warnings.append(
+                    f"  bin/{combine_exe} ({_fmt_mtime(src_c)}) is NEWER "
+                    f"than the copy in {rdir.name}/outputs/ "
+                    f"({_fmt_mtime(dst_c)})."
                 )
 
     return warnings
@@ -126,7 +131,6 @@ def check_fix_freshness(cfg: dict, mdir: Path, ym: str) -> list:
 # =============================================================================
 
 def _read_nml_int(nml_path: Path, param: str):
-    """Read an integer-valued namelist parameter from a .nml file."""
     text = nml_path.read_text()
     m = re.search(r'^\s*' + re.escape(param) + r'\s*=\s*([^\s!]+)',
                   text, re.IGNORECASE | re.MULTILINE)
@@ -151,7 +155,6 @@ def _set_sbatch_workdir(text: str, workdir: str) -> str:
 
 
 def _set_combine_command(text: str, combine_exe: str, step: int) -> str:
-    """Normalise the combine_hotstart invocation in run_comb."""
     configured_name = Path(combine_exe).name
     possible_names  = {"combine_hotstart7", "combine_hotstart7.exe",
                        configured_name}
@@ -161,8 +164,7 @@ def _set_combine_command(text: str, combine_exe: str, step: int) -> str:
     pattern = re.compile(rf"(?:\S*/)?(?:{escaped})\s+-i\s+\d+")
     new_text, n = pattern.subn(f"./{configured_name} -i {step}", text)
     if n == 0:
-        print("  WARNING: no combine_hotstart7 '-i' line found in run_comb; "
-              "the combine step may not run. Check fix/run_comb.")
+        print("  WARNING: no combine_hotstart7 '-i' line found in run_comb.")
     return new_text
 
 
@@ -181,15 +183,12 @@ def _render_auto_hotstart(run_dir: Path, subs: dict):
 
 def _render_diag_sbatch(cfg: dict, mdir: Path, rdir: Path,
                         config_dir: Path) -> Path:
-    """Render diag_run.sbatch into the run directory (New I/O diagnostics)."""
     slurm    = cfg.get("slurm", {})
     var_cfgs = cfg.get("diag_run_vars", [])
     varnames = [v["var_name"] if isinstance(v, dict) else v
                 for v in var_cfgs]
-
     manifest_path = rdir / "diag_vars.manifest"
     manifest_path.write_text("\n".join(varnames) + "\n")
-
     nvar = max(len(varnames), 1)
     subs = {
         "WORKDIR":            str(rdir),
@@ -216,12 +215,37 @@ def _render_diag_sbatch(cfg: dict, mdir: Path, rdir: Path,
     return out
 
 
+def _render_combine_output_sbatch(cfg: dict, mdir: Path, rdir: Path,
+                                   month_index: int) -> Path:
+    slurm  = cfg.get("slurm", {})
+    pid    = cfg["project_id"]
+    combine_nranks = int(slurm.get("combine_output_nranks", 80))
+    combine_nodes  = max(1, (combine_nranks + 79) // 80)
+    jobname        = f"CO{pid}_{month_index + 1:02d}"
+    subs = {
+        "COMBINE_JOBNAME":  jobname,
+        "ACCOUNT":          slurm.get("account",                "nos-surge"),
+        "PARTITION":        slurm.get("partition",               "hercules-2"),
+        "COMBINE_NODES":    str(combine_nodes),
+        "COMBINE_NRANKS":   str(combine_nranks),
+        "COMBINE_WALLTIME": slurm.get("combine_output_walltime", "04:00:00"),
+        "LOGDIR":           str(mdir / "logs"),
+        "MAILUSER":         slurm.get("mail_user",
+                                      "felicio.cassalho@noaa.gov"),
+    }
+    text = COMBINE_OUTPUT_SBATCH_TEMPLATE.read_text()
+    for k, v in subs.items():
+        text = text.replace("{{" + k + "}}", str(v))
+    out = rdir / "run_combine_output.sbatch"
+    out.write_text(text)
+    return out
+
+
 # =============================================================================
 # Symlink helper
 # =============================================================================
 
 def _link(src: Path, dst: Path) -> bool:
-    """Create/refresh a symlink dst -> src. Returns True if src existed."""
     if not src.exists():
         return False
     if dst.exists() or dst.is_symlink():
@@ -255,22 +279,35 @@ def _setup_month(cfg: dict, mdir: Path, ym: str, month_index: int,
     rdir.mkdir(parents=True, exist_ok=True)
 
     # --- validate executables ---
-    exes        = cfg.get("executables", {})
-    schism_exe  = exes.get("schism")
-    combine_exe = exes.get("combine_hotstart")
-    if not schism_exe or not combine_exe:
-        print("  ERROR: executables.schism and executables.combine_hotstart "
-              "must be set in project.yaml")
+    exes               = cfg.get("executables", {})
+    ufs_exe            = exes.get("ufs_schism")
+    combine_exe        = exes.get("combine_hotstart")
+    combine_output_exe = exes.get("combine_output", "combine_output11_MPI")
+
+    if not ufs_exe or not combine_exe:
+        print("  ERROR: executables.ufs_schism and "
+              "executables.combine_hotstart must be set in project.yaml")
         return False
 
-    missing = []
-    for p in (fix / "run_test", fix / "run_comb",
-              bind / schism_exe, bind / combine_exe):
-        if not p.exists():
-            missing.append(str(p))
-    if missing:
-        print("  ERROR: required file(s) not found:")
-        for m in missing:
+    missing_exes = [str(bind / e) for e in (ufs_exe, combine_exe)
+                    if not (bind / e).exists()]
+    if missing_exes:
+        print("  ERROR: executables not found in bin/:")
+        for m in missing_exes:
+            print(f"    {m}")
+        return False
+
+    if not (bind / combine_output_exe).exists():
+        print(f"  ERROR: {combine_output_exe} not found in bin/. "
+              f"Compile and copy it before running setup_run.")
+        return False
+
+    # --- validate job-card templates ---
+    missing_cards = [str(fix / n) for n in ("run_test", "run_comb")
+                     if not (fix / n).exists()]
+    if missing_cards:
+        print("  ERROR: required job-card templates not found in fix/:")
+        for m in missing_cards:
             print(f"    {m}")
         return False
 
@@ -279,19 +316,26 @@ def _setup_month(cfg: dict, mdir: Path, ym: str, month_index: int,
         if not sentinel_path.exists():
             print(f"  ERROR {ym}: '{step}' has not completed successfully.")
             print(f"    Missing sentinel: {sentinel_path}")
-            print(f"    Either the SLURM job is still running, or it failed.")
             print(f"    Re-run:  stofs-ak --run --only {step} --config <cfg>")
-            print(f"    Then re-run setup_run once it completes.")
             return False
         return True
 
-    if not _check_sentinel(idir / "gen_3Dth.done",  "gen_3Dth"):  return False
-    if not _check_sentinel(idir / "gen_nudge.done", "gen_nudge"): return False
-    sflux_sentinel = idir / "sflux" / "gen_sflux.done"
-    if not _check_sentinel(sflux_sentinel, "gen_sflux"): return False
+    datm_subdir = str(cfg.get("datm_subdir", "forcing"))
+
+    if not _check_sentinel(idir / "gen_3Dth.done",
+                           "gen_3Dth"):                        return False
+    if not _check_sentinel(idir / "gen_nudge.done",
+                           "gen_nudge"):                       return False
+    if not _check_sentinel(idir / "sflux" / "gen_sflux.done",
+                           "gen_sflux"):                       return False
+    if not _check_sentinel(idir / datm_subdir / "gen_datm.done",
+                           "gen_datm"):                        return False
+    if not _check_sentinel(idir / datm_subdir / "gen_esmf_mesh.done",
+                           "gen_esmf_mesh"):                   return False
+
     if month_index == 0:
         if not _check_sentinel(idir / "gen_hotstart.done",
-                               "gen_hotstart"): return False
+                               "gen_hotstart"):                return False
 
     # --- symlink static fix/ files ---
     for name in FIX_LINKS:
@@ -304,10 +348,18 @@ def _setup_month(cfg: dict, mdir: Path, ym: str, month_index: int,
             print(f"  ERROR {ym}: required input missing: {idir / name}")
             return False
 
-    # --- symlink sflux/ directory ---
-    if not _link(idir / "sflux", rdir / "sflux"):
-        print(f"  ERROR {ym}: sflux dir missing: {idir / 'sflux'}")
+    # --- symlink forcing/ directory ---
+    if not _link(idir / datm_subdir, rdir / "forcing"):
+        print(f"  ERROR {ym}: forcing dir missing: {idir / datm_subdir}")
         return False
+
+    # --- symlink modulefiles/ directory ---
+    modulefiles_src = idir / "modulefiles"
+    if modulefiles_src.is_dir():
+        if not _link(modulefiles_src, rdir / "modulefiles"):
+            print(f"  WARNING {ym}: could not symlink modulefiles/.")
+    else:
+        print(f"  WARNING {ym}: no modulefiles/ found in {idir}.")
 
     # --- month-1: symlink hotstart from I{ID}_{first} ---
     if month_index == 0:
@@ -318,17 +370,18 @@ def _setup_month(cfg: dict, mdir: Path, ym: str, month_index: int,
             return False
     # months 2+: hotstart.nc chained at run time by auto_hotstart.py
 
-    # --- copy the SCHISM MPI executable ---
-    shutil.copy2(bind / schism_exe, rdir / schism_exe)
+    # --- copy executables ---
+    shutil.copy2(bind / ufs_exe, rdir / ufs_exe)
 
-    # --- outputs/ + placeholders + combine exe ---
+    # --- outputs/ + placeholders + combine executables ---
     outdir = rdir / "outputs"
     outdir.mkdir(exist_ok=True)
     for name in OUTPUT_PLACEHOLDERS:
         f = outdir / name
         if not f.exists():
             f.touch()
-    shutil.copy2(bind / combine_exe, outdir / combine_exe)
+    shutil.copy2(bind / combine_exe,        outdir / combine_exe)
+    shutil.copy2(bind / combine_output_exe, outdir / combine_output_exe)
 
     # --- nhot_write from this month's param.nml ---
     nhot_write = _read_nml_int(idir / "param.nml", "nhot_write")
@@ -352,7 +405,11 @@ def _setup_month(cfg: dict, mdir: Path, ym: str, month_index: int,
     run_comb     = _set_combine_command(run_comb, combine_exe, nhot_write)
     (rdir / "run_comb").write_text(run_comb)
 
-    # --- diagnostic hook (Phase 5 diag_run_plots, New I/O) ---
+    # --- render end-of-month combine_output sbatch ---
+    combine_output_sbatch = _render_combine_output_sbatch(
+        cfg, mdir, rdir, month_index)
+
+    # --- diagnostic hook (New I/O, not used for UFS-SCHISM old I/O) ---
     diag_enabled       = bool(cfg.get("diag_run_plots", False))
     diag_sbatch        = ""
     diag_vars_manifest = ""
@@ -364,10 +421,9 @@ def _setup_month(cfg: dict, mdir: Path, ym: str, month_index: int,
         diag_nvar          = max(len(cfg.get("diag_run_vars", [])), 1)
 
     # --- render auto_hotstart.py ---
-    # SCHISM standalone uses New I/O — no end-of-month output combination
-    # needed (New I/O files are written directly as global files).
-    # COMBINE_OUTPUT_ENABLED=False disables the combine_output_stacks()
-    # block in auto_hotstart.py entirely.
+    slurm          = cfg.get("slurm", {})
+    combine_nranks = int(slurm.get("combine_output_nranks", 80))
+
     next_rdir = (mdir / f"R{pid}" / f"R{pid}_{next_ym}") if next_ym else None
     _render_auto_hotstart(rdir, {
         "RUNDIR":                 str(rdir),
@@ -377,22 +433,20 @@ def _setup_month(cfg: dict, mdir: Path, ym: str, month_index: int,
         "NHOT_WRITE":             nhot_write,
         "MONTH":                  ym,
         "RUN_JOBNAME":            run_jobname,
-        # New I/O diagnostics (SCHISM standalone)
         "DIAG_ENABLED":           diag_enabled,
         "DIAG_SBATCH":            diag_sbatch,
         "DIAG_VARS_MANIFEST":     diag_vars_manifest,
         "DIAG_NVAR":              diag_nvar,
-        # Output combination disabled for SCHISM standalone (New I/O
-        # does not produce per-rank partition files).
-        "COMBINE_OUTPUT_ENABLED": False,
-        "COMBINE_OUTPUT_EXE":     "",
-        "COMBINE_OUTPUT_NRANKS":  0,
-        "COMBINE_OUTPUT_SBATCH":  "",
+        "COMBINE_OUTPUT_ENABLED": True,
+        "COMBINE_OUTPUT_EXE":     str(outdir / combine_output_exe),
+        "COMBINE_OUTPUT_NRANKS":  combine_nranks,
+        "COMBINE_OUTPUT_SBATCH":  str(combine_output_sbatch),
     })
 
     (rdir / "setup_run.done").touch()
     print(f"  {ym}: run directory ready  "
-          f"(job {run_jobname}, combine step {nhot_write}).")
+          f"(job {run_jobname}, combine step {nhot_write}, "
+          f"end-of-month output combine enabled).")
     return True
 
 
@@ -408,12 +462,12 @@ def run_setup_run(cfg: dict, config_dir=None):
     config_dir = _Path(config_dir) if config_dir is not None else _Path(".")
 
     print(f"\n{'='*60}")
-    print(f"  setup_run for M{pid} (SCHISM standalone)")
+    print(f"  setup_run for M{pid} (UFS-SCHISM)")
     print(f"  {len(months)} month(s): {months[0]} -> {months[-1]}")
     print(f"  chain_hotstart: {bool(cfg.get('chain_hotstart', True))}")
+    print(f"  Output combine: end-of-month (all stacks in one MPI job)")
     print(f"{'='*60}")
 
-    # Freshness summary — warn before processing any months.
     all_stale = []
     for ym in months:
         for w in check_fix_freshness(cfg, mdir, ym):
@@ -421,20 +475,9 @@ def run_setup_run(cfg: dict, config_dir=None):
     if all_stale:
         print(f"\n  {'!'*58}")
         print("  WARNING: one or more files in fix/ are NEWER than their")
-        print("  derived counterparts in I{ID}_YYYYMM/ or R{ID}_YYYYMM/.")
-        print("  This usually means fix/ was edited after preprocessing")
-        print("  or a previous setup_run already ran.  Check carefully:")
+        print("  derived counterparts.")
         for w in all_stale:
             print(w)
-        print()
-        print("  What to do:")
-        print("   param.nml changed -> delete I{ID}_YYYYMM/param.nml and")
-        print("     rerun:  stofs-ak --run --only gen_param --config <cfg>")
-        print("   run_test/run_comb changed -> delete setup_run.done for")
-        print("     affected months and rerun setup_run.")
-        print("   exe replaced in bin/ -> delete setup_run.done and")
-        print("     rerun setup_run so the new exe is copied into R{ID}/.")
-        print("  Continuing with setup_run — please verify the above.")
         print(f"  {'!'*58}\n")
 
     failed = []

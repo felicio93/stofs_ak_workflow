@@ -84,9 +84,13 @@ workflow/models/schism_mice/__init__.py
 workflow/models/schism_mice/driver.py
 workflow/models/schism_wwm/__init__.py
 workflow/models/schism_wwm/driver.py
+workflow/models/schism_wwm/postprocess/__init__.py
+workflow/models/schism_wwm/postprocess/plot_hs.py
 workflow/models/schism_wwm/preprocess/__init__.py
 workflow/models/schism_wwm/preprocess/gen_wwmbnd.py
 workflow/models/schism_wwm/preprocess/gen_wwminput.py
+workflow/models/schism_wwm/run/__init__.py
+workflow/models/schism_wwm/run/setup_run.py
 workflow/models/ufs_schism/__init__.py
 workflow/models/ufs_schism/driver.py
 workflow/models/ufs_schism/preprocess/__init__.py

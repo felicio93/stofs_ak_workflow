@@ -8,7 +8,7 @@ Behaviour (ihot=1, single end-of-month hotstart):
   1. Submit run_test via sbatch.
   2. Poll squeue, watching mirror.out for advancement and hang detection.
   3. On successful completion:
-       - (UFS-SCHISM) combine remaining output stacks + clean partition files
+       - (UFS-SCHISM) combine ALL output stacks at end of month
        - submit run_comb (combine_hotstart7) and wait
        - delete per-rank hotstart files
        - symlink combined hotstart into next month's run directory
@@ -40,16 +40,9 @@ DIAG_SBATCH         = r"{{DIAG_SBATCH}}"
 DIAG_VARS_MANIFEST  = r"{{DIAG_VARS_MANIFEST}}"
 DIAG_NVAR           = {{DIAG_NVAR}}
 
-# --- Old I/O per-stack combine + diagnostics (UFS-SCHISM) ---
-# When enabled, each completed output stack is:
-#   1. Combined with combine_output11_MPI (all variables)
-#   2. Diagnosed with diag_run_oldio.py (diag_run_vars subset)
-#   3. Per-rank partition files deleted progressively
-COMBINE_DIAG_ENABLED = {{COMBINE_DIAG_ENABLED}}
-COMBINE_DIAG_SBATCH  = r"{{COMBINE_DIAG_SBATCH}}"
-COMBINE_DIAG_NRANKS  = {{COMBINE_DIAG_NRANKS}}
-
 # --- End-of-month output combination (UFS-SCHISM old I/O) ---
+# Per-stack combine during run is DISABLED. All stacks are combined
+# in one batch job at the end of the month after the run completes.
 COMBINE_OUTPUT_ENABLED  = {{COMBINE_OUTPUT_ENABLED}}
 COMBINE_OUTPUT_EXE      = r"{{COMBINE_OUTPUT_EXE}}"
 COMBINE_OUTPUT_NRANKS   = {{COMBINE_OUTPUT_NRANKS}}
@@ -88,41 +81,34 @@ def squeue_line_for(jobname):
             return line.strip()
     return None
 
+
 def _clean_outputs():
     """Delete stale output stacks and mirror.out before (re)submitting."""
     outdir = Path(RUNDIR) / "outputs"
     deleted = []
     # Delete per-rank partition files (*_NNNNNN_N.nc pattern)
-    for f in sorted(outdir.glob("*_*.nc")):
-        if f.name.startswith("hotstart_it="):
-            continue
-        if re.search(r"_\d+$", f.stem):
-            f.unlink()
+    for f in sorted(outdir.glob("schout_??????_*.nc")):
+        if re.match(r"^schout_\d{6}_\d+\.nc$", f.name):
+            f.unlink(missing_ok=True)
             deleted.append(f.name)
-    # Also delete any already-combined schout_N.nc files — these may be
-    # stale from a previous run attempt if a CD job combined them after
-    # auto_hotstart already restarted SCHISM from scratch.
+    # Delete any already-combined schout_N.nc files from a previous attempt
     for f in sorted(outdir.glob("schout_*.nc")):
         if re.match(r"^schout_\d+\.nc$", f.name):
-            f.unlink()
+            f.unlink(missing_ok=True)
             deleted.append(f.name)
-    # Delete combine and diag sentinels so stacks are reprocessed
+    # Delete combine sentinels
     for f in sorted(outdir.glob("combine_*.done")):
-        f.unlink()
-        deleted.append(f.name)
-    for f in sorted(outdir.glob("diag_oldio_*.done")):
-        f.unlink()
+        f.unlink(missing_ok=True)
         deleted.append(f.name)
     mirror = outdir / "mirror.out"
     if mirror.exists():
-        mirror.unlink()
+        mirror.unlink(missing_ok=True)
         deleted.append("mirror.out")
     if deleted:
-        log(f"Cleaned {len(deleted)} stale file(s) from outputs/ before submission:")
-        for name in deleted:
-            log(f"  deleted: {name}")
+        log(f"Cleaned {len(deleted)} stale file(s) from outputs/ before submission.")
     else:
-        log("outputs/ is clean (no stale stacks or mirror.out to remove.")
+        log("outputs/ is clean (no stale stacks or mirror.out to remove).")
+
 
 def submit(script):
     rc, out = sh(f"sbatch {script}")
@@ -202,14 +188,16 @@ def diagnose_failure(job_id: str) -> str:
 
 
 # =============================================================================
-# New I/O diagnostic dispatch (SCHISM standalone)
+# New I/O diagnostic dispatch (SCHISM standalone only)
 # =============================================================================
 
 _diag_submitted = set()
 
 
 def dispatch_diag_plots(run_finished: bool = False):
-    """Submit diag_run job arrays for newly-completed New I/O stacks."""
+    """Submit diag_run job arrays for newly-completed New I/O stacks.
+    Only used for SCHISM standalone (New I/O). Not called for UFS-SCHISM.
+    """
     if not DIAG_ENABLED or not DIAG_SBATCH:
         return
     outdir = Path(RUNDIR) / "outputs"
@@ -236,95 +224,19 @@ def dispatch_diag_plots(run_finished: bool = False):
 
 
 # =============================================================================
-# Old I/O per-stack combine + diagnostics (UFS-SCHISM)
-# =============================================================================
-
-_combine_diag_submitted = set()   # stacks whose combine+diag job was submitted
-_combine_diag_done      = set()   # stacks whose combine+diag sentinel exists
-
-
-def _oldio_completed_stacks(run_finished: bool = False) -> list:
-    """Return sorted list of old I/O stack numbers that are complete.
-
-    A stack N is complete when:
-    - Stack N+1 rank-0 file (schout_000000_{N+1}.nc) exists, OR
-    - The run has finished (run_finished=True)
-
-    Only stacks whose rank-0 file exists are considered (schout_000000_N.nc).
-    Excludes already-combined stacks (schout_N.nc without rank prefix exists).
-    """
-    outdir = Path(RUNDIR) / "outputs"
-
-    # Find all stack numbers that have a rank-0 file
-    rank0_pat = re.compile(r"^schout_000000_(\d+)\.nc$")
-    all_stacks = sorted(
-        int(m.group(1))
-        for f in outdir.glob("schout_000000_*.nc")
-        for m in [rank0_pat.match(f.name)]
-        if m
-    )
-    if not all_stacks:
-        return []
-
-    max_stack = max(all_stacks)
-    complete = []
-    for n in all_stacks:
-        # Skip if sentinel already exists (already done)
-        sentinel = outdir / f"diag_oldio_{n}.done"
-        if sentinel.exists():
-            _combine_diag_done.add(n)
-            continue
-        # Skip if already submitted
-        if n in _combine_diag_submitted:
-            continue
-        # Complete if next stack exists or run finished
-        next_exists = (outdir / f"schout_000000_{n + 1}.nc").exists()
-        if next_exists or run_finished: #(run_finished and n == max_stack):
-            complete.append(n)
-
-    return complete
-
-
-def dispatch_combine_diag(run_finished: bool = False):
-    """Submit combine+diag job for each newly-completed old I/O stack.
-
-    For each complete stack N:
-      - Submits run_diag_oldio.sbatch with STACK=N
-      - The job combines schout_*_N.nc -> schout_N.nc, renders diag frames,
-        then deletes the partition files and touches diag_oldio_N.done
-    """
-    if not COMBINE_DIAG_ENABLED or not COMBINE_DIAG_SBATCH:
-        return
-
-    for n in _oldio_completed_stacks(run_finished=run_finished):
-        rc, out = sh(
-            f"sbatch --export=ALL,COMBINE_DIAG_STACK={n},"
-            f"COMBINE_DIAG_MONTH={MONTH} "
-            f"{COMBINE_DIAG_SBATCH}"
-        )
-        if rc == 0:
-            log(f"combine_diag_oldio: submitted stack {n}  ({out})")
-            _combine_diag_submitted.add(n)
-        else:
-            log(f"combine_diag_oldio: sbatch FAILED for stack {n}: {out}")
-
-
-# =============================================================================
 # End-of-month output combination (UFS-SCHISM old I/O)
+# All stacks are combined in one batch job after the run completes.
 # =============================================================================
 
 def _count_output_stacks() -> int:
-    """Count combined schout stacks already processed during the run.
-    Also counts any remaining uncombined stacks."""
+    """Count total output stacks (combined + uncombined) in outputs/."""
     outdir = Path(RUNDIR) / "outputs"
-    # Combined files (no rank prefix): schout_N.nc
     combined = {
         int(m.group(1))
         for f in outdir.glob("schout_*.nc")
         for m in [re.match(r"^schout_(\d+)\.nc$", f.name)]
         if m
     }
-    # Uncombined rank-0 files still present
     rank0 = {
         int(m.group(1))
         for f in outdir.glob("schout_000000_*.nc")
@@ -335,29 +247,8 @@ def _count_output_stacks() -> int:
     return max(all_stacks) if all_stacks else 0
 
 
-def _clean_output_partition_files_for_stack(stack_n: int):
-    """Delete per-rank partition files for a specific stack number."""
-    outdir = Path(RUNDIR) / "outputs"
-    pat = re.compile(rf"^schout_\d{{6}}_{stack_n}\.nc$")
-    deleted = 0
-    freed   = 0
-    for f in sorted(outdir.glob(f"schout_??????_{stack_n}.nc")):
-        if pat.match(f.name):
-            try:
-                freed += f.stat().st_size
-            except OSError:
-                pass
-            f.unlink(missing_ok=True)
-            deleted += 1
-    if deleted:
-        log(f"  Stack {stack_n}: deleted {deleted} partition file(s) "
-            f"(~{freed / 1e9:.1f} GB freed).")
-
-
 def _clean_output_partition_files():
-    """Delete ALL remaining per-rank schout partition files and
-    local_to_global_* mapping files. Called at end of month after all
-    per-stack cleanup is complete to catch any residual files."""
+    """Delete ALL per-rank schout partition files and local_to_global_* files."""
     outdir = Path(RUNDIR) / "outputs"
     pat_schout = re.compile(r"^schout_\d{6}_\d+\.nc$")
     deleted_schout = 0
@@ -386,11 +277,13 @@ def _clean_output_partition_files():
         log(f"End-of-month cleanup: deleted {deleted_schout} partition file(s) "
             f"and {deleted_l2g} local_to_global file(s) (~{total:.1f} GB freed).")
 
-def combine_output_stacks():
-    """Combine any remaining uncombined output stacks at end of month.
 
-    Stacks already combined during the run (diag_oldio_N.done exists) are
-    skipped — only residual stacks are processed here.
+def combine_output_stacks():
+    """Combine ALL output stacks at end of month using one SLURM job.
+
+    Called once after the run completes successfully, before hotstart
+    combination. All schout_NNNNNN_N.nc partition files are combined
+    into schout_N.nc global files.
     """
     if not COMBINE_OUTPUT_ENABLED:
         return
@@ -403,69 +296,26 @@ def combine_output_stacks():
         _clean_output_partition_files()
         return
 
-    # Find stacks that still need combining (no combined schout_N.nc yet)
+    # Find all stacks that need combining
     rank0_stacks = {
         int(m.group(1))
         for f in outdir.glob("schout_000000_*.nc")
         for m in [re.match(r"^schout_000000_(\d+)\.nc$", f.name)]
         if m
     }
-    combined_stacks = {
-        int(m.group(1))
-        for f in outdir.glob("schout_*.nc")
-        for m in [re.match(r"^schout_(\d+)\.nc$", f.name)]
-        if m
-    }
-    remaining = sorted(rank0_stacks - combined_stacks)
 
-    # Wait for any in-progress per-stack diag/combine jobs to finish
-    # before submitting the end-of-month combine, to avoid two MPI jobs
-    # running combine_output11_MPI in the same outputs/ dir simultaneously.
-    if remaining:
-        comb_jobname_prefix = "CD" + RUN_JOBNAME[1:]
-        log(f"combine_output: waiting for per-stack diag jobs "
-            f"({comb_jobname_prefix}*) to finish before end-of-month "
-            f"combine ({len(remaining)} stacks still need combining)...")
-        while True:
-            _, qout = sh(QUEUE_CMD)
-            cd_jobs = [l for l in qout.splitlines()
-                       if comb_jobname_prefix in l]
-            if not cd_jobs:
-                break
-            log(f"  {len(cd_jobs)} per-stack diag job(s) still running, "
-                f"waiting 60s ...")
-            time.sleep(60)
-        log("  All per-stack diag jobs finished. Proceeding with "
-            "end-of-month combine.")
-        # Recompute remaining after waiting — per-stack jobs may have
-        # combined additional stacks while we were waiting.
-        combined_stacks = {
-            int(m.group(1))
-            for f in outdir.glob("schout_*.nc")
-            for m in [re.match(r"^schout_(\d+)\.nc$", f.name)]
-            if m
-        }
-        remaining = sorted(rank0_stacks - combined_stacks)
-
-    if not remaining:
-        log("combine_output: all stacks already combined during run. "
-            "Skipping end-of-month combination.")
+    if not rank0_stacks:
+        log("combine_output: no partition files found to combine.")
         _clean_output_partition_files()
         sentinel.touch()
         return
 
-    log(f"combine_output: {len(remaining)} uncombined stack(s) remaining: "
-        f"{remaining}")
-
-    nstacks_total = _count_output_stacks()
-    if nstacks_total == 0:
-        log("WARNING: combine_output: no stacks found. Skipping.")
-        return
-
-    # Submit combine job for remaining stacks
-    begin = min(remaining)
-    end   = max(remaining)
+    begin = min(rank0_stacks)
+    end   = max(rank0_stacks)
     comb_jobname = "CO" + RUN_JOBNAME[1:]
+
+    log(f"combine_output: combining {len(rank0_stacks)} stack(s) "
+        f"(stacks {begin} to {end}) with {COMBINE_OUTPUT_NRANKS} MPI ranks ...")
 
     rc, out = sh(
         f"sbatch --export=ALL,"
@@ -476,23 +326,24 @@ def combine_output_stacks():
     if rc != 0:
         log(f"ERROR: sbatch {COMBINE_OUTPUT_SBATCH} failed:\n{out}")
         sys.exit(1)
-    log(f"Submitted combine_output job for stacks {begin}-{end}: {out}")
+    log(f"Submitted combine_output job: {out}")
 
+    # Wait for combine job to finish
     while squeue_line_for(comb_jobname) is not None:
         log(f"  waiting for combine_output job ({comb_jobname}) ...")
         time.sleep(_COMBINE_POLL_SECONDS)
     time.sleep(10)
 
-    # Verify
-    missing = [f"schout_{i}.nc" for i in remaining
+    # Verify combined files were created
+    missing = [f"schout_{i}.nc" for i in rank0_stacks
                if not (outdir / f"schout_{i}.nc").exists()]
     if missing:
         log(f"ERROR: combine_output finished but {len(missing)} file(s) missing:")
-        for m in missing[:10]:
-            log(f"  {m}")
+        for m_name in missing[:10]:
+            log(f"  {m_name}")
         sys.exit(1)
 
-    log(f"combine_output: stacks {begin}-{end} combined successfully.")
+    log(f"combine_output: all {len(rank0_stacks)} stack(s) combined successfully.")
     sentinel.touch()
     _clean_output_partition_files()
 
@@ -596,9 +447,8 @@ def main():
 
     combined = Path(RUNDIR) / "outputs" / f"hotstart_it={NHOT_WRITE}.nc"
     if run_completed() and (combined.exists() or _partition_hotstarts_exist()):
-        log("Run already complete; proceeding to combine/chain.")
+        log("Run already complete; proceeding to combine outputs and chain.")
         dispatch_diag_plots(run_finished=True)
-        dispatch_combine_diag(run_finished=True)
         combine_output_stacks()
         combine_and_chain()
         log(f"=== auto_hotstart for {MONTH} done ===")
@@ -619,8 +469,8 @@ def main():
         _, full = sh(QUEUE_CMD)
         print(full)
 
+        # Only dispatch New I/O diagnostics (SCHISM standalone)
         dispatch_diag_plots(run_finished=False)
-        dispatch_combine_diag(run_finished=False)
 
         if status is not None:
             m = re.search(r"\b\d+\b", status)
@@ -690,7 +540,6 @@ def main():
 
     log(f"{RUN_JOBNAME}: run completed successfully.")
     dispatch_diag_plots(run_finished=True)
-    dispatch_combine_diag(run_finished=True)
     combine_output_stacks()
     combine_and_chain()
     log(f"=== auto_hotstart for {MONTH} done ===")

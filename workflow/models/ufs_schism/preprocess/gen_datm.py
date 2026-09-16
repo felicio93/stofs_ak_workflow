@@ -65,6 +65,7 @@ def _read_lon_lat(sflux_air_1_1: Path):
 
 
 def _append_day(varname: str, src_path: Path, out_list: list):
+    """Read first 24 hourly records from a sflux daily file."""
     with nc4.Dataset(str(src_path)) as ds:
         if varname not in ds.variables:
             raise KeyError(f"{varname} not found in {src_path.name}")
@@ -98,25 +99,39 @@ def gen_datm_month(cfg: dict, ym: str):
     lon2d, lat2d = _read_lon_lat(air1)
     ny, nx = lon2d.shape
 
+    # We write ndays+1 daily stacks:
+    #   stacks 1..ndays  = the calendar month
+    #   stack ndays+1    = first day of next month (read-ahead bracket)
+    # This mirrors gen_sflux.py's STACK_CEILING logic so the UFS DATM
+    # reader always has a time bracket past the run end.
+    total_days = ndays + 1
+
     # Accumulate monthly chunks by day
     chunks = {k: [] for k in SFLUX_TO_DATM.keys()}
 
-    total_days = ndays + 1
     for day in range(1, total_days + 1):
         air = sflux_dir / f"sflux_air_1.{day}.nc"
         prc = sflux_dir / f"sflux_prc_1.{day}.nc"
         rad = sflux_dir / f"sflux_rad_1.{day}.nc"
         if not (air.exists() and prc.exists() and rad.exists()):
-            raise FileNotFoundError(f"Missing one of: {air.name}, {prc.name}, {rad.name}")
+            # The extra day (ndays+1) sflux file must have been written by
+            # gen_sflux.py.  If it's missing, pad by repeating the last day.
+            if day == total_days:
+                print(f"  WARNING {ym}: extra sflux stack {day} missing; "
+                      f"padding by repeating day {ndays}.")
+                for k in chunks:
+                    if chunks[k]:
+                        chunks[k].append(chunks[k][-1].copy())
+                break
+            raise FileNotFoundError(
+                f"Missing one of: {air.name}, {prc.name}, {rad.name}")
 
         _append_day("uwind", air, chunks["uwind"])
         _append_day("vwind", air, chunks["vwind"])
         _append_day("stmp",  air, chunks["stmp"])
         _append_day("spfh",  air, chunks["spfh"])
         _append_day("prmsl", air, chunks["prmsl"])
-
         _append_day("prate", prc, chunks["prate"])
-
         _append_day("dswrf", rad, chunks["dswrf"])
         _append_day("dlwrf", rad, chunks["dlwrf"])
 
@@ -124,14 +139,17 @@ def gen_datm_month(cfg: dict, ym: str):
 
     # Concatenate into (time, ny, nx)
     data = {}
+    expected_nt = total_days * 24
     for sflux_name, day_list in chunks.items():
-        arr = np.concatenate(day_list, axis=0)  # (ndays*24, ny, nx)
-        if arr.shape[0] != total_days * 24:
-            raise RuntimeError(f"{sflux_name}: expected {total_days*24} times, got {arr.shape[0]}")
+        arr = np.concatenate(day_list, axis=0)
+        if arr.shape[0] != expected_nt:
+            print(f"  WARNING: {sflux_name}: expected {expected_nt} times, "
+                  f"got {arr.shape[0]}")
         data[sflux_name] = arr
 
+    nt = data["uwind"].shape[0]
+
     # Time axis: seconds since 1970-01-01 00:00:00
-    nt = total_days * 24
     start_time = datetime(year, month, 1)
     time_vals = np.arange(nt, dtype="float64") * 3600.0
     time_vals += (start_time - datetime(1970, 1, 1)).total_seconds()
@@ -172,7 +190,8 @@ def gen_datm_month(cfg: dict, ym: str):
 
         for sflux_name, datm_name in SFLUX_TO_DATM.items():
             long_name, units = VAR_META[datm_name]
-            v = nc.createVariable(datm_name, "f4", ("time", "y", "x"), fill_value=fillv)
+            v = nc.createVariable(datm_name, "f4", ("time", "y", "x"),
+                                  fill_value=fillv)
             v.short_name = datm_name
             v.long_name = long_name
             v.units = units
@@ -180,16 +199,22 @@ def gen_datm_month(cfg: dict, ym: str):
 
         nc.title = "DATM forcing for UFS-SCHISM (from ERA5 via sflux)"
         nc.source = "ERA5"
-        nc.history = f"Created {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')} by stofs_ak_workflow"
+        nc.history = (f"Created {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')} "
+                      f"by stofs_ak_workflow")
         nc.Conventions = "CF-1.6"
+        nc.note = (f"Extends {ndays} calendar days + 1 extra day (read-ahead "
+                   f"bracket) = {total_days} days total ({nt} hourly records)")
 
     tmp.replace(out_path)
     sentinel.touch()
-    print(f"  Wrote {out_path} (nt={nt}, ny={ny}, nx={nx})")
+    print(f"  Wrote {out_path} (nt={nt} = {total_days} days, ny={ny}, nx={nx})")
+    print(f"  Note: includes 1 extra read-ahead day past end of month.")
     print(f"  Sentinel: {sentinel}")
 
+
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description="Convert SCHISM sflux -> CDEPS DATM forcing for one month")
+    ap = argparse.ArgumentParser(
+        description="Convert SCHISM sflux -> CDEPS DATM forcing for one month")
     ap.add_argument("--config", required=True)
     ap.add_argument("--month", required=True, help="YYYYMM")
     args = ap.parse_args()

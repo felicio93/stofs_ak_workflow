@@ -4,8 +4,12 @@ downloaders/era5.py
 Phase 1b (DTN, internet required) — Download ERA5 monthly raw files from the
 Copernicus Climate Data Store (CDS) using the cdsapi library.
 
-One raw NetCDF file per month:
+One raw NetCDF file per calendar month:
     raw/era5/{YYYY}/era5_{YYYYMM}.nc
+
+ERA5 is always downloaded by calendar month regardless of the project
+grouping setting. For ndays grouping the function collects the unique
+calendar months that span all groups before downloading.
 
 Variables downloaded (ERA5 hourly single-level reanalysis):
     10m_u_component_of_wind         -> u10
@@ -42,8 +46,18 @@ from zipfile import ZipFile, BadZipFile
 
 import numpy as np
 
-from workflow.core.config import load_config, list_months, model_dir, ProgressTracker
-from workflow.core.environment import check_dtn, check_cdsapi, check_active_env
+from workflow.core.config import (
+    load_config,
+    list_groups,
+    group_date_range,
+    model_dir,
+    ProgressTracker,
+)
+from workflow.core.environment import (
+    check_dtn,
+    check_cdsapi,
+    check_active_env,
+)
 
 CDS_VARIABLES = [
     "10m_u_component_of_wind",
@@ -58,12 +72,44 @@ CDS_VARIABLES = [
 
 
 # =============================================================================
+# Helper: collect unique calendar months from all groups
+# =============================================================================
+
+def _calendar_months_for_groups(cfg: dict) -> list:
+    """Return sorted list of 'YYYYMM' strings covering all groups.
+
+    ERA5 raw files are always one file per calendar month. For ndays
+    grouping a single group may touch two calendar months (e.g. a
+    7-day group starting 2025-09-29 spans Sep and Oct). This function
+    collects every calendar month touched by any group so that the full
+    ERA5 coverage needed by gen_sflux is available.
+
+    Returns a sorted list of unique 'YYYYMM' strings.
+    """
+    from datetime import timedelta
+    from dateutil.relativedelta import relativedelta
+
+    groups = list_groups(cfg)
+    seen   = set()
+
+    for gid in groups:
+        gstart, gend = group_date_range(cfg, gid)
+        # Walk calendar months from group start to group end
+        cur = date(gstart.year, gstart.month, 1)
+        end = date(gend.year,   gend.month,   1)
+        while cur <= end:
+            seen.add(cur.strftime("%Y%m"))
+            cur += relativedelta(months=1)
+
+    return sorted(seen)
+
+
+# =============================================================================
 # Stale-data check
 # =============================================================================
 
 def stale_check_era5(nc_path: Path, var: str = "u10") -> bool:
-    """
-    Return True if the ERA5 file looks stale (all time steps identical).
+    """Return True if the ERA5 file looks stale (all time steps identical).
     Compares the spatial mean of the first vs last time record.
     """
     try:
@@ -89,7 +135,7 @@ def stale_check_era5(nc_path: Path, var: str = "u10") -> bool:
 # =============================================================================
 
 def _is_zip(path: Path) -> bool:
-    """Return True if path is a zip archive (CDS API sometimes returns zips)."""
+    """Return True if path is a zip archive."""
     try:
         with open(path, "rb") as f:
             return f.read(4) == b"PK\x03\x04"
@@ -98,17 +144,12 @@ def _is_zip(path: Path) -> bool:
 
 
 def _unzip_and_merge(zip_path: Path, out_nc: Path):
-    """
-    The new CDS API can return a zip of separate per-variable NetCDF files.
-    Unzip into a temp directory, merge all NetCDF files with xarray, and
-    write the merged result to out_nc. Handles variable renaming for the
-    new CDS Beta API (same as pyschism).
-    """
+    """Unzip a CDS zip response and merge all NetCDF files into one."""
     import xarray as xr
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir = Path(tmpdir)
-        print(f"  ZIP detected — extracting and merging variables...")
+        print("  ZIP detected — extracting and merging variables...")
         with ZipFile(zip_path, "r") as zf:
             zf.extractall(tmpdir)
             nc_files = list(tmpdir.glob("*.nc"))
@@ -116,16 +157,13 @@ def _unzip_and_merge(zip_path: Path, out_nc: Path):
         if not nc_files:
             raise RuntimeError("ZIP contained no .nc files")
 
-        # Open and merge all variable files; use compat='override' to silence
-        # xarray FutureWarning and adopt the correct future default behavior.
         datasets = [xr.open_dataset(f) for f in nc_files]
         merged   = xr.merge(datasets, compat="override")
 
-        # New CDS Beta API renames some variables — normalise to old names
         rename_map = {
-            "avg_tprate":   "mtpr",
-            "avg_sdlwrf":   "msdwlwrf",
-            "avg_sdswrf":   "msdwswrf",
+            "avg_tprate": "mtpr",
+            "avg_sdlwrf": "msdwlwrf",
+            "avg_sdswrf": "msdwswrf",
         }
         actual_renames = {k: v for k, v in rename_map.items()
                           if k in merged.data_vars}
@@ -140,7 +178,7 @@ def _unzip_and_merge(zip_path: Path, out_nc: Path):
 
 
 def download_month(client, ym: str, out_path: Path, cfg: dict):
-    """Download one month of ERA5 data via the CDS API."""
+    """Download one calendar month of ERA5 data via the CDS API."""
     year  = int(ym[:4])
     month = int(ym[4:])
     ndays = monthrange(year, month)[1]
@@ -149,50 +187,53 @@ def download_month(client, ym: str, out_path: Path, cfg: dict):
     lat_min = float(cfg["lat_min"]); lat_max = float(cfg["lat_max"])
     buf = 0.5
 
-    # CDS area: [North, West, South, East]. East > 180 is accepted for
-    # 0-360 domains (same approach as pyschism).
-    area = [lat_max + buf, lon_min - buf, lat_min - buf, lon_max + buf]
+    area = [lat_max + buf, lon_min - buf,
+            lat_min - buf, lon_max + buf]
 
-    print(f"  Requesting ERA5 for {ym} ({year}-{month:02d}-01 to {year}-{month:02d}-{ndays:02d})")
-    print(f"  Area: N={area[0]} W={area[1]} S={area[2]} E={area[3]}")
+    print(f"  Requesting ERA5 for {ym} "
+          f"({year}-{month:02d}-01 to "
+          f"{year}-{month:02d}-{ndays:02d})")
+    print(f"  Area: N={area[0]} W={area[1]} "
+          f"S={area[2]} E={area[3]}")
 
     request = {
-        "variable": CDS_VARIABLES,
-        "product_type": "reanalysis",
-        "year": str(year),
-        "month": f"{month:02d}",
-        "day": [f"{d:02d}" for d in range(1, ndays + 1)],
-        "time": [f"{h:02d}:00" for h in range(24)],
-        "area": area,
-        "data_format": "netcdf",
+        "variable":        CDS_VARIABLES,
+        "product_type":    "reanalysis",
+        "year":            str(year),
+        "month":           f"{month:02d}",
+        "day":             [f"{d:02d}" for d in range(1, ndays + 1)],
+        "time":            [f"{h:02d}:00" for h in range(24)],
+        "area":            area,
+        "data_format":     "netcdf",
         "download_format": "unarchived",
     }
 
-    # Download to a temporary file first so we can inspect the format
     raw_tmp = out_path.parent / f"{out_path.stem}.raw.tmp"
     raw_tmp.unlink(missing_ok=True)
 
-    client.retrieve("reanalysis-era5-single-levels", request, str(raw_tmp))
+    client.retrieve("reanalysis-era5-single-levels",
+                    request, str(raw_tmp))
 
     if not (raw_tmp.exists() and raw_tmp.stat().st_size > 0):
         raise RuntimeError(f"CDS returned empty file for {ym}")
 
-    # Handle zip vs plain NetCDF (new CDS API sometimes returns a zip even
-    # when download_format='unarchived')
     if _is_zip(raw_tmp):
         try:
             _unzip_and_merge(raw_tmp, out_path)
             raw_tmp.unlink(missing_ok=True)
         except BadZipFile as exc:
             raw_tmp.unlink(missing_ok=True)
-            raise RuntimeError(f"CDS response is not a valid zip: {exc}")
+            raise RuntimeError(
+                f"CDS response is not a valid zip: {exc}")
         except Exception as exc:
             raw_tmp.unlink(missing_ok=True)
-            raise RuntimeError(f"Failed to unzip/merge CDS response: {exc}")
+            raise RuntimeError(
+                f"Failed to unzip/merge CDS response: {exc}")
     else:
         raw_tmp.replace(out_path)
 
-    print(f"  Downloaded: {out_path.name}  ({out_path.stat().st_size // 1024 // 1024} MB)")
+    print(f"  Downloaded: {out_path.name}  "
+          f"({out_path.stat().st_size // 1024 // 1024} MB)")
 
 
 # =============================================================================
@@ -206,19 +247,34 @@ def run_download_era5(cfg: dict):
 
     import cdsapi
 
-    pid     = cfg["project_id"]
-    mdir    = model_dir(cfg)
-    months  = list_months(cfg)
+    pid    = cfg["project_id"]
+    mdir   = model_dir(cfg)
+
+    # Collect the unique calendar months needed to cover all groups.
+    # For monthly grouping this is identical to the original behaviour.
+    # For ndays grouping it adds any extra months touched by groups
+    # that straddle a month boundary.
+    months  = _calendar_months_for_groups(cfg)
+    groups  = list_groups(cfg)
+    grouping = cfg.get("grouping", "monthly")
 
     print(f"\n{'='*60}")
-    print(f"  ERA5 download: {months[0]} -> {months[-1]}")
-    print(f"  Domain: lon [{cfg['lon_min']}, {cfg['lon_max']}]  "
+    print(f"  ERA5 download")
+    print(f"  Grouping : {grouping}"
+          + (f"  (group_ndays={cfg['group_ndays']})"
+             if grouping == "ndays" else ""))
+    print(f"  Groups   : {groups[0]} -> {groups[-1]}")
+    print(f"  Calendar months to download: "
+          f"{months[0]} -> {months[-1]}  "
+          f"({len(months)} month(s))")
+    print(f"  Domain   : lon [{cfg['lon_min']}, {cfg['lon_max']}]  "
           f"lat [{cfg['lat_min']}, {cfg['lat_max']}]")
     print(f"  Raw output: {mdir}/raw/era5/")
     print(f"{'='*60}\n")
 
     client = cdsapi.Client()
-    prog   = ProgressTracker(total=len(months), label="ERA5 download")
+    prog   = ProgressTracker(
+        total=len(months), label="ERA5 download")
     failed = []
 
     for ym in months:
@@ -227,7 +283,6 @@ def run_download_era5(cfg: dict):
         era5_dir.mkdir(parents=True, exist_ok=True)
         out_path = era5_dir / f"era5_{ym}.nc"
 
-        # Skip if valid file already exists
         if out_path.exists() and out_path.stat().st_size > 0:
             print(f"\n--- {ym}: already downloaded, skipping.")
             prog.update(ym)
@@ -242,12 +297,13 @@ def run_download_era5(cfg: dict):
             prog.update(ym)
             continue
 
-        # Stale-data check
         print(f"  Stale-data check for {ym}...")
         if stale_check_era5(out_path):
             print(f"\n{'='*60}")
-            print(f"  STOPPING: {ym} ERA5 data is stale (all timesteps identical).")
-            print(f"  This may indicate a CDS API issue. Investigate and re-run.")
+            print(f"  STOPPING: {ym} ERA5 data is stale "
+                  f"(all timesteps identical).")
+            print(f"  This may indicate a CDS API issue. "
+                  f"Investigate and re-run.")
             print(f"{'='*60}\n")
             out_path.unlink(missing_ok=True)
             sys.exit(1)
@@ -258,8 +314,10 @@ def run_download_era5(cfg: dict):
     if not failed:
         print("  ERA5 download complete. No failures.")
     else:
-        print(f"  ERA5 download complete with {len(failed)} failure(s):")
+        print(f"  ERA5 download complete with "
+              f"{len(failed)} failure(s):")
         for m in failed:
             print(f"    {m}")
-        print("  Re-run to retry (existing valid files are skipped).")
+        print("  Re-run to retry (existing valid files are "
+              "skipped).")
     print(f"{'='*60}\n")

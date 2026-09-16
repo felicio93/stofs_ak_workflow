@@ -1,24 +1,30 @@
 """
 models/ufs_schism/preprocess/gen_datm_streams.py
 ================================================
-Generate datm.streams YAML file for one group.
+Generate datm.streams file for one group.
 
-Reads fix/datm.streams as a template, substitutes the year, ESMF mesh
-file path, and DATM forcing file path, and writes
-I{ID}/I{ID}_{group_id}/datm.streams.
+Reads fix/datm.streams as a template and substitutes year, mesh file,
+and forcing file fields.
+
+Supports two template placeholder styles — whichever is present in the
+fix/ file will be substituted:
+
+  Style A — @[KEY] tokens:
+      yearFirst01:  @[YYYY_FIRST]
+      stream_mesh_file01: "@[DATM_INPUT_DIR]/@[DATM_MESH_FILE]"
+      stream_data_files01: "@[DATM_INPUT_DIR]/@[DATM_FORCING_FILE]"
+
+  Style B — keyword: value lines:
+      yearFirst01:               2025
+      stream_mesh_file01:        "forcing/datm_esmf_mesh.nc"
+      stream_data_files01:       "forcing/datm_20250901.nc"
 
 Works for all grouping modes (monthly, ndays/weekly/daily).
-Group IDs are either YYYYMM (monthly) or YYYYMMDD (ndays).
-
-For ndays groups that span a year boundary (e.g. group starting
-20251228 with group_ndays=7 ending 20260103), yearFirst and yearLast
-are set from the group start and end years respectively so the DATM
-stream covers the full group date range.
-
 Sentinel: I{ID}_{group_id}/gen_datm_streams.done
 """
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -30,9 +36,47 @@ from workflow.core.config import (
 )
 
 
-def gen_datm_streams_group(cfg: dict, group_id: str) -> bool:
-    """Generate datm.streams for one group.
+# =============================================================================
+# Generic substitution helper (shared pattern)
+# =============================================================================
 
+def _substitute(text: str,
+                at_key: str,
+                kv_key: str,
+                new_value: str) -> str:
+    """Replace a placeholder regardless of template style.
+
+    Handles @[AT_KEY], key = value, and key: value patterns.
+    """
+    # Style A
+    text = text.replace(f"@[{at_key}]", new_value)
+
+    # Style B =
+    text = re.sub(
+        r'(^\s*' + re.escape(kv_key) + r'\s*=\s*)([^\n]*)',
+        lambda m: m.group(1) + new_value,
+        text,
+        flags=re.IGNORECASE | re.MULTILINE,
+    )
+
+    # Style B :
+    text = re.sub(
+        r'(^\s*' + re.escape(kv_key) + r'\s*:\s*)([^\n]*)',
+        lambda m: m.group(1) + new_value,
+        text,
+        flags=re.IGNORECASE | re.MULTILINE,
+    )
+
+    return text
+
+
+# =============================================================================
+# Per-group entry point
+# =============================================================================
+
+def gen_datm_streams_group(cfg: dict,
+                            group_id: str) -> bool:
+    """Generate datm.streams for one group.
     Returns True on success, False on failure.
     """
     pid  = cfg["project_id"]
@@ -45,22 +89,16 @@ def gen_datm_streams_group(cfg: dict, group_id: str) -> bool:
         return False
 
     gstart, gend = group_date_range(cfg, group_id)
+    year_first   = gstart.year
+    year_last    = gend.year
 
-    # yearFirst / yearLast / yearAlign from group date range.
-    # For groups that span a year boundary, yearFirst != yearLast.
-    year_first = gstart.year
-    year_last  = gend.year
-    # yearAlign is the year the stream data alignment starts —
-    # always the group start year.
-    year_align = gstart.year
-
-    subdir   = str(cfg.get("datm_subdir", "forcing"))
-    tmpl     = str(cfg.get("datm_filename_template",
-                            "datm_{YYYYMM}.nc"))
-    name     = tmpl.replace("{YYYYMM}", group_id)
-
-    mesh_file    = f"{subdir}/datm_esmf_mesh.nc"
-    forcing_file = f"{subdir}/{name}"
+    subdir       = str(cfg.get("datm_subdir", "forcing"))
+    mesh_file    = "datm_esmf_mesh.nc"
+    mesh_path    = f"{subdir}/{mesh_file}"
+    tmpl         = str(cfg.get("datm_filename_template",
+                                "datm_{YYYYMM}.nc"))
+    forcing_file = tmpl.replace("{YYYYMM}", group_id)
+    forcing_path = f"{subdir}/{forcing_file}"
 
     out_path = (mdir / f"I{pid}" / f"I{pid}_{group_id}"
                 / "datm.streams")
@@ -74,42 +112,62 @@ def gen_datm_streams_group(cfg: dict, group_id: str) -> bool:
     print(f"--- gen_datm_streams {group_id} "
           f"({gstart} -> {gend}) -> {out_path} ---")
 
-    lines     = template_path.read_text().splitlines()
-    new_lines = []
-    for line in lines:
-        if "yearFirst01:" in line:
-            new_lines.append(
-                f"yearFirst01:               {year_first}")
-        elif "yearLast01:" in line:
-            new_lines.append(
-                f"yearLast01:                {year_last}")
-        elif "yearAlign01:" in line:
-            new_lines.append(
-                f"yearAlign01:               {year_align}")
-        elif "stream_mesh_file01:" in line:
-            new_lines.append(
-                f'stream_mesh_file01:        "{mesh_file}"')
-        elif "stream_data_files01:" in line:
-            new_lines.append(
-                f'stream_data_files01:       "{forcing_file}"')
-        else:
-            new_lines.append(line)
+    text = template_path.read_text()
 
-    out_path.write_text("\n".join(new_lines))
+    # --- Year fields ---
+    text = _substitute(text,
+                        "YYYY_FIRST",
+                        "yearFirst01",
+                        str(year_first))
+    text = _substitute(text,
+                        "YYYY_LAST",
+                        "yearLast01",
+                        str(year_last))
+    # yearAlign always follows yearFirst
+    text = _substitute(text,
+                        "YYYY_FIRST",
+                        "yearAlign01",
+                        str(year_first))
+
+    # --- Combined path tokens (must come before individual ones) ---
+    # Style A combined: @[DATM_INPUT_DIR]/@[DATM_MESH_FILE]
+    text = text.replace(
+        f"@[DATM_INPUT_DIR]/@[DATM_MESH_FILE]",
+        f'"{mesh_path}"')
+    # Style A combined: @[DATM_INPUT_DIR]/@[DATM_FORCING_FILE]
+    text = text.replace(
+        f"@[DATM_INPUT_DIR]/@[DATM_FORCING_FILE]",
+        f'"{forcing_path}"')
+
+    # --- Individual tokens / kv pairs ---
+    text = _substitute(text,
+                        "DATM_INPUT_DIR",
+                        "datm_input_dir",
+                        subdir)
+    text = _substitute(text,
+                        "DATM_MESH_FILE",
+                        "stream_mesh_file01",
+                        f'"{mesh_path}"')
+    text = _substitute(text,
+                        "DATM_FORCING_FILE",
+                        "stream_data_files01",
+                        f'"{forcing_path}"')
+
+    out_path.write_text(text)
     sentinel.touch()
     print(f"  Wrote {out_path}")
-    print(f"  yearFirst={year_first}  yearLast={year_last}  "
-          f"yearAlign={year_align}")
+    print(f"  yearFirst={year_first}  yearLast={year_last}")
+    print(f"  mesh:    {mesh_path}")
+    print(f"  forcing: {forcing_path}")
     print(f"  Sentinel: {sentinel}")
     return True
 
 
 # =============================================================================
-# Batch entry point (all groups)
+# Batch entry point
 # =============================================================================
 
 def run_gen_datm_streams(cfg: dict):
-    """Generate datm.streams for every group."""
     groups   = list_groups(cfg)
     grouping = cfg.get("grouping", "monthly")
     failed   = []

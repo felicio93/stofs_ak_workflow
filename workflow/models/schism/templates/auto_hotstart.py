@@ -15,17 +15,11 @@ Behaviour (ihot=1, single end-of-month hotstart):
        - launch next month's auto_hotstart.py (if chain_hotstart=True)
        - write run.done sentinel
 
-Key fix (vs previous version)
-------------------------------
-_clean_output_partition_files() previously deleted BOTH schout partition
-files AND local_to_global_* files in one step, which ran BEFORE
-combine_hotstart7.exe. combine_hotstart7.exe needs local_to_global_*
-to map partition nodes to global IDs — deleting them first caused:
-  forrtl: severe (29): file not found local_to_global_000000
-
-Fix: cleanup is now split into two functions called at the right times:
-  _clean_schout_partition_files()   called after combine_output_stacks()
-  _clean_local_to_global_files()    called after combine_and_chain()
+Key fixes
+---------
+* local_to_global_* deleted AFTER combine_hotstart7 (not before)
+* Combine poll interval: 5 minutes (not 60 seconds)
+* Waiting messages distinguish combine_schout from combine_hotstart
 """
 
 import os
@@ -61,7 +55,7 @@ COMBINE_OUTPUT_SBATCH   = r"{{COMBINE_OUTPUT_SBATCH}}"
 
 _POLL_SCHEDULE  = [0, 60, 60, 60, 60, 60, 300, 1200, 1800]
 _POLL_STEADY    = 1800
-_COMBINE_POLL_SECONDS = 60
+_COMBINE_POLL_SECONDS = 300   # check combine jobs every 5 minutes
 _MAX_RESUBMITS  = 5
 _GRACE_CHECKS   = 10   # x 30s = 5 min grace period after job leaves queue
 _GRACE_SLEEP    = 30
@@ -155,18 +149,10 @@ def mirror_time_step():
 
 
 def run_completed():
-    """Detect successful run completion.
-
-    Supports both:
-      - SCHISM standalone (New I/O): "Run completed successfully"
-        in outputs/mirror.out
-      - UFS-SCHISM (Old I/O): "hot start written" in mirror.out
-        AND "HAS ENDED" in myout
-    """
+    """Detect successful run completion."""
     mo    = Path(RUNDIR) / "outputs" / "mirror.out"
     myout = Path(RUNDIR) / "myout"
 
-    # SCHISM standalone
     if mo.exists():
         try:
             lines = mo.read_text(
@@ -177,7 +163,6 @@ def run_completed():
             if "Run completed successfully" in line:
                 return True
 
-    # UFS-SCHISM
     hotstart_written = False
     if mo.exists():
         try:
@@ -248,7 +233,7 @@ def diagnose_failure(job_id: str) -> str:
 
 
 # =============================================================================
-# New I/O diagnostic dispatch (SCHISM standalone only)
+# New I/O diagnostic dispatch
 # =============================================================================
 
 _diag_submitted = set()
@@ -286,16 +271,15 @@ def dispatch_diag_plots(run_finished: bool = False):
 
 # =============================================================================
 # End-of-month output combination (UFS-SCHISM old I/O)
-# Cleanup is split into two functions:
-#   _clean_schout_partition_files() — safe to call after combine_output
-#   _clean_local_to_global_files()  — must wait until after combine_hotstart7
+# Cleanup split:
+#   _clean_schout_partition_files()  after combine_output_stacks()
+#   _clean_local_to_global_files()   after combine_and_chain()
 # =============================================================================
 
 def _clean_schout_partition_files():
-    """Delete per-rank schout_NNNNNN_*.nc partition files only.
-
-    Does NOT delete local_to_global_* because combine_hotstart7.exe
-    reads those files and must be called before this cleanup.
+    """Delete per-rank schout partition files only.
+    Does NOT delete local_to_global_* — those are needed by
+    combine_hotstart7.exe.
     """
     outdir         = Path(RUNDIR) / "outputs"
     pat_schout     = re.compile(r"^schout_\d{6}_\d+\.nc$")
@@ -315,15 +299,12 @@ def _clean_schout_partition_files():
             f"file(s) "
             f"(~{freed_schout / 1e9:.1f} GB freed). "
             f"local_to_global_* preserved for "
-            f"combine_hotstart7.")
+            f"combine_hotstart.")
 
 
 def _clean_local_to_global_files():
     """Delete local_to_global_* files.
-
-    Must be called AFTER combine_hotstart7.exe has finished —
-    these files are needed by combine_hotstart7 and must not be
-    deleted before it runs.
+    Must be called AFTER combine_hotstart7.exe has finished.
     """
     outdir      = Path(RUNDIR) / "outputs"
     deleted_l2g = freed_l2g = 0
@@ -350,10 +331,8 @@ def combine_output_stacks():
     sentinel = outdir / "combine_output.done"
 
     if sentinel.exists():
-        log("combine_output: already complete "
+        log("combine_schout: already complete "
             "(sentinel found). Skipping.")
-        # schout partition files can be cleaned now;
-        # local_to_global_* will be cleaned after hotstart combine
         _clean_schout_partition_files()
         return
 
@@ -366,7 +345,7 @@ def combine_output_stacks():
     }
 
     if not rank0_stacks:
-        log("combine_output: no partition files found "
+        log("combine_schout: no partition files found "
             "to combine.")
         _clean_schout_partition_files()
         sentinel.touch()
@@ -376,7 +355,7 @@ def combine_output_stacks():
     end          = max(rank0_stacks)
     comb_jobname = "CO" + RUN_JOBNAME[1:]
 
-    log(f"combine_output: combining "
+    log(f"combine_schout: combining "
         f"{len(rank0_stacks)} stack(s) "
         f"(stacks {begin} to {end}) "
         f"with {COMBINE_OUTPUT_NRANKS} MPI ranks ...")
@@ -391,11 +370,13 @@ def combine_output_stacks():
         log(f"ERROR: sbatch {COMBINE_OUTPUT_SBATCH} "
             f"failed:\n{out}")
         sys.exit(1)
-    log(f"Submitted combine_output job: {out}")
+    log(f"Submitted combine_schout job: {out}")
 
     while squeue_line_for(comb_jobname) is not None:
-        log(f"  waiting for combine_output job "
-            f"({comb_jobname}) ...")
+        log(f"  combine_schout ({comb_jobname}): "
+            f"waiting for output stacks to be combined "
+            f"... (checking every "
+            f"{_COMBINE_POLL_SECONDS//60} min)")
         time.sleep(_COMBINE_POLL_SECONDS)
     time.sleep(10)
 
@@ -404,21 +385,15 @@ def combine_output_stacks():
         if not (outdir / f"schout_{i}.nc").exists()
     ]
     if missing:
-        log(f"ERROR: combine_output finished but "
+        log(f"ERROR: combine_schout finished but "
             f"{len(missing)} file(s) missing:")
         for m_name in missing[:10]:
             log(f"  {m_name}")
         sys.exit(1)
 
-    log(f"combine_output: all {len(rank0_stacks)} "
+    log(f"combine_schout: all {len(rank0_stacks)} "
         f"stack(s) combined successfully.")
     sentinel.touch()
-
-    # Delete schout partition files — no longer needed after
-    # combine_output11_MPI has finished.
-    # IMPORTANT: local_to_global_* are NOT deleted here because
-    # combine_hotstart7.exe needs them. They are cleaned in
-    # _clean_local_to_global_files() after combine_and_chain().
     _clean_schout_partition_files()
 
 
@@ -427,9 +402,6 @@ def combine_output_stacks():
 # =============================================================================
 
 def _clean_partition_hotstarts():
-    """Delete per-rank hotstart_NNNNNN_*.nc files.
-    Keeps hotstart_it=*.nc (the combined output).
-    """
     outdir  = Path(RUNDIR) / "outputs"
     pat     = re.compile(r"^hotstart_\d+_\d+\.nc$")
     deleted = freed = 0
@@ -466,26 +438,29 @@ def combine_and_chain():
 
     if not combined.exists():
         comb_jobname = "C" + RUN_JOBNAME[1:]
-        log(f"Submitting run_comb to build "
+        log(f"Submitting combine_hotstart to build "
             f"{combined.name} ...")
         submit("run_comb")
         while squeue_line_for(comb_jobname) is not None:
-            log("  waiting for combine job to finish ...")
+            log(f"  combine_hotstart ({comb_jobname}): "
+                f"waiting for hotstart_it={NHOT_WRITE}.nc "
+                f"... (checking every "
+                f"{_COMBINE_POLL_SECONDS//60} min)")
             time.sleep(_COMBINE_POLL_SECONDS)
         time.sleep(10)
         if not combined.exists():
-            log(f"ERROR: combine finished but "
+            log(f"ERROR: combine_hotstart finished but "
                 f"{combined} was not created.")
             sys.exit(1)
     else:
         log(f"{combined.name} already exists; "
-            f"skipping combine.")
+            f"skipping combine_hotstart.")
 
     log(f"End-of-month hotstart ready: {combined}")
     _clean_partition_hotstarts()
 
     # Now safe to delete local_to_global_* —
-    # combine_hotstart7.exe has finished successfully.
+    # combine_hotstart7.exe has finished.
     _clean_local_to_global_files()
 
     if IS_LAST_MONTH:

@@ -6,6 +6,11 @@ Phase 5 step "compare_sst" — model vs. satellite SST.
 Two-stage SLURM design:
   Stage 1 (MPI parallel): mpi_frames() — one rank per day.
   Stage 2 (serial, afterok): assemble() — stitches daily frames into GIF.
+
+Works for all grouping modes (monthly, ndays/weekly/daily).
+_group_for_day() maps each calendar day to the correct group run
+directory regardless of grouping — fixes the YYYYMM vs YYYYMMDD
+mismatch that caused "no temperature_*.nc" for ndays grouping.
 """
 
 import argparse
@@ -14,18 +19,23 @@ import sys
 from datetime import date, timedelta
 from pathlib import Path
 
-from workflow.core.config import load_config, list_months, model_dir
-from workflow.models.schism.postprocess import plot_common as pc
+from workflow.core.config import (
+    load_config,
+    list_groups,
+    group_date_range,
+    model_dir,
+)
+from workflow.models.schism.postprocess import (
+    plot_common as pc,
+)
 
 # =============================================================================
-# Module-level mesh cache — avoids scanning all run directories once per day
-# in the MPI loop or legacy array path.
+# Module-level mesh cache
 # =============================================================================
 _mesh_cache = {}
 
 
 def _get_mesh(cfg):
-    """Load the mesh once per process and cache it."""
     key = cfg["project_id"]
     if key not in _mesh_cache:
         out2d0 = _find_any_out2d(cfg)
@@ -38,7 +48,8 @@ def _get_mesh(cfg):
 
 def _frames_dir(cfg) -> Path:
     pid = cfg["project_id"]
-    return model_dir(cfg) / f"P{pid}" / f"P{pid}_compare_sst" / "frames"
+    return (model_dir(cfg) / f"P{pid}"
+            / f"P{pid}_compare_sst" / "frames")
 
 
 def _gif_dir(cfg) -> Path:
@@ -46,19 +57,31 @@ def _gif_dir(cfg) -> Path:
     return model_dir(cfg) / f"P{pid}" / f"P{pid}_compare_sst"
 
 
-def _month_of(d: date) -> str:
-    return d.strftime("%Y%m")
+def _group_for_day(cfg, d: date):
+    """Return the group_id whose date range contains day d.
+
+    Works for both monthly (YYYYMM) and ndays (YYYYMMDD) grouping.
+    Returns None if no group contains the day.
+    """
+    for gid in list_groups(cfg):
+        gstart, gend = group_date_range(cfg, gid)
+        if gstart <= d <= gend:
+            return gid
+    return None
 
 
 def _find_any_out2d(cfg):
+    """Return the first out2d_*.nc file found across all run groups."""
     pid  = cfg["project_id"]
     mdir = model_dir(cfg)
-    for ym in list_months(cfg):
-        outputs = mdir / f"R{pid}" / f"R{pid}_{ym}" / "outputs"
-        stacks  = pc.list_output_stacks(outputs, "out2d")
+    for gid in list_groups(cfg):
+        outputs = (mdir / f"R{pid}" / f"R{pid}_{gid}"
+                   / "outputs")
+        stacks = pc.list_output_stacks(outputs, "out2d")
         if stacks:
             return stacks[0]
     return None
+
 
 # =============================================================================
 # Model SST for one day
@@ -69,10 +92,17 @@ def _model_sst_for_day(cfg, d: date):
     import numpy as np
     import xarray as xr
 
-    pid   = cfg["project_id"]
-    mdir  = model_dir(cfg)
-    ym    = _month_of(d)
-    outputs = mdir / f"R{pid}" / f"R{pid}_{ym}" / "outputs"
+    pid  = cfg["project_id"]
+    mdir = model_dir(cfg)
+
+    # Find the group run directory that covers this calendar day.
+    # This handles both monthly (YYYYMM) and ndays (YYYYMMDD) grouping.
+    gid = _group_for_day(cfg, d)
+    if gid is None:
+        return None, f"no group covers {d}"
+
+    outputs = (mdir / f"R{pid}" / f"R{pid}_{gid}"
+               / "outputs")
     stacks  = pc.list_output_stacks(outputs, "temperature")
     if not stacks:
         return None, "no temperature_*.nc"
@@ -82,20 +112,24 @@ def _model_sst_for_day(cfg, d: date):
     day1   = day0 + np.timedelta64(1, "D")
     target = np.datetime64(f"{d.isoformat()}T12")
 
-    day_vals     = []
-    nearest_val  = None
-    nearest_dt   = None
+    day_vals    = []
+    nearest_val = None
+    nearest_dt  = None
 
     for nc in stacks:
-        ds = xr.open_dataset(str(nc), drop_variables=pc.SAFE_DROP)
+        ds = xr.open_dataset(str(nc),
+                             drop_variables=pc.SAFE_DROP)
         if "temperature" not in ds:
-            ds.close(); continue
+            ds.close()
+            continue
         times  = ds["time"].values
         in_day = (times >= day0) & (times < day1)
         if not in_day.any():
-            ds.close(); continue
+            ds.close()
+            continue
 
-        surf = pc.extract_layer(ds["temperature"], "surface")
+        surf = pc.extract_layer(
+            ds["temperature"], "surface")
         for i in np.nonzero(in_day)[0]:
             v = np.asarray(surf[i])
             if v.ndim > 1:
@@ -104,31 +138,36 @@ def _model_sst_for_day(cfg, d: date):
                 day_vals.append(v)
             else:
                 dt = abs(times[i] - target)
-                if nearest_dt is None or dt < nearest_dt:
-                    nearest_dt, nearest_val = dt, v
+                if (nearest_dt is None
+                        or dt < nearest_dt):
+                    nearest_dt  = dt
+                    nearest_val = v
         ds.close()
 
     if match == "daily_mean":
         if not day_vals:
             return None, "no model timesteps on day"
-        arr = np.nanmean(np.stack(day_vals, axis=0), axis=0)
-        return arr, f"daily mean of {len(day_vals)} timestep(s)"
+        arr = np.nanmean(
+            np.stack(day_vals, axis=0), axis=0)
+        return arr, (f"daily mean of "
+                     f"{len(day_vals)} timestep(s)")
     else:
         if nearest_val is None:
             return None, "no model timesteps on day"
         return nearest_val, "nearest timestep to 12:00Z"
+
 
 # =============================================================================
 # Satellite SST for one day
 # =============================================================================
 
 def _sat_sst_for_day(cfg, d: date):
-    """Return (lon2d, lat2d, sst2d) satellite field for day d, or None."""
     import numpy as np
     import xarray as xr
 
     mdir = model_dir(cfg)
-    f = mdir / "obs" / "sst_leo" / f"leosst_{d:%Y%m%d}.nc"
+    f    = (mdir / "obs" / "sst_leo"
+            / f"leosst_{d:%Y%m%d}.nc")
     if not (f.exists() and f.stat().st_size > 0):
         return None
     ds  = xr.open_dataset(str(f))
@@ -141,8 +180,9 @@ def _sat_sst_for_day(cfg, d: date):
     lon2d, lat2d = np.meshgrid(lon, lat)
     return lon2d, lat2d, sst
 
+
 # =============================================================================
-# Stage 1 — MPI parallel frame generation
+# Date range helper
 # =============================================================================
 
 def _date_range(cfg) -> list:
@@ -151,12 +191,16 @@ def _date_range(cfg) -> list:
     s = date.fromisoformat(str(start))
     e = date.fromisoformat(str(end))
     out = []
-    d = s
+    d   = s
     while d <= e:
         out.append(d)
         d += timedelta(days=1)
     return out
 
+
+# =============================================================================
+# Stage 1 — MPI parallel frame generation
+# =============================================================================
 
 def mpi_frames(cfg):
     """MPI parallel frame generation — one rank per day."""
@@ -168,7 +212,8 @@ def mpi_frames(cfg):
 
     if rank == 0:
         days = _date_range(cfg)
-        print(f"  [rank 0] {len(days)} day(s) distributed across {size} rank(s).")
+        print(f"  [rank 0] {len(days)} day(s) distributed "
+              f"across {size} rank(s).")
         sys.stdout.flush()
     else:
         days = None
@@ -190,6 +235,7 @@ def mpi_frames(cfg):
         (_frames_dir(cfg).parent / ".frames_done").touch()
         sys.stdout.flush()
 
+
 # =============================================================================
 # Stage 1 — single-day entry point
 # =============================================================================
@@ -210,25 +256,26 @@ def frame_for_day(cfg, d: date):
     sat = _sat_sst_for_day(cfg, d)
 
     if model_vals is None and sat is None:
-        print(f"  {d:%Y%m%d}: no model AND no satellite data, skipping.")
+        print(f"  {d:%Y%m%d}: no model AND no satellite "
+              f"data, skipping.")
         return
     if model_vals is None:
-        print(f"  {d:%Y%m%d}: no model data ({model_desc}), skipping.")
+        print(f"  {d:%Y%m%d}: no model data "
+              f"({model_desc}), skipping.")
         return
     if sat is None:
         print(f"  {d:%Y%m%d}: no satellite data, skipping.")
         return
 
-    # Use the cached mesh (avoids re-scanning run directories each call).
     x, y, depth, triang, _is_tri = _get_mesh(cfg)
     if x is None:
-        print(f"  {d:%Y%m%d}: no out2d_*.nc found. "
-              f"Has the model run completed?")
+        print(f"  {d:%Y%m%d}: no out2d_*.nc found.")
         return
 
     boundaries = None
-    for hp in (model_dir(cfg) / "fix" / "hgrid.ll",
-               model_dir(cfg) / "fix" / "hgrid.gr3"):
+    mdir       = model_dir(cfg)
+    for hp in (mdir / "fix" / "hgrid.ll",
+               mdir / "fix" / "hgrid.gr3"):
         if hp.exists():
             try:
                 boundaries = read_mesh_boundaries(hp)
@@ -246,8 +293,10 @@ def frame_for_day(cfg, d: date):
     if isobaths:
         isobaths = [float(v) for v in isobaths]
 
-    lon_min = float(cfg["lon_min"]); lon_max = float(cfg["lon_max"])
-    lat_min = float(cfg["lat_min"]); lat_max = float(cfg["lat_max"])
+    lon_min = float(cfg["lon_min"])
+    lon_max = float(cfg["lon_max"])
+    lat_min = float(cfg["lat_min"])
+    lat_max = float(cfg["lat_max"])
 
     lon_range = lon_max - lon_min
     lat_range = lat_max - lat_min
@@ -259,57 +308,79 @@ def frame_for_day(cfg, d: date):
     ax2 = fig.add_subplot(2, 1, 2)
 
     # --- model panel ---
-    tp1 = ax1.tripcolor(triang, np.asarray(model_vals), shading="flat",
-                        cmap=cmap, vmin=vmin, vmax=vmax, rasterized=True)
+    tp1 = ax1.tripcolor(
+        triang, np.asarray(model_vals),
+        shading="flat", cmap=cmap,
+        vmin=vmin, vmax=vmax, rasterized=True)
     if isobaths:
         try:
-            ax1.tricontour(triang, np.asarray(depth), levels=isobaths,
-                           colors="k", linewidths=0.4, alpha=0.6)
+            ax1.tricontour(
+                triang, np.asarray(depth),
+                levels=isobaths,
+                colors="k", linewidths=0.4, alpha=0.6)
         except Exception:
             pass
     if boundaries is not None:
-        for lo, la in boundaries.get("open",   []):
-            ax1.plot(lo, la, color="blue",  linewidth=1.0, alpha=0.8)
-        for lo, la in boundaries.get("land",   []):
-            ax1.plot(lo, la, color="red",   linewidth=0.6, alpha=0.7)
+        for lo, la in boundaries.get("open", []):
+            ax1.plot(lo, la, color="blue",
+                     linewidth=1.0, alpha=0.8)
+        for lo, la in boundaries.get("land", []):
+            ax1.plot(lo, la, color="red",
+                     linewidth=0.6, alpha=0.7)
         for lo, la in boundaries.get("island", []):
-            ax1.plot(lo, la, color="green", linewidth=0.6, alpha=0.7)
+            ax1.plot(lo, la, color="green",
+                     linewidth=0.6, alpha=0.7)
     div1 = make_axes_locatable(ax1)
     cax1 = div1.append_axes("right", size="3%", pad=0.1)
-    fig.colorbar(tp1, cax=cax1).set_label("Model SST (°C)", fontsize=9)
-    ax1.set_title(f"SCHISM SST — {d:%Y-%m-%d}  ({model_desc})", fontsize=10)
-    ax1.set_xlim(lon_min, lon_max); ax1.set_ylim(lat_min, lat_max)
+    fig.colorbar(tp1, cax=cax1).set_label(
+        "Model SST (°C)", fontsize=9)
+    ax1.set_title(
+        f"SCHISM SST — {d:%Y-%m-%d}  ({model_desc})",
+        fontsize=10)
+    ax1.set_xlim(lon_min, lon_max)
+    ax1.set_ylim(lat_min, lat_max)
     ax1.set_aspect("equal")
 
     # --- satellite panel ---
-    tp2 = ax2.pcolormesh(lon2d, lat2d, sat_sst, cmap=cmap,
-                         vmin=vmin, vmax=vmax, rasterized=True)
+    tp2 = ax2.pcolormesh(
+        lon2d, lat2d, sat_sst, cmap=cmap,
+        vmin=vmin, vmax=vmax, rasterized=True)
     if isobaths:
         try:
-            ax2.tricontour(triang, np.asarray(depth), levels=isobaths,
-                           colors="k", linewidths=0.4, alpha=0.6)
+            ax2.tricontour(
+                triang, np.asarray(depth),
+                levels=isobaths,
+                colors="k", linewidths=0.4, alpha=0.6)
         except Exception:
             pass
     if boundaries is not None:
-        for lo, la in boundaries.get("open",   []):
-            ax2.plot(lo, la, color="blue",  linewidth=1.0, alpha=0.8)
-        for lo, la in boundaries.get("land",   []):
-            ax2.plot(lo, la, color="red",   linewidth=0.6, alpha=0.7)
+        for lo, la in boundaries.get("open", []):
+            ax2.plot(lo, la, color="blue",
+                     linewidth=1.0, alpha=0.8)
+        for lo, la in boundaries.get("land", []):
+            ax2.plot(lo, la, color="red",
+                     linewidth=0.6, alpha=0.7)
         for lo, la in boundaries.get("island", []):
-            ax2.plot(lo, la, color="green", linewidth=0.6, alpha=0.7)
+            ax2.plot(lo, la, color="green",
+                     linewidth=0.6, alpha=0.7)
     div2 = make_axes_locatable(ax2)
     cax2 = div2.append_axes("right", size="3%", pad=0.1)
-    fig.colorbar(tp2, cax=cax2).set_label("Satellite SST (°C)", fontsize=9)
-    ax2.set_title(f"LEO L3S-DY SST — {d:%Y-%m-%d}", fontsize=10)
-    ax2.set_xlim(lon_min, lon_max); ax2.set_ylim(lat_min, lat_max)
+    fig.colorbar(tp2, cax=cax2).set_label(
+        "Satellite SST (°C)", fontsize=9)
+    ax2.set_title(
+        f"LEO L3S-DY SST — {d:%Y-%m-%d}", fontsize=10)
+    ax2.set_xlim(lon_min, lon_max)
+    ax2.set_ylim(lat_min, lat_max)
     ax2.set_aspect("equal")
 
     fig.tight_layout(pad=0.5, h_pad=0.8)
     fig.savefig(str(out), dpi=dpi, format="jpeg",
-                bbox_inches="tight", pil_kwargs={"quality": 90})
+                bbox_inches="tight",
+                pil_kwargs={"quality": 90})
     plt.close(fig)
     gc.collect()
     print(f"  {d:%Y%m%d}: frame written -> {out.name}")
+
 
 # =============================================================================
 # Stage 2 — assemble daily frames into a GIF
@@ -325,10 +396,12 @@ def assemble(cfg):
 
     frames = sorted(fdir.glob("sst__*.jpg"))
     if not frames:
-        print("  compare_sst: no frames found, no GIF produced.")
+        print("  compare_sst: no frames found, "
+              "no GIF produced.")
     else:
-        pc.assemble_gif(frames, gdir / "compare_sst.gif",
-                        fps=fps, keep_frames=keep_frames)
+        pc.assemble_gif(
+            frames, gdir / "compare_sst.gif",
+            fps=fps, keep_frames=keep_frames)
         if not keep_frames:
             try:
                 fdir.rmdir()
@@ -338,20 +411,26 @@ def assemble(cfg):
     (gdir / "compare_sst.done").touch()
     print(f"  compare_sst assembly complete -> {gdir}")
 
+
 # =============================================================================
 # CLI
 # =============================================================================
 
 def main():
-    ap  = argparse.ArgumentParser(description="Model vs satellite SST")
+    ap  = argparse.ArgumentParser(
+        description="Model vs satellite SST")
     sub = ap.add_subparsers(dest="stage", required=True)
 
-    sub.add_parser("mpi-frames", help="MPI parallel frame generation")
+    sub.add_parser("mpi-frames",
+                   help="MPI parallel frame generation")
 
-    pf = sub.add_parser("frames", help="render frame for one day (legacy)")
-    pf.add_argument("--date", required=True, help="YYYYMMDD")
+    pf = sub.add_parser("frames",
+                        help="render frame for one day")
+    pf.add_argument("--date", required=True,
+                    help="YYYYMMDD")
 
-    sub.add_parser("assemble", help="assemble daily frames into a GIF")
+    sub.add_parser("assemble",
+                   help="assemble frames into GIF")
 
     ap.add_argument("--config", required=True)
     args = ap.parse_args()
@@ -360,7 +439,9 @@ def main():
     if args.stage == "mpi-frames":
         mpi_frames(cfg)
     elif args.stage == "frames":
-        d = date(int(args.date[:4]), int(args.date[4:6]), int(args.date[6:8]))
+        d = date(int(args.date[:4]),
+                 int(args.date[4:6]),
+                 int(args.date[6:8]))
         frame_for_day(cfg, d)
     elif args.stage == "assemble":
         assemble(cfg)

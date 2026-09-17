@@ -11,8 +11,9 @@ Behaviour (ihot=1, single end-of-month hotstart):
        - (UFS-SCHISM) combine ALL output stacks at end of month
        - submit run_comb (combine_hotstart7) and wait
        - delete per-rank hotstart files
-       - symlink combined hotstart into next month's run directory
-       - launch next month's auto_hotstart.py (if chain_hotstart=True)
+       - symlink combined SCHISM hotstart into next group's run directory
+       - symlink WWM hotfile (hotfile_out_WWM.nc) into next group's run directory
+       - launch next group's auto_hotstart.py (if chain_hotstart=True)
        - write run.done sentinel
 
 Key fixes
@@ -20,6 +21,7 @@ Key fixes
 * local_to_global_* deleted AFTER combine_hotstart7 (not before)
 * Combine poll interval: 5 minutes (not 60 seconds)
 * Waiting messages distinguish combine_schout from combine_hotstart
+* WWM hotfile (hotfile_out_WWM.nc) is now chained alongside SCHISM hotstart
 """
 
 import os
@@ -271,16 +273,10 @@ def dispatch_diag_plots(run_finished: bool = False):
 
 # =============================================================================
 # End-of-month output combination (UFS-SCHISM old I/O)
-# Cleanup split:
-#   _clean_schout_partition_files()  after combine_output_stacks()
-#   _clean_local_to_global_files()   after combine_and_chain()
 # =============================================================================
 
 def _clean_schout_partition_files():
-    """Delete per-rank schout partition files only.
-    Does NOT delete local_to_global_* — those are needed by
-    combine_hotstart7.exe.
-    """
+    """Delete per-rank schout partition files only."""
     outdir         = Path(RUNDIR) / "outputs"
     pat_schout     = re.compile(r"^schout_\d{6}_\d+\.nc$")
     deleted_schout = freed_schout = 0
@@ -456,7 +452,7 @@ def combine_and_chain():
         log(f"{combined.name} already exists; "
             f"skipping combine_hotstart.")
 
-    log(f"End-of-month hotstart ready: {combined}")
+    log(f"End-of-group hotstart ready: {combined}")
     _clean_partition_hotstarts()
 
     # Now safe to delete local_to_global_* —
@@ -464,20 +460,44 @@ def combine_and_chain():
     _clean_local_to_global_files()
 
     if IS_LAST_MONTH:
-        log("This is the last month; no chaining.")
+        log("This is the last group; no chaining.")
     elif not CHAIN_HOTSTART:
         log("chain_hotstart=false; not launching "
-            "the next month.")
+            "the next group.")
     elif NEXT_RUNDIR is None:
         log("No next run directory configured; "
             "not chaining.")
     else:
+        # ----------------------------------------------------------------
+        # Chain SCHISM hotstart
+        # ----------------------------------------------------------------
         next_hot = Path(NEXT_RUNDIR) / "hotstart.nc"
         if next_hot.exists() or next_hot.is_symlink():
             next_hot.unlink()
         next_hot.symlink_to(combined)
-        log(f"Symlinked next month's hotstart: "
+        log(f"Symlinked SCHISM hotstart: "
             f"{next_hot} -> {combined}")
+
+        # ----------------------------------------------------------------
+        # Chain WWM hotfile (hotfile_out_WWM.nc)
+        # SCHISM+WWM writes hotfile_out_WWM.nc in the run directory
+        # (not inside outputs/).  The next group's wwminput.nml has
+        # LHOTR=.true. and expects this file to be present at startup.
+        # ----------------------------------------------------------------
+        wwm_src = Path(RUNDIR) / "hotfile_out_WWM.nc"
+        if wwm_src.exists():
+            wwm_dst = Path(NEXT_RUNDIR) / "hotfile_out_WWM.nc"
+            if wwm_dst.exists() or wwm_dst.is_symlink():
+                wwm_dst.unlink()
+            wwm_dst.symlink_to(wwm_src)
+            log(f"Symlinked WWM hotfile: "
+                f"{wwm_dst} -> {wwm_src}")
+        else:
+            log(f"WARNING: WWM hotfile not found at "
+                f"{wwm_src}. Next group will attempt a "
+                f"WWM cold start (LHOTR will need to be "
+                f"false in wwminput.nml or the run will "
+                f"abort).")
 
     (Path(RUNDIR) / "run.done").touch()
     log(f"Wrote sentinel: "
@@ -490,14 +510,14 @@ def combine_and_chain():
                        / "auto_hotstart.py")
         if not next_script.exists():
             log(f"ERROR: {next_script} not found; "
-                f"run setup_run for the next month.")
+                f"run setup_run for the next group.")
             sys.exit(1)
-        log(f"Launching next month: {next_script}")
+        log(f"Launching next group: {next_script}")
         r = subprocess.run(
             [sys.executable, str(next_script)],
             cwd=str(NEXT_RUNDIR))
         if r.returncode != 0:
-            log(f"ERROR: next month ({NEXT_RUNDIR}) "
+            log(f"ERROR: next group ({NEXT_RUNDIR}) "
                 f"failed (exit {r.returncode}).")
             sys.exit(r.returncode)
 

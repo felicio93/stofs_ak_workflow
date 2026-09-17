@@ -3,24 +3,28 @@ models/schism/postprocess/station_skill.py
 ===========================================
 Phase 5 step "station_skill" (interactive; runs in the swf_main env).
 
-Compares SCHISM station output (outputs/staout_*) against downloaded
-station observations for every valid station in fix/station.in.
+Variable-depth matching
+-----------------------
+Different variables are compared at different depths:
 
-Works for all grouping modes (monthly, ndays/weekly/daily).
+  Surface variables (z=0m model output):
+    WL, ELEV             water level
+    AIR_PRESSURE, PATM   barometric pressure
+    WIND, WINDX, WINDY   wind speed/direction
 
-Fixes vs previous versions
---------------------------
-* mdl[sid] squeeze: same station_id at multiple depths returns a
-  DataFrame — squeezed to Series via _squeeze() helper.
-* Column deduplication in _load_model_staout after rename.
-* Air pressure unit conversion: SCHISM staout_2 is in Pa, CO-OPS
-  and NDBC report in hPa/mbar. Divide model by 100 before metrics.
-* Calendar month obs loading: CO-OPS CSVs are always per calendar
-  month regardless of project grouping.
+  Sensor-depth variables (shallowest non-zero model output):
+    T, TEMP              water temperature
+    S (salinity)         salinity
+
+For T/S the model staout value at z=-1m (or the shallowest non-zero
+depth entry in station.in) is used so it matches where the physical
+sensor is located. If no non-zero depth entry exists for a station,
+the z=0m entry is used as a fallback.
 """
 
 import argparse
 import re
+from collections import defaultdict
 from datetime import date
 from pathlib import Path
 
@@ -86,9 +90,18 @@ NDBC_COL_MAP = {
     "PRESSURE":     "PRES",
 }
 
-# SCHISM staout_2 outputs air pressure in Pa.
-# CO-OPS and NDBC report in hPa (= mbar).
-# Model values are divided by 100 before computing metrics.
+# Variables that are always at the surface (z=0m).
+_SURFACE_VARS = {
+    "WL", "ELEV",
+    "AIR_PRESSURE", "AIRPRESSURE", "PATM", "PRESSURE",
+    "WIND", "WINDX", "WINDY",
+}
+
+# Variables where the obs sensor is at depth — use the
+# shallowest non-zero station entry to match sensor location.
+_SENSOR_DEPTH_VARS = {"T", "TEMP"}
+
+# SCHISM staout_2 is in Pa; CO-OPS/NDBC report in hPa/mbar.
 _AIR_PRESSURE_TOKENS = {
     "AIR_PRESSURE", "AIRPRESSURE", "PATM", "PRESSURE",
 }
@@ -99,15 +112,54 @@ _AIR_PRESSURE_TOKENS = {
 # ---------------------------------------------------------------------------
 
 def _squeeze(col):
-    """Return a Series from mdl[sid].
-
-    When the same station_id appears on multiple lines in station.in
-    (different depth levels), mdl[sid] returns a DataFrame.
-    Take the first matching column to get a Series.
-    """
     if hasattr(col, "ndim") and col.ndim == 2:
         return col.iloc[:, 0]
     return col
+
+
+# ---------------------------------------------------------------------------
+# Station lookup builder
+# ---------------------------------------------------------------------------
+
+def _build_station_lookup(all_stations: list) -> dict:
+    """Build lookup: station_id -> {depth: station_entry}.
+
+    Allows per-variable selection of the correct depth entry.
+    """
+    lookup = defaultdict(dict)
+    for s in all_stations:
+        lookup[s["station_id"]][s["depth"]] = s
+    return dict(lookup)
+
+
+def _station_for_var(tok: str,
+                     station_id: str,
+                     lookup: dict):
+    """Return the station entry for a given variable token.
+
+    Surface vars  -> z=0.0m entry
+    Sensor vars   -> shallowest non-zero entry
+                     (fallback to z=0.0m if none exists)
+    """
+    T        = tok.strip().upper()
+    depth_map = lookup.get(station_id, {})
+
+    if T in _SURFACE_VARS or T in WIND_TOKENS:
+        return depth_map.get(0.0)
+
+    if T in _SENSOR_DEPTH_VARS:
+        non_zero = {d: v for d, v in depth_map.items()
+                    if d != 0.0}
+        if non_zero:
+            # Shallowest non-zero depth (closest to surface)
+            # max() of negative numbers gives least negative
+            shallowest = max(non_zero.keys())
+            return non_zero[shallowest]
+        # Fallback: no non-zero entry, use surface
+        return depth_map.get(0.0)
+
+    # Default: surface
+    return depth_map.get(0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +167,6 @@ def _squeeze(col):
 # ---------------------------------------------------------------------------
 
 def _resample_rule(cfg: dict) -> str:
-    """Return the pandas resample rule, normalising uppercase aliases."""
     rule = str(cfg.get("station_skill_resample", "1h"))
     rule = re.sub(r'^(\d*)H$',
                   lambda m: (m.group(1) or '1') + 'h',   rule)
@@ -144,14 +195,12 @@ def _ndbc_token_filter(cfg: dict):
 # ---------------------------------------------------------------------------
 
 def _load_model_staout(cfg, staout_num: int,
-                        stations: list,
+                        all_stations: list,
                         start_str, end_str):
     """Stitch staout_N across all run groups into a DataFrame.
 
-    Uses group_date_range for correct start date regardless of
-    whether group IDs are YYYYMM or YYYYMMDD.
-    Deduplicates columns after rename so the same station_id
-    never creates multiple columns.
+    Uses all_stations (all depths) so idx_to_id correctly maps
+    every staout_* column regardless of depth.
     """
     import pandas as pd
 
@@ -159,7 +208,7 @@ def _load_model_staout(cfg, staout_num: int,
     mdir = model_dir(cfg)
 
     idx_to_id = {s["line_index"]: s["station_id"]
-                 for s in stations}
+                 for s in all_stations}
 
     groups = list_groups(cfg)
     frames = []
@@ -212,10 +261,10 @@ def _load_model_staout(cfg, staout_num: int,
             rename[col] = idx_to_id.get(col, col)
         df = df.rename(columns=rename)
 
-        # Deduplicate: same station_id at multiple depths
-        # creates duplicate columns — keep first occurrence
-        # so mdl[sid] always returns a Series not a DataFrame.
-        df = df.loc[:, ~df.columns.duplicated(keep='first')]
+        # Keep ALL columns including duplicates —
+        # the correct depth is selected per-variable
+        # in _assess_station via _station_for_var.
+        # Do NOT deduplicate here.
 
         frames.append(df)
 
@@ -233,15 +282,8 @@ def _load_model_staout(cfg, staout_num: int,
 # Observation loaders
 # ---------------------------------------------------------------------------
 
-def _calendar_months(start_str: str,
-                     end_str: str) -> list:
-    """Return sorted YYYYMM strings spanning start..end.
-
-    Always uses calendar months — CO-OPS obs are stored per month
-    regardless of project grouping.
-    """
+def _calendar_months(start_str, end_str) -> list:
     from dateutil.relativedelta import relativedelta
-
     s       = date.fromisoformat(start_str[:10])
     e       = date.fromisoformat(end_str[:10])
     months  = []
@@ -255,7 +297,6 @@ def _calendar_months(start_str: str,
 
 def _load_obs_series(cfg, station_id, product,
                      start_str, end_str):
-    """Load + concat monthly CO-OPS CSVs for one station/product."""
     import pandas as pd
 
     mdir      = model_dir(cfg)
@@ -283,17 +324,13 @@ def _load_obs_series(cfg, station_id, product,
 
 
 def _wind_uv(speed, direction):
-    """Convert wind speed + meteorological direction to u, v."""
     import numpy as np
     rad = np.deg2rad(direction)
-    u = -speed * np.sin(rad)
-    v = -speed * np.cos(rad)
-    return u, v
+    return -speed * np.sin(rad), -speed * np.cos(rad)
 
 
 def _load_ndbc_frame(cfg, station_id,
                      start_str, end_str):
-    """Load + concat per-year NDBC CSVs for one station."""
     import pandas as pd
 
     mdir       = model_dir(cfg)
@@ -326,7 +363,6 @@ def _load_ndbc_frame(cfg, station_id,
 # ---------------------------------------------------------------------------
 
 def _metrics(obs_series, mod_series, rule):
-    """Resample both to rule, align, return metrics."""
     import numpy as np
     import pandas as pd
 
@@ -345,6 +381,18 @@ def _metrics(obs_series, mod_series, rule):
                              df["mod"])[0, 1] ** 2)
           if denom_std != 0 else float("nan"))
     return len(df), mean_obs, bias, rmse, r2
+
+
+def _clean_name(name: str) -> str:
+    """Strip z=Xm depth suffix from station name."""
+    return re.sub(r'\s+z=[-\d.]+m$', '', name).strip()
+
+
+def _depth_label(depth: float) -> str:
+    """Human-readable depth label for plot subtitles."""
+    if depth == 0.0:
+        return "surface"
+    return f"{abs(depth):.0f}m depth"
 
 
 def _plot(obs_idx, obs_vals, mod_idx, mod_vals,
@@ -377,12 +425,10 @@ def _plot(obs_idx, obs_vals, mod_idx, mod_vals,
 
 def _obs_for_variable(source, tok, cfg, sid,
                       start_str, end_str):
-    """Return the observed series for one station/variable."""
     import pandas as pd
 
     T = tok.strip().upper()
 
-    # ---- CO-OPS ----
     if source == "CO-OPS":
         if T in WIND_TOKENS:
             obs = _load_obs_series(
@@ -410,7 +456,7 @@ def _obs_for_variable(source, tok, cfg, sid,
                 pd.to_numeric(obs["v"],
                               errors="coerce").dropna())
 
-    # ---- NDBC ----
+    # NDBC
     frame = _load_ndbc_frame(cfg, sid,
                               start_str, end_str)
     if frame is None or frame.empty:
@@ -440,13 +486,19 @@ def _obs_for_variable(source, tok, cfg, sid,
 # Station assessor
 # ---------------------------------------------------------------------------
 
-def _assess_station(st, source, cfg, model_frame,
+def _assess_station(st, source, cfg,
+                    model_frame_fn,
+                    lookup,
                     rule, start_str, end_str,
                     out_dir, rows,
                     ndbc_token_filter=None):
-    """Assess all variables for one station."""
+    """Assess all variables for one station.
+
+    For each variable the correct depth entry is selected:
+    - Surface vars (WL, pressure, wind): z=0m model output
+    - Sensor-depth vars (T, S): shallowest non-zero model output
+    """
     sid     = st["station_id"]
-    name    = st["name"]
     src_tag = source
 
     for tok in st["vars"]:
@@ -460,6 +512,18 @@ def _assess_station(st, source, cfg, model_frame,
         if source == "NDBC" and T in ("WL", "ELEV"):
             continue
 
+        # Select the station entry for this variable
+        st_entry = _station_for_var(T, sid, lookup)
+        if st_entry is None:
+            print(f"  {src_tag} {sid} {T}: no station "
+                  f"entry for this variable, skipping.")
+            continue
+
+        line_idx = st_entry["line_index"]
+        depth    = st_entry["depth"]
+        name     = _clean_name(st_entry["name"])
+        dlabel   = _depth_label(depth)
+
         obs = _obs_for_variable(
             source, tok, cfg, sid,
             start_str, end_str)
@@ -469,19 +533,23 @@ def _assess_station(st, source, cfg, model_frame,
             continue
         kind, payload = obs
 
-        # ---- Wind (two components) ----
+        # ---- Wind ----
         if kind == "wind":
             for comp_label, staout_num, key \
                     in WIND_COMPONENTS:
-                mdl = model_frame(staout_num)
+                mdl = model_frame_fn(staout_num)
                 if mdl.empty or sid not in mdl.columns:
                     print(f"  {src_tag} {sid} "
                           f"{comp_label}: no model "
                           f"column, skipping.")
                     continue
                 o = payload[key]
-                # Squeeze DataFrame -> Series
-                m = _squeeze(mdl[sid])
+                # For wind always use surface column
+                m_raw = mdl[sid]
+                if hasattr(m_raw, "ndim") and m_raw.ndim == 2:
+                    m = m_raw.iloc[:, 0]
+                else:
+                    m = m_raw
                 res = _metrics(o, m, rule)
                 if res is None:
                     print(f"  {src_tag} {sid} "
@@ -490,7 +558,8 @@ def _assess_station(st, source, cfg, model_frame,
                     continue
                 n, mean_obs, bias, rmse, r2 = res
                 mod_label = (
-                    f"Model [R\u00b2: {r2:.2f}; "
+                    f"Model [{dlabel}] "
+                    f"[R\u00b2: {r2:.2f}; "
                     f"RMSE: {rmse:.2f} m/s; "
                     f"Bias: {bias:.2f} m/s]")
                 _plot(
@@ -505,33 +574,50 @@ def _assess_station(st, source, cfg, model_frame,
                 rows.append(dict(
                     station_id=sid, name=name,
                     source=src_tag,
-                    variable=comp_label, n_points=n,
+                    variable=comp_label,
+                    depth_m=depth,
+                    n_points=n,
                     mean_obs=mean_obs, bias=bias,
                     rmse=rmse, r2=r2,
                     start=start_str, end=end_str))
-                print(f"  {src_tag} {sid} {comp_label}: "
-                      f"n={n} bias={bias:.3f} "
+                print(f"  {src_tag} {sid} {comp_label} "
+                      f"[{dlabel}]: n={n} "
+                      f"bias={bias:.3f} "
                       f"rmse={rmse:.3f} r2={r2:.3f}")
             continue
 
-        # ---- Scalar variable ----
+        # ---- Scalar ----
         plan = VAR_PLAN.get(T)
         if plan is None:
             continue
 
-        mdl = model_frame(plan["staout"])
+        mdl = model_frame_fn(plan["staout"])
         if mdl.empty or sid not in mdl.columns:
             print(f"  {src_tag} {sid} {T}: no model "
                   f"column (staout_{plan['staout']}), "
                   f"skipping.")
             continue
 
-        # Squeeze DataFrame -> Series
-        m = _squeeze(mdl[sid])
+        # Select the column matching line_idx for this
+        # variable's depth. mdl[sid] may be a DataFrame
+        # if multiple depth levels exist.
+        m_raw = mdl[sid]
+        if hasattr(m_raw, "ndim") and m_raw.ndim == 2:
+            # Multiple columns for this station_id —
+            # find the one corresponding to line_idx.
+            # The column order matches station.in order.
+            # line_idx is 1-based; columns are ordered
+            # by their appearance in station.in.
+            # iloc[:, 0] = first depth (z=0m for surface vars)
+            # iloc[:, 1] = second depth (z=-1m for T/S)
+            if T in _SENSOR_DEPTH_VARS and m_raw.shape[1] > 1:
+                m = m_raw.iloc[:, 1]  # sensor depth column
+            else:
+                m = m_raw.iloc[:, 0]  # surface column
+        else:
+            m = m_raw
 
-        # Unit conversion: SCHISM staout_2 is in Pa but
-        # CO-OPS and NDBC report air pressure in hPa/mbar.
-        # Divide model by 100 to convert Pa -> hPa.
+        # Pa -> hPa for air pressure
         if T in _AIR_PRESSURE_TOKENS:
             m = m / 100.0
 
@@ -548,27 +634,30 @@ def _assess_station(st, source, cfg, model_frame,
         n, mean_obs, bias, rmse, r2 = res
         unit      = plan["unit"]
         mod_label = (
-            f"Model [R\u00b2: {r2:.2f}; "
+            f"Model [{dlabel}] "
+            f"[R\u00b2: {r2:.2f}; "
             f"RMSE: {rmse:.2f} {unit}; "
             f"Bias: {bias:.2f} {unit}]")
         _plot(
             o.index, o.values,
             m.index, m.values,
             f"{src_tag} ({sid}): {name} \u2014 "
-            f"{plan['label']}",
+            f"{plan['label']} [{dlabel}]",
             f"{plan['label']} ({unit})",
             plan["color"], mod_label,
             out_dir / f"{sid}_{plan['product']}.jpg")
         rows.append(dict(
             station_id=sid, name=name,
             source=src_tag,
-            variable=plan["product"], n_points=n,
+            variable=plan["product"],
+            depth_m=depth,
+            n_points=n,
             mean_obs=mean_obs, bias=bias,
             rmse=rmse, r2=r2,
             start=start_str, end=end_str))
-        print(f"  {src_tag} {sid} {T}: n={n} "
-              f"bias={bias:.3f} rmse={rmse:.3f} "
-              f"r2={r2:.3f}")
+        print(f"  {src_tag} {sid} {T} [{dlabel}]: "
+              f"n={n} bias={bias:.3f} "
+              f"rmse={rmse:.3f} r2={r2:.3f}")
 
 
 # ---------------------------------------------------------------------------
@@ -589,11 +678,26 @@ def run_station_skill(cfg: dict, config_dir=None):
     rule               = _resample_rule(cfg)
     ndbc_token_filter  = _ndbc_token_filter(cfg)
 
-    stations = parse_station_in(station_in)
-    coops    = [s for s in stations
-                if s["source"] == "CO-OPS"]
-    ndbc     = [s for s in stations
-                if s["source"] == "NDBC"]
+    # All station entries at all depths
+    all_stations = parse_station_in(station_in)
+
+    # Build depth lookup for per-variable depth selection
+    lookup = _build_station_lookup(all_stations)
+
+    # Unique stations (one entry per station_id for iteration)
+    # Use z=0m entries as the canonical list — every station
+    # has at least a z=0m entry.
+    seen     = set()
+    stations = []
+    for s in all_stations:
+        if s["depth"] == 0.0 and s["station_id"] not in seen:
+            seen.add(s["station_id"])
+            stations.append(s)
+
+    coops = [s for s in stations
+             if s["source"] == "CO-OPS"]
+    ndbc  = [s for s in stations
+             if s["source"] == "NDBC"]
 
     out_dir = mdir / f"P{pid}" / f"P{pid}_station_skill"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -611,21 +715,25 @@ def run_station_skill(cfg: dict, config_dir=None):
     print(f"  Resample  : {rule}")
     print(f"  CO-OPS stations: {len(coops)}")
     print(f"  NDBC stations  : {len(ndbc)}")
+    print(f"  Depth logic:")
+    print(f"    WL/pressure/wind -> z=0m (surface)")
+    print(f"    T/S              -> shallowest non-zero "
+          f"(sensor depth)")
     if ndbc_token_filter:
         print(f"  NDBC variable filter: "
               f"{sorted(ndbc_token_filter)}")
     else:
-        print(f"  NDBC variable filter: none "
-              f"(use each station's VARS bracket)")
+        print(f"  NDBC variable filter: none")
     print(f"  Output: {out_dir}")
     print(f"{'='*60}\n")
 
+    # Cache model staout frames
     model_cache = {}
 
-    def model_frame(staout_num):
+    def model_frame_fn(staout_num):
         if staout_num not in model_cache:
             model_cache[staout_num] = _load_model_staout(
-                cfg, staout_num, stations,
+                cfg, staout_num, all_stations,
                 start_str, end_str)
         return model_cache[staout_num]
 
@@ -633,20 +741,22 @@ def run_station_skill(cfg: dict, config_dir=None):
 
     for st in coops:
         _assess_station(
-            st, "CO-OPS", cfg, model_frame, rule,
+            st, "CO-OPS", cfg,
+            model_frame_fn, lookup, rule,
             start_str, end_str, out_dir, rows,
             ndbc_token_filter=None)
 
     for st in ndbc:
         _assess_station(
-            st, "NDBC", cfg, model_frame, rule,
+            st, "NDBC", cfg,
+            model_frame_fn, lookup, rule,
             start_str, end_str, out_dir, rows,
             ndbc_token_filter=ndbc_token_filter)
 
     if rows:
         df = pd.DataFrame(rows, columns=[
             "station_id", "name", "source",
-            "variable", "n_points",
+            "variable", "depth_m", "n_points",
             "mean_obs", "bias", "rmse", "r2",
             "start", "end"])
         csv_path = out_dir / "skill_metrics.csv"
@@ -656,13 +766,6 @@ def run_station_skill(cfg: dict, config_dir=None):
     else:
         print("\n  No station/variable pairs produced "
               "metrics.")
-        print("  Check that:")
-        print("    1. download_coops / download_ndbc "
-              "have run")
-        print("    2. station.in uses ![VARS] format "
-              "(no space after !)")
-        print("    3. The skill window overlaps the "
-              "downloaded data")
 
     (out_dir / "station_skill.done").touch()
     print(f"\n{'='*60}")

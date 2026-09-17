@@ -3,36 +3,16 @@ models/schism/postprocess
 =========================
 Phase 5 — SCHISM post-processing.
 
-Implemented steps
------------------
-  plot_outputs   Full-run animated GIFs of SCHISM field outputs.
-  download_sst   DTN download + domain subset of LEO L3S-DY satellite SST.
-  download_coops DTN download of NOAA CO-OPS station observations.
-  download_ndbc  DTN download of NOAA NDBC buoy observations.
-  download_argo  DTN download of Argo float profiles.
-  compare_sst    Model (daily-mean SST) vs. satellite two-panel GIF.
-  station_skill  Interactive obs-vs-model comparison + skill CSV.
-  collocate_argo OCSTrack 3-D collocation of SCHISM T/S vs Argo floats.
-  plot_argo      Argo diagnostic plots.
-  diag_run_plots Per-output-stack diagnostic frames DURING the run.
-
-Resilience against all-flags-on steps.yaml
--------------------------------------------
-DTN-only steps (download_sst, download_coops, download_ndbc,
-download_argo) check whether the current node is a DTN before
-attempting the download. When running on a login node (e.g. via
---phase all) they print a [N/A] message and skip gracefully instead
-of crashing. Run them separately on the DTN after the model completes.
+DTN-only steps skip gracefully when not on a DTN node.
+ocstrack is now in swf_main so download_argo and collocate_argo
+no longer need an ImportError guard — they work from the same
+swf_main session as all other steps.
 """
 
 import os
 import socket
 from pathlib import Path
 
-
-# =============================================================================
-# DTN helpers
-# =============================================================================
 
 def _is_dtn() -> bool:
     """Return True if the current host is a DTN or ALLOW_NON_DTN=1."""
@@ -42,9 +22,7 @@ def _is_dtn() -> bool:
 
 
 def _dtn_skip(step: str):
-    """Print a [N/A] message for a DTN-only step running on a
-    non-DTN node.
-    """
+    """Print a [N/A] message for a DTN-only step on a non-DTN node."""
     print(
         f"[N/A]  {step}  "
         f"(DTN required — run separately on the DTN with:\n"
@@ -53,16 +31,11 @@ def _dtn_skip(step: str):
     )
 
 
-# =============================================================================
-# Phase 5 dispatcher
-# =============================================================================
-
 def postprocess_phase(cfg: dict, config_dir,
                       only: str = None):
     """Dispatch Phase 5 post-processing steps.
 
     DTN-only steps skip gracefully when not on a DTN.
-    All other steps run normally regardless of node type.
     """
     config_dir = Path(config_dir)
     on_dtn     = _is_dtn()
@@ -119,6 +92,8 @@ def postprocess_phase(cfg: dict, config_dir,
 
     # ----------------------------------------------------------------
     # download_argo (DTN)
+    # ocstrack is in swf_main so this works from the standard
+    # DTN session without switching environments.
     # ----------------------------------------------------------------
     if enabled("download_argo"):
         if not on_dtn:
@@ -133,7 +108,7 @@ def postprocess_phase(cfg: dict, config_dir,
         print("[SKIP] download_argo")
 
     # ----------------------------------------------------------------
-    # plot_outputs (full-run field GIFs)
+    # plot_outputs
     # ----------------------------------------------------------------
     if enabled("plot_outputs"):
         print("[STEP] plot_outputs")
@@ -145,7 +120,7 @@ def postprocess_phase(cfg: dict, config_dir,
         print("[SKIP] plot_outputs")
 
     # ----------------------------------------------------------------
-    # compare_sst (model vs satellite)
+    # compare_sst
     # ----------------------------------------------------------------
     if enabled("compare_sst"):
         print("[STEP] compare_sst")
@@ -157,7 +132,7 @@ def postprocess_phase(cfg: dict, config_dir,
         print("[SKIP] compare_sst")
 
     # ----------------------------------------------------------------
-    # station_skill (interactive)
+    # station_skill
     # ----------------------------------------------------------------
     if enabled("station_skill"):
         print("[STEP] station_skill")
@@ -169,7 +144,8 @@ def postprocess_phase(cfg: dict, config_dir,
         print("[SKIP] station_skill")
 
     # ----------------------------------------------------------------
-    # collocate_argo (interactive / SLURM)
+    # collocate_argo
+    # ocstrack is in swf_main so this works without env switching.
     # ----------------------------------------------------------------
     if enabled("collocate_argo"):
         print("[STEP] collocate_argo")
@@ -183,13 +159,14 @@ def postprocess_phase(cfg: dict, config_dir,
     # ----------------------------------------------------------------
     # plot_argo
     # When collocate_argo was submitted via SLURM, plot_argo is
-    # auto-chained as Stage 3 (afterok on the merge job) and will
-    # run automatically — no action needed here in that case.
+    # auto-chained as Stage 3 and will run automatically.
     # When collocate_argo ran in serial mode or collocate_argo.done
     # already exists, this step runs interactively.
     # ----------------------------------------------------------------
     if enabled("plot_argo"):
-        from workflow.core.config import model_dir as _model_dir
+        from workflow.core.config import (
+            model_dir as _model_dir,
+        )
         _pid      = cfg["project_id"]
         _done_col = (
             _model_dir(cfg) / f"P{_pid}"
@@ -203,16 +180,14 @@ def postprocess_phase(cfg: dict, config_dir,
             )
             run_plot_argo(cfg, config_dir)
         else:
-            print("[NOTE] plot_argo: SLURM Stage 3 job queued "
-                  "(afterok on merge job) — will run "
-                  "automatically.")
+            print("[NOTE] plot_argo: SLURM Stage 3 job "
+                  "queued (afterok on merge job) — "
+                  "will run automatically.")
     else:
         print("[SKIP] plot_argo")
 
     # ----------------------------------------------------------------
-    # diag_run_plots
-    # This step runs DURING Phase 4 (dispatched by auto_hotstart.py),
-    # not here. Print a reminder if it is enabled.
+    # diag_run_plots (runs during Phase 4, not here)
     # ----------------------------------------------------------------
     if enabled("diag_run_plots"):
         print("[NOTE] diag_run_plots runs DURING the run "

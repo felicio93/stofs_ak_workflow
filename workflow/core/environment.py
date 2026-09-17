@@ -7,6 +7,7 @@ Shared environment plumbing for the workflow. Two responsibilities:
    `stofs-ak --setup-envs`). Creates/verifies the conda envs the workflow
    needs:
      * swf_main : orchestrator + NCO/CDO + downloads + TPXO (bctides)
+                  + ocstrack (Argo collocation, DTN download_argo step)
      * swf_plot : plotting (matplotlib/cartopy) + mesh diagnostics
 
 2. Runtime environment guards shared by the downloaders and preprocessors:
@@ -16,9 +17,13 @@ Shared environment plumbing for the workflow. Two responsibilities:
      * check_required_tools -- ensure NCO/CDO binaries are on PATH
      * env_python           -- full path to a step's conda interpreter
 
-check_dtn() now raises DtnRequiredError instead of calling sys.exit(1)
-so that drivers can catch it and skip the step gracefully when running
+check_dtn() raises DtnRequiredError instead of sys.exit(1) so that
+drivers can catch it and skip the step gracefully when running
 --phase all on a login node with all steps.yaml flags set to true.
+
+ocstrack is installed in swf_main (not just swf_plot) so that
+download_argo and collocate_argo work from the same DTN session
+without requiring a conda environment switch.
 """
 
 import os
@@ -79,11 +84,7 @@ def check_dtn(what: str = "This step"):
 
 def check_cdsapi(
         api_url: str = "https://cds.climate.copernicus.eu/api"):
-    """Verify cdsapi is importable and ~/.cdsapirc exists.
-
-    `api_url` is only used in the guidance printed when the file is
-    missing (CDS for ERA5, EWDS for GloFAS).
-    """
+    """Verify cdsapi is importable and ~/.cdsapirc exists."""
     try:
         import cdsapi  # noqa: F401
     except ImportError:
@@ -137,8 +138,7 @@ def check_required_tools(tools, provider: str = "NCO/CDO"):
 def env_python(cfg: dict, step: str,
                default: str = "swf_main") -> str:
     """Full path to the Python interpreter of the conda env
-    configured for `step` in envs.yaml. Used by SLURM launchers that
-    call interpreters by absolute path instead of `conda activate`.
+    configured for `step` in envs.yaml.
     """
     conda_base = Path(cfg["conda_base"])
     env = cfg.get("conda_envs", {}).get(step, default)
@@ -151,7 +151,6 @@ def env_python(cfg: dict, step: str,
 # Conda environment setup (stofs-ak --setup-envs)
 # =============================================================================
 
-# Required package spec per known environment.
 ENV_SPECS = {
     "swf_main": {
         "conda_packages": [
@@ -159,9 +158,14 @@ ENV_SPECS = {
             "nco", "cdo", "cdsapi", "netcdf4", "xarray",
             "scipy",
         ],
+        # ocstrack is pip-only (not on conda-forge).
+        # Installed in swf_main so that download_argo and
+        # collocate_argo work from the DTN session without
+        # requiring a conda environment switch.
+        "pip_packages": ["ocstrack"],
         "verify_imports": [
             "yaml", "dateutil", "cdsapi", "netCDF4",
-            "xarray", "scipy",
+            "xarray", "scipy", "ocstrack",
         ],
         "verify_tools": [
             "ncks", "ncpdq", "ncap2", "ncrename",
@@ -175,6 +179,9 @@ ENV_SPECS = {
             "numpy", "pyyaml", "python-dateutil", "mpi4py",
             "gsw", "tqdm", "requests", "dask", "scipy",
         ],
+        # ocstrack also installed in swf_plot for SLURM jobs
+        # that use the swf_plot interpreter (collocate_argo
+        # Stage 1 array tasks, plot_argo).
         "pip_packages": ["ocstrack"],
         "verify_imports": [
             "xarray", "matplotlib", "cartopy", "imageio",
@@ -276,11 +283,12 @@ def verify_env(cfg: dict, name: str, spec: dict) -> bool:
         else:
             ok = False
             print(f"  [{name}] MISSING python packages:")
-            print("    "
-                  + result.stderr.strip().splitlines()[-1])
+            lines = result.stderr.strip().splitlines()
+            print("    " + (lines[-1] if lines else
+                             "(no details)"))
 
-    tools    = spec.get("verify_tools", [])
-    env_bin  = py.parent
+    tools   = spec.get("verify_tools", [])
+    env_bin = py.parent
     for tool in tools:
         if (env_bin / tool).exists():
             continue
@@ -318,7 +326,8 @@ def setup_envs(cfg: dict):
     print(f"{'='*60}")
 
     if unknown:
-        print(f"  NOTE: no package spec for env(s): {unknown}")
+        print(f"  NOTE: no package spec for env(s): "
+              f"{unknown}")
         print(f"        They will not be auto-created; "
               f"create them manually.")
 
@@ -331,7 +340,8 @@ def setup_envs(cfg: dict):
             print(f"\n  Env '{name}' exists -> "
                   f"verifying libraries...")
             if not pip_install(
-                    cfg, name, spec.get("pip_packages", [])):
+                    cfg, name,
+                    spec.get("pip_packages", [])):
                 all_ok = False
             if not verify_env(cfg, name, spec):
                 all_ok = False
@@ -339,11 +349,13 @@ def setup_envs(cfg: dict):
                       f"problems (see above).")
         else:
             if not create_env(
-                    conda, name, spec["conda_packages"]):
+                    conda, name,
+                    spec["conda_packages"]):
                 all_ok = False
                 continue
             if not pip_install(
-                    cfg, name, spec.get("pip_packages", [])):
+                    cfg, name,
+                    spec.get("pip_packages", [])):
                 all_ok = False
             verify_env(cfg, name, spec)
 

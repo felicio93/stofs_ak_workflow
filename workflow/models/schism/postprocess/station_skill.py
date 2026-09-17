@@ -1,22 +1,22 @@
 """
 models/schism/postprocess/station_skill.py
 ===========================================
-Phase 5 step "station_skill" (interactive; runs in the swf_plot env).
+Phase 5 step "station_skill" (interactive; runs in the swf_main env).
 
 Compares SCHISM station output (outputs/staout_*) against downloaded
 station observations for every valid station in fix/station.in.
 
 Works for all grouping modes (monthly, ndays/weekly/daily).
 
-Fixes vs previous version
+Fixes vs previous versions
 --------------------------
-* mdl[sid] may return a DataFrame when the same station_id appears on
-  multiple lines in station.in (e.g. z=0.0m and z=-1.0m depth levels).
-  Previously this caused:
-    ValueError: The truth value of a Series is ambiguous
-  Fix: squeeze to Series using iloc[:,0] when ndim==2.
-* Deduplicate DataFrame columns after rename in _load_model_staout so
-  the same station_id never creates multiple columns.
+* mdl[sid] squeeze: same station_id at multiple depths returns a
+  DataFrame — squeezed to Series via _squeeze() helper.
+* Column deduplication in _load_model_staout after rename.
+* Air pressure unit conversion: SCHISM staout_2 is in Pa, CO-OPS
+  and NDBC report in hPa/mbar. Divide model by 100 before metrics.
+* Calendar month obs loading: CO-OPS CSVs are always per calendar
+  month regardless of project grouping.
 """
 
 import argparse
@@ -31,6 +31,10 @@ from workflow.core.config import (
     group_date_range,
 )
 from workflow.core.station_parser import parse_station_in
+
+# ---------------------------------------------------------------------------
+# Variable plan
+# ---------------------------------------------------------------------------
 
 VAR_PLAN = {
     "WL":           {"staout": 1,
@@ -52,19 +56,19 @@ VAR_PLAN = {
     "AIR_PRESSURE": {"staout": 2,
                      "product": "air_pressure",
                      "label": "Air Pressure",
-                     "unit": "mbar", "color": "green"},
+                     "unit": "hPa",  "color": "green"},
     "AIRPRESSURE":  {"staout": 2,
                      "product": "air_pressure",
                      "label": "Air Pressure",
-                     "unit": "mbar", "color": "green"},
+                     "unit": "hPa",  "color": "green"},
     "PATM":         {"staout": 2,
                      "product": "air_pressure",
                      "label": "Air Pressure",
-                     "unit": "mbar", "color": "green"},
+                     "unit": "hPa",  "color": "green"},
     "PRESSURE":     {"staout": 2,
                      "product": "air_pressure",
                      "label": "Air Pressure",
-                     "unit": "mbar", "color": "green"},
+                     "unit": "hPa",  "color": "green"},
 }
 
 WIND_TOKENS = {"WIND", "WINDX", "WINDY"}
@@ -82,28 +86,36 @@ NDBC_COL_MAP = {
     "PRESSURE":     "PRES",
 }
 
+# SCHISM staout_2 outputs air pressure in Pa.
+# CO-OPS and NDBC report in hPa (= mbar).
+# Model values are divided by 100 before computing metrics.
+_AIR_PRESSURE_TOKENS = {
+    "AIR_PRESSURE", "AIRPRESSURE", "PATM", "PRESSURE",
+}
 
-# =============================================================================
+
+# ---------------------------------------------------------------------------
 # Helper: squeeze mdl[sid] to a Series
-# =============================================================================
+# ---------------------------------------------------------------------------
 
 def _squeeze(col):
     """Return a Series from mdl[sid].
 
     When the same station_id appears on multiple lines in station.in
-    (e.g. different depth levels), mdl[sid] returns a DataFrame.
-    We take the first matching column to get a Series.
+    (different depth levels), mdl[sid] returns a DataFrame.
+    Take the first matching column to get a Series.
     """
     if hasattr(col, "ndim") and col.ndim == 2:
         return col.iloc[:, 0]
     return col
 
 
-# =============================================================================
+# ---------------------------------------------------------------------------
 # Config helpers
-# =============================================================================
+# ---------------------------------------------------------------------------
 
 def _resample_rule(cfg: dict) -> str:
+    """Return the pandas resample rule, normalising uppercase aliases."""
     rule = str(cfg.get("station_skill_resample", "1h"))
     rule = re.sub(r'^(\d*)H$',
                   lambda m: (m.group(1) or '1') + 'h',   rule)
@@ -127,9 +139,9 @@ def _ndbc_token_filter(cfg: dict):
     return {str(t).strip().upper() for t in wanted}
 
 
-# =============================================================================
+# ---------------------------------------------------------------------------
 # Model staout loader
-# =============================================================================
+# ---------------------------------------------------------------------------
 
 def _load_model_staout(cfg, staout_num: int,
                         stations: list,
@@ -159,11 +171,11 @@ def _load_model_staout(cfg, staout_num: int,
             continue
 
         gstart, _ = group_date_range(cfg, gid)
-        year  = gstart.year
-        month = gstart.month
-
+        year       = gstart.year
+        month      = gstart.month
         start_day  = gstart.day
         start_hour = 0
+
         param_nml = (mdir / f"I{pid}" / f"I{pid}_{gid}"
                      / "param.nml")
         if param_nml.exists():
@@ -192,6 +204,7 @@ def _load_model_staout(cfg, staout_num: int,
         df["datetime"] = (base
                           + pd.to_timedelta(df[0], unit="s"))
         df = df.drop(columns=[0])
+
         rename = {}
         for col in df.columns:
             if col == "datetime":
@@ -199,9 +212,9 @@ def _load_model_staout(cfg, staout_num: int,
             rename[col] = idx_to_id.get(col, col)
         df = df.rename(columns=rename)
 
-        # Deduplicate: if the same station_id maps to multiple
-        # columns (same id at different depths), keep only the
-        # first occurrence so mdl[sid] always returns a Series.
+        # Deduplicate: same station_id at multiple depths
+        # creates duplicate columns — keep first occurrence
+        # so mdl[sid] always returns a Series not a DataFrame.
         df = df.loc[:, ~df.columns.duplicated(keep='first')]
 
         frames.append(df)
@@ -216,9 +229,9 @@ def _load_model_staout(cfg, staout_num: int,
     return model.loc[start_str:end_str]
 
 
-# =============================================================================
+# ---------------------------------------------------------------------------
 # Observation loaders
-# =============================================================================
+# ---------------------------------------------------------------------------
 
 def _calendar_months(start_str: str,
                      end_str: str) -> list:
@@ -229,8 +242,8 @@ def _calendar_months(start_str: str,
     """
     from dateutil.relativedelta import relativedelta
 
-    s = date.fromisoformat(start_str[:10])
-    e = date.fromisoformat(end_str[:10])
+    s       = date.fromisoformat(start_str[:10])
+    e       = date.fromisoformat(end_str[:10])
     months  = []
     current = date(s.year, s.month, 1)
     last    = date(e.year, e.month, 1)
@@ -270,6 +283,7 @@ def _load_obs_series(cfg, station_id, product,
 
 
 def _wind_uv(speed, direction):
+    """Convert wind speed + meteorological direction to u, v."""
     import numpy as np
     rad = np.deg2rad(direction)
     u = -speed * np.sin(rad)
@@ -282,8 +296,8 @@ def _load_ndbc_frame(cfg, station_id,
     """Load + concat per-year NDBC CSVs for one station."""
     import pandas as pd
 
-    mdir     = model_dir(cfg)
-    ndbc_dir = mdir / "obs" / "ndbc"
+    mdir       = model_dir(cfg)
+    ndbc_dir   = mdir / "obs" / "ndbc"
     start_year = int(str(start_str)[:4])
     end_year   = int(str(end_str)[:4])
 
@@ -307,11 +321,12 @@ def _load_ndbc_frame(cfg, station_id,
     return df.loc[start_str:end_str]
 
 
-# =============================================================================
+# ---------------------------------------------------------------------------
 # Metrics and plotting
-# =============================================================================
+# ---------------------------------------------------------------------------
 
 def _metrics(obs_series, mod_series, rule):
+    """Resample both to rule, align, return metrics."""
     import numpy as np
     import pandas as pd
 
@@ -356,20 +371,22 @@ def _plot(obs_idx, obs_vals, mod_idx, mod_vals,
     plt.close(fig)
 
 
-# =============================================================================
+# ---------------------------------------------------------------------------
 # Observation variable accessor
-# =============================================================================
+# ---------------------------------------------------------------------------
 
 def _obs_for_variable(source, tok, cfg, sid,
                       start_str, end_str):
+    """Return the observed series for one station/variable."""
     import pandas as pd
 
     T = tok.strip().upper()
 
+    # ---- CO-OPS ----
     if source == "CO-OPS":
         if T in WIND_TOKENS:
-            obs = _load_obs_series(cfg, sid, "wind",
-                                   start_str, end_str)
+            obs = _load_obs_series(
+                cfg, sid, "wind", start_str, end_str)
             if (obs is None or obs.empty
                     or "s" not in obs
                     or "d" not in obs):
@@ -384,16 +401,16 @@ def _obs_for_variable(source, tok, cfg, sid,
         plan = VAR_PLAN.get(T)
         if plan is None:
             return None
-        obs = _load_obs_series(cfg, sid,
-                               plan["product"],
-                               start_str, end_str)
+        obs = _load_obs_series(
+            cfg, sid, plan["product"],
+            start_str, end_str)
         if obs is None or obs.empty or "v" not in obs:
             return None
         return ("single",
                 pd.to_numeric(obs["v"],
                               errors="coerce").dropna())
 
-    # NDBC
+    # ---- NDBC ----
     frame = _load_ndbc_frame(cfg, sid,
                               start_str, end_str)
     if frame is None or frame.empty:
@@ -419,14 +436,15 @@ def _obs_for_variable(source, tok, cfg, sid,
                           errors="coerce").dropna())
 
 
-# =============================================================================
+# ---------------------------------------------------------------------------
 # Station assessor
-# =============================================================================
+# ---------------------------------------------------------------------------
 
 def _assess_station(st, source, cfg, model_frame,
                     rule, start_str, end_str,
                     out_dir, rows,
                     ndbc_token_filter=None):
+    """Assess all variables for one station."""
     sid     = st["station_id"]
     name    = st["name"]
     src_tag = source
@@ -451,7 +469,7 @@ def _assess_station(st, source, cfg, model_frame,
             continue
         kind, payload = obs
 
-        # ---- Wind ----
+        # ---- Wind (two components) ----
         if kind == "wind":
             for comp_label, staout_num, key \
                     in WIND_COMPONENTS:
@@ -462,8 +480,7 @@ def _assess_station(st, source, cfg, model_frame,
                           f"column, skipping.")
                     continue
                 o = payload[key]
-                # Squeeze: same station_id on multiple
-                # lines gives a DataFrame not a Series
+                # Squeeze DataFrame -> Series
                 m = _squeeze(mdl[sid])
                 res = _metrics(o, m, rule)
                 if res is None:
@@ -476,14 +493,15 @@ def _assess_station(st, source, cfg, model_frame,
                     f"Model [R\u00b2: {r2:.2f}; "
                     f"RMSE: {rmse:.2f} m/s; "
                     f"Bias: {bias:.2f} m/s]")
-                _plot(o.index, o.values,
-                      m.index, m.values,
-                      f"{src_tag} ({sid}): {name} "
-                      f"\u2014 Wind {comp_label} (m/s)",
-                      f"{comp_label} (m/s)",
-                      "purple", mod_label,
-                      out_dir
-                      / f"{sid}_{comp_label}.jpg")
+                _plot(
+                    o.index, o.values,
+                    m.index, m.values,
+                    f"{src_tag} ({sid}): {name} "
+                    f"\u2014 Wind {comp_label} (m/s)",
+                    f"{comp_label} (m/s)",
+                    "purple", mod_label,
+                    out_dir
+                    / f"{sid}_{comp_label}.jpg")
                 rows.append(dict(
                     station_id=sid, name=name,
                     source=src_tag,
@@ -496,11 +514,11 @@ def _assess_station(st, source, cfg, model_frame,
                       f"rmse={rmse:.3f} r2={r2:.3f}")
             continue
 
-        # ---- Scalar ----
+        # ---- Scalar variable ----
         plan = VAR_PLAN.get(T)
         if plan is None:
             continue
-        o   = payload
+
         mdl = model_frame(plan["staout"])
         if mdl.empty or sid not in mdl.columns:
             print(f"  {src_tag} {sid} {T}: no model "
@@ -508,13 +526,20 @@ def _assess_station(st, source, cfg, model_frame,
                   f"skipping.")
             continue
 
-        # Squeeze: same station_id on multiple lines
-        # gives a DataFrame not a Series
+        # Squeeze DataFrame -> Series
         m = _squeeze(mdl[sid])
+
+        # Unit conversion: SCHISM staout_2 is in Pa but
+        # CO-OPS and NDBC report air pressure in hPa/mbar.
+        # Divide model by 100 to convert Pa -> hPa.
+        if T in _AIR_PRESSURE_TOKENS:
+            m = m / 100.0
 
         if m.std() < 1e-3:
             print(f"  WARNING: {src_tag} {sid} {T} "
                   f"model series is flat (dry node?).")
+
+        o   = payload
         res = _metrics(o, m, rule)
         if res is None:
             print(f"  {src_tag} {sid} {T}: <2 "
@@ -526,13 +551,14 @@ def _assess_station(st, source, cfg, model_frame,
             f"Model [R\u00b2: {r2:.2f}; "
             f"RMSE: {rmse:.2f} {unit}; "
             f"Bias: {bias:.2f} {unit}]")
-        _plot(o.index, o.values,
-              m.index, m.values,
-              f"{src_tag} ({sid}): {name} \u2014 "
-              f"{plan['label']}",
-              f"{plan['label']} ({unit})",
-              plan["color"], mod_label,
-              out_dir / f"{sid}_{plan['product']}.jpg")
+        _plot(
+            o.index, o.values,
+            m.index, m.values,
+            f"{src_tag} ({sid}): {name} \u2014 "
+            f"{plan['label']}",
+            f"{plan['label']} ({unit})",
+            plan["color"], mod_label,
+            out_dir / f"{sid}_{plan['product']}.jpg")
         rows.append(dict(
             station_id=sid, name=name,
             source=src_tag,
@@ -545,9 +571,9 @@ def _assess_station(st, source, cfg, model_frame,
               f"r2={r2:.3f}")
 
 
-# =============================================================================
+# ---------------------------------------------------------------------------
 # Main entry point
-# =============================================================================
+# ---------------------------------------------------------------------------
 
 def run_station_skill(cfg: dict, config_dir=None):
     import pandas as pd

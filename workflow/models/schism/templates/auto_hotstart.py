@@ -1,691 +1,490 @@
-#!/usr/bin/env python3
 """
-auto_hotstart.py  (rendered per run directory by setup_run.py)
-==============================================================
-Self-contained SCHISM monthly run manager for ONE run directory.
+models/schism_wwm/run/setup_run.py
+==================================
+Phase 4, step "setup_run" for SCHISM+WWM (interactive, fast).
 
-Behaviour (ihot=1, single end-of-month hotstart):
-  1. Submit run_test via sbatch.
-  2. Poll squeue, watching mirror.out for advancement and hang detection.
-  3. On successful completion:
-       - (UFS-SCHISM) combine ALL output stacks at end of month
-       - submit run_comb (combine_hotstart7) and wait
-       - delete per-rank hotstart files
-       - symlink combined SCHISM hotstart into next group's run directory
-       - symlink WWM hotfile_out_WWM.nc -> next group's hotfile_in_WWM.nc
-       - launch next group's auto_hotstart.py (if chain_hotstart=True)
-       - write run.done sentinel
+Extends standalone SCHISM setup_run with WWM-specific additions:
+  - Symlinks wwmbnd.gr3 and hgrid_WWM.gr3 from fix/
+  - Symlinks wwminput.nml from I{ID}_{group_id}/
+  - Uses executables.schism_wwm instead of executables.schism
+  - Checks gen_wwminput sentinel
+  - Pre-links hotfile_in_WWM.nc for non-first groups (points to
+    previous group's hotfile_out_WWM.nc if it already exists)
 
-Key fixes
----------
-* local_to_global_* deleted AFTER combine_hotstart7 (not before)
-* Combine poll interval: 5 minutes (not 60 seconds)
-* Waiting messages distinguish combine_schout from combine_hotstart
-* WWM hotfile chaining: hotfile_out_WWM.nc -> next group's hotfile_in_WWM.nc
+Works for all grouping modes (monthly, ndays/weekly/daily).
+Group IDs are either YYYYMM (monthly) or YYYYMMDD (ndays).
+
+Sentinel: R{ID}_{group_id}/setup_run.done
 """
 
-import os
 import re
+import shutil
+import stat
 import sys
-import time
-import subprocess
 from datetime import datetime
 from pathlib import Path
 
+from workflow.core.config import (
+    list_groups,
+    model_dir,
+    group_date_range,
+    get_group_ndays,
+)
+from workflow.core.environment import env_python
 
-# ============================ CONFIG (filled by setup_run) ====================
-RUNDIR         = r"{{RUNDIR}}"
-NEXT_RUNDIR    = {{NEXT_RUNDIR}}
-CHAIN_HOTSTART = {{CHAIN_HOTSTART}}
-IS_LAST_MONTH  = {{IS_LAST_MONTH}}
-NHOT_WRITE     = {{NHOT_WRITE}}
-MONTH          = r"{{MONTH}}"
-RUN_JOBNAME    = r"{{RUN_JOBNAME}}"
+SCHISM_TEMPLATE_DIR = (
+    Path(__file__).resolve().parent.parent.parent
+    / "schism" / "templates"
+)
+AUTO_HOTSTART_TEMPLATE = SCHISM_TEMPLATE_DIR / "auto_hotstart.py"
+DIAG_SBATCH_TEMPLATE   = (
+    SCHISM_TEMPLATE_DIR / "slurm" / "diag_run.sbatch"
+)
 
-# --- New I/O diagnostic plots (SCHISM standalone) ---
-DIAG_ENABLED        = {{DIAG_ENABLED}}
-DIAG_SBATCH         = r"{{DIAG_SBATCH}}"
-DIAG_VARS_MANIFEST  = r"{{DIAG_VARS_MANIFEST}}"
-DIAG_NVAR           = {{DIAG_NVAR}}
+# Static files symlinked from fix/
+FIX_LINKS = [
+    "hgrid.gr3", "hgrid.ll", "vgrid.in", "partition.prop", "tvd.prop",
+    "albedo.gr3", "diffmin.gr3", "diffmax.gr3", "watertype.gr3",
+    "shapiro.gr3", "windrot_geo2proj.gr3", "rough.gr3",
+    "estuary.gr3", "TEM_nudge.gr3", "SAL_nudge.gr3", "station.in",
+    # WWM-specific fix/ files
+    "wwmbnd.gr3",
+    "hgrid_WWM.gr3",
+]
 
-# --- End-of-month output combination (UFS-SCHISM old I/O) ---
-COMBINE_OUTPUT_ENABLED  = {{COMBINE_OUTPUT_ENABLED}}
-COMBINE_OUTPUT_EXE      = r"{{COMBINE_OUTPUT_EXE}}"
-COMBINE_OUTPUT_NRANKS   = {{COMBINE_OUTPUT_NRANKS}}
-COMBINE_OUTPUT_SBATCH   = r"{{COMBINE_OUTPUT_SBATCH}}"
-# =============================================================================
+# Per-group inputs symlinked from I{ID}_{group_id}/
+INPUT_LINKS = [
+    "bctides.in", "param.nml", "source.nc",
+    "TEM_3D.th.nc", "SAL_3D.th.nc", "elev2D.th.nc", "uv3D.th.nc",
+    "TEM_nu.nc", "SAL_nu.nc",
+    # WWM-specific per-group input
+    "wwminput.nml",
+]
 
-_POLL_SCHEDULE  = [0, 60, 60, 60, 60, 60, 300, 1200, 1800]
-_POLL_STEADY    = 1800
-_COMBINE_POLL_SECONDS = 300   # check combine jobs every 5 minutes
-_MAX_RESUBMITS  = 5
-_GRACE_CHECKS   = 10   # x 30s = 5 min grace period after job leaves queue
-_GRACE_SLEEP    = 30
-
-QUEUE_CMD = (
-    f"squeue -u "
-    f"{os.environ.get('USER', os.environ.get('LOGNAME', ''))}"
+OUTPUT_PLACEHOLDERS = (
+    [f"staout_{i}" for i in range(1, 21)] + ["flux.out"]
 )
 
 
-def _poll_sleep(poll_iter: int):
-    secs = (_POLL_SCHEDULE[poll_iter]
-            if poll_iter < len(_POLL_SCHEDULE)
-            else _POLL_STEADY)
-    if secs > 0:
-        time.sleep(secs)
+# =============================================================================
+# Freshness helpers
+# =============================================================================
 
-
-def log(msg):
-    print(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] {msg}",
-          flush=True)
-
-
-def sh(cmd):
-    r = subprocess.run(cmd, shell=True,
-                       capture_output=True, text=True)
-    return r.returncode, (
-        r.stdout.strip() + "\n" + r.stderr.strip()
-    ).strip()
-
-
-def squeue_line_for(jobname):
-    _, out = sh(QUEUE_CMD)
-    pat = re.compile(rf"\b{re.escape(jobname)}\b")
-    for line in out.splitlines():
-        if pat.search(line):
-            return line.strip()
-    return None
-
-
-def _clean_outputs():
-    """Delete stale output stacks and mirror.out before
-    (re)submitting."""
-    outdir  = Path(RUNDIR) / "outputs"
-    deleted = []
-    for f in sorted(outdir.glob("schout_??????_*.nc")):
-        if re.match(r"^schout_\d{6}_\d+\.nc$", f.name):
-            f.unlink(missing_ok=True)
-            deleted.append(f.name)
-    for f in sorted(outdir.glob("schout_*.nc")):
-        if re.match(r"^schout_\d+\.nc$", f.name):
-            f.unlink(missing_ok=True)
-            deleted.append(f.name)
-    for f in sorted(outdir.glob("combine_*.done")):
-        f.unlink(missing_ok=True)
-        deleted.append(f.name)
-    mirror = outdir / "mirror.out"
-    if mirror.exists():
-        mirror.unlink(missing_ok=True)
-        deleted.append("mirror.out")
-    if deleted:
-        log(f"Cleaned {len(deleted)} stale file(s) from "
-            f"outputs/ before submission.")
-    else:
-        log("outputs/ is clean (no stale stacks or "
-            "mirror.out to remove).")
-
-
-def submit(script):
-    rc, out = sh(f"sbatch {script}")
-    if rc != 0:
-        log(f"ERROR: sbatch {script} failed:\n{out}")
-        sys.exit(1)
-    log(out)
-    return out.split()[-1]
-
-
-def mirror_time_step():
-    mo = Path(RUNDIR) / "outputs" / "mirror.out"
-    if not mo.exists():
-        return None
+def _mtime(p: Path) -> float:
     try:
-        lines = mo.read_text(errors="ignore").splitlines()
-    except Exception:
-        return None
-    for line in reversed(lines):
-        m = re.search(r"TIME STEP\s*=?\s*(\d+)", line)
-        if m:
-            return int(m.group(1))
-    return None
+        return p.stat().st_mtime
+    except OSError:
+        return float("-inf")
 
 
-def run_completed():
-    """Detect successful run completion."""
-    mo    = Path(RUNDIR) / "outputs" / "mirror.out"
-    myout = Path(RUNDIR) / "myout"
-
-    if mo.exists():
-        try:
-            lines = mo.read_text(
-                errors="ignore").splitlines()
-        except Exception:
-            lines = []
-        for line in reversed(lines[-25:]):
-            if "Run completed successfully" in line:
-                return True
-
-    hotstart_written = False
-    if mo.exists():
-        try:
-            content = mo.read_text(errors="ignore")
-            if "hot start written" in content:
-                hotstart_written = True
-        except Exception:
-            pass
-
-    ufs_ended = False
-    if myout.exists():
-        try:
-            content = myout.read_text(errors="ignore")
-            if "HAS ENDED" in content:
-                ufs_ended = True
-        except Exception:
-            pass
-
-    if hotstart_written and ufs_ended:
-        return True
-
-    return False
+def _fmt_mtime(p: Path) -> str:
+    t = _mtime(p)
+    if t == float("-inf"):
+        return "(missing)"
+    return datetime.fromtimestamp(t).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def job_exit_code(job_id: str) -> int:
-    rc, out = sh(
-        f"sacct -n -X -o ExitCode -j {job_id}")
-    if rc != 0 or not out.strip():
-        return -1
-    for token in out.strip().splitlines():
-        token = token.strip()
-        if token:
-            try:
-                return int(token.split(":")[0])
-            except ValueError:
-                return -1
-    return -1
+def check_fix_freshness(cfg: dict, mdir: Path,
+                        group_id: str) -> list:
+    pid  = cfg["project_id"]
+    fix  = mdir / "fix"
+    bind = mdir / "bin"
+    idir = mdir / f"I{pid}" / f"I{pid}_{group_id}"
+    rdir = mdir / f"R{pid}" / f"R{pid}_{group_id}"
+    exes = cfg.get("executables", {})
 
-
-def diagnose_failure(job_id: str) -> str:
-    fe = Path(RUNDIR) / "outputs" / "fatal.error"
-    if fe.exists():
-        txt = fe.read_text(errors="ignore").strip()
-        if txt:
-            return f"SCHISM fatal.error:\n{txt}"
-    err_log = Path(RUNDIR) / "err2.out"
-    if err_log.exists():
-        lines = err_log.read_text(
-            errors="ignore").splitlines()
-        diag = [l for l in lines
-                if any(k in l for k in (
-                    "forrtl:", "ABORT", "srun: error",
-                    "severe", "error (78)"))]
-        if diag:
-            return (f"Fortran/MPI error in err2.out:\n"
-                    + "\n".join(diag[:6]))
-    myout = Path(RUNDIR) / "myout"
-    if myout.exists():
-        for line in myout.read_text(
-                errors="ignore").splitlines():
-            if "ABORT" in line:
-                return f"ABORT in myout: {line.strip()}"
-    code = job_exit_code(job_id)
-    if code > 0:
-        return (f"Job {job_id} exited with non-zero "
-                f"code {code}.")
-    return ""
-
-
-# =============================================================================
-# New I/O diagnostic dispatch
-# =============================================================================
-
-_diag_submitted = set()
-
-
-def dispatch_diag_plots(run_finished: bool = False):
-    if not DIAG_ENABLED or not DIAG_SBATCH:
-        return
-    outdir = Path(RUNDIR) / "outputs"
-    stacks = sorted(
-        int(p.stem.split("_")[1])
-        for p in outdir.glob("out2d_*.nc")
-    )
-    if not stacks:
-        return
-    max_stack = max(stacks)
-    for n in stacks:
-        if n in _diag_submitted:
-            continue
-        if not ((n < max_stack) or run_finished):
-            continue
-        rc, out = sh(
-            f"sbatch --export=ALL,"
-            f"DIAG_MONTH={MONTH},DIAG_STACK={n} "
-            f"{DIAG_SBATCH}"
-        )
-        if rc == 0:
-            log(f"diag_run_plots: submitted stack {n} "
-                f"array 1-{DIAG_NVAR}  ({out})")
-            _diag_submitted.add(n)
-        else:
-            log(f"diag_run_plots: sbatch FAILED for "
-                f"stack {n}: {out}")
-
-
-# =============================================================================
-# End-of-month output combination (UFS-SCHISM old I/O)
-# =============================================================================
-
-def _clean_schout_partition_files():
-    """Delete per-rank schout partition files only."""
-    outdir         = Path(RUNDIR) / "outputs"
-    pat_schout     = re.compile(r"^schout_\d{6}_\d+\.nc$")
-    deleted_schout = freed_schout = 0
-
-    for f in sorted(outdir.glob("schout_??????_*.nc")):
-        if pat_schout.match(f.name):
-            try:
-                freed_schout += f.stat().st_size
-            except OSError:
-                pass
-            f.unlink(missing_ok=True)
-            deleted_schout += 1
-
-    if deleted_schout:
-        log(f"Deleted {deleted_schout} schout partition "
-            f"file(s) "
-            f"(~{freed_schout / 1e9:.1f} GB freed). "
-            f"local_to_global_* preserved for "
-            f"combine_hotstart.")
-
-
-def _clean_local_to_global_files():
-    """Delete local_to_global_* files.
-    Must be called AFTER combine_hotstart7.exe has finished.
-    """
-    outdir      = Path(RUNDIR) / "outputs"
-    deleted_l2g = freed_l2g = 0
-
-    for f in sorted(outdir.glob("local_to_global_*")):
-        try:
-            freed_l2g += f.stat().st_size
-        except OSError:
-            pass
-        f.unlink(missing_ok=True)
-        deleted_l2g += 1
-
-    if deleted_l2g:
-        log(f"Deleted {deleted_l2g} local_to_global "
-            f"file(s) "
-            f"(~{freed_l2g / 1e9:.1f} GB freed).")
-
-
-def combine_output_stacks():
-    if not COMBINE_OUTPUT_ENABLED:
-        return
-
-    outdir   = Path(RUNDIR) / "outputs"
-    sentinel = outdir / "combine_output.done"
-
-    if sentinel.exists():
-        log("combine_schout: already complete "
-            "(sentinel found). Skipping.")
-        _clean_schout_partition_files()
-        return
-
-    rank0_stacks = {
-        int(m.group(1))
-        for f in outdir.glob("schout_000000_*.nc")
-        for m in [re.match(
-            r"^schout_000000_(\d+)\.nc$", f.name)]
-        if m
+    checks = {
+        "param.nml": ("idir", "param.nml"),
+        "run_test":  ("rdir", "run_test"),
+        "run_comb":  ("rdir", "run_comb"),
     }
 
-    if not rank0_stacks:
-        log("combine_schout: no partition files found "
-            "to combine.")
-        _clean_schout_partition_files()
-        sentinel.touch()
-        return
-
-    begin        = min(rank0_stacks)
-    end          = max(rank0_stacks)
-    comb_jobname = "CO" + RUN_JOBNAME[1:]
-
-    log(f"combine_schout: combining "
-        f"{len(rank0_stacks)} stack(s) "
-        f"(stacks {begin} to {end}) "
-        f"with {COMBINE_OUTPUT_NRANKS} MPI ranks ...")
-
-    rc, out = sh(
-        f"sbatch --export=ALL,"
-        f"COMBINE_BEGIN={begin},COMBINE_END={end},"
-        f"COMBINE_JOBNAME={comb_jobname} "
-        f"{COMBINE_OUTPUT_SBATCH}"
-    )
-    if rc != 0:
-        log(f"ERROR: sbatch {COMBINE_OUTPUT_SBATCH} "
-            f"failed:\n{out}")
-        sys.exit(1)
-    log(f"Submitted combine_schout job: {out}")
-
-    while squeue_line_for(comb_jobname) is not None:
-        log(f"  combine_schout ({comb_jobname}): "
-            f"waiting for output stacks to be combined "
-            f"... (checking every "
-            f"{_COMBINE_POLL_SECONDS//60} min)")
-        time.sleep(_COMBINE_POLL_SECONDS)
-    time.sleep(10)
-
-    missing = [
-        f"schout_{i}.nc" for i in rank0_stacks
-        if not (outdir / f"schout_{i}.nc").exists()
-    ]
-    if missing:
-        log(f"ERROR: combine_schout finished but "
-            f"{len(missing)} file(s) missing:")
-        for m_name in missing[:10]:
-            log(f"  {m_name}")
-        sys.exit(1)
-
-    log(f"combine_schout: all {len(rank0_stacks)} "
-        f"stack(s) combined successfully.")
-    sentinel.touch()
-    _clean_schout_partition_files()
-
-
-# =============================================================================
-# Hotstart management
-# =============================================================================
-
-def _clean_partition_hotstarts():
-    outdir  = Path(RUNDIR) / "outputs"
-    pat     = re.compile(r"^hotstart_\d+_\d+\.nc$")
-    deleted = freed = 0
-    for f in sorted(outdir.glob("hotstart_*.nc")):
-        if f.name.startswith("hotstart_it="):
+    warnings = []
+    for fix_name, (dest_key, dest_name) in checks.items():
+        src = fix / fix_name
+        if not src.exists():
             continue
-        if pat.match(f.name):
-            try:
-                freed += f.stat().st_size
-            except OSError:
-                pass
-            f.unlink(missing_ok=True)
-            deleted += 1
-    if deleted:
-        log(f"Deleted {deleted} per-rank hotstart file(s) "
-            f"(~{freed / 1e9:.1f} GB freed); "
-            f"kept the combined hotstart.")
+        dest_dir = idir if dest_key == "idir" else rdir
+        dst      = dest_dir / dest_name
+        if not dst.exists():
+            continue
+        if _mtime(src) > _mtime(dst):
+            warnings.append(
+                f"  fix/{fix_name} ({_fmt_mtime(src)}) is NEWER "
+                f"than {dest_dir.name}/{dest_name} "
+                f"({_fmt_mtime(dst)})."
+            )
+
+    wwm_exe = exes.get("schism_wwm")
+    if wwm_exe:
+        src_exe = bind / wwm_exe
+        dst_exe = rdir / wwm_exe
+        if src_exe.exists() and dst_exe.exists():
+            if _mtime(src_exe) > _mtime(dst_exe):
+                warnings.append(
+                    f"  bin/{wwm_exe} ({_fmt_mtime(src_exe)}) is "
+                    f"NEWER than the copy in {rdir.name}/ "
+                    f"({_fmt_mtime(dst_exe)})."
+                )
+    return warnings
 
 
-def _partition_hotstarts_exist():
-    outdir = Path(RUNDIR) / "outputs"
-    pat    = re.compile(
-        rf"^hotstart_\d+_{NHOT_WRITE}\.nc$")
-    return any(
-        pat.match(f.name)
-        for f in outdir.glob(
-            f"hotstart_*_{NHOT_WRITE}.nc")
+# =============================================================================
+# Namelist helper
+# =============================================================================
+
+def _read_nml_int(nml_path: Path, param: str):
+    text = nml_path.read_text()
+    m = re.search(
+        r'^\s*' + re.escape(param) + r'\s*=\s*([^\s!]+)',
+        text, re.IGNORECASE | re.MULTILINE)
+    if not m:
+        return None
+    try:
+        return int(float(m.group(1)))
+    except ValueError:
+        return None
+
+
+# =============================================================================
+# Job-card helpers
+# =============================================================================
+
+def _set_sbatch_jobname(text: str, jobname: str) -> str:
+    return re.sub(
+        r'(#SBATCH\s+-J\s+)(\S+)', rf'\g<1>{jobname}', text)
+
+
+def _set_sbatch_workdir(text: str, workdir: str) -> str:
+    return re.sub(
+        r'(#SBATCH\s+-D\s+)(\S+)', rf'\g<1>{workdir}', text)
+
+
+def _set_combine_command(text: str, combine_exe: str,
+                         step: int) -> str:
+    configured_name = Path(combine_exe).name
+    possible_names  = {
+        "combine_hotstart7",
+        "combine_hotstart7.exe",
+        configured_name,
+    }
+    escaped = "|".join(
+        re.escape(n)
+        for n in sorted(possible_names, key=len, reverse=True)
+    )
+    pattern  = re.compile(
+        rf"(?:\S*/)?(?:{escaped})\s+-i\s+\d+")
+    new_text, n = pattern.subn(
+        f"./{configured_name} -i {step}", text)
+    if n == 0:
+        print("  WARNING: no combine_hotstart7 '-i' line found "
+              "in run_comb.")
+    return new_text
+
+
+# =============================================================================
+# Template renderers
+# =============================================================================
+
+def _render_auto_hotstart(run_dir: Path, subs: dict):
+    text = AUTO_HOTSTART_TEMPLATE.read_text()
+    for key, val in subs.items():
+        text = text.replace("{{" + key + "}}", str(val))
+    out = run_dir / "auto_hotstart.py"
+    out.write_text(text)
+    out.chmod(out.stat().st_mode | stat.S_IXUSR)
+
+
+# =============================================================================
+# Symlink helper
+# =============================================================================
+
+def _link(src: Path, dst: Path) -> bool:
+    if not src.exists():
+        return False
+    if dst.exists() or dst.is_symlink():
+        dst.unlink()
+    dst.symlink_to(src)
+    return True
+
+
+# =============================================================================
+# Per-group setup
+# =============================================================================
+
+def _setup_group(cfg: dict, mdir: Path, group_id: str,
+                 group_index: int, groups: list,
+                 next_group_id: str,
+                 is_last: bool, config_dir: Path) -> bool:
+    pid  = cfg["project_id"]
+    fix  = mdir / "fix"
+    bind = mdir / "bin"
+    idir = mdir / f"I{pid}" / f"I{pid}_{group_id}"
+    rdir = mdir / f"R{pid}" / f"R{pid}_{group_id}"
+
+    gstart, gend = group_date_range(cfg, group_id)
+    ndays        = get_group_ndays(cfg, group_id)
+
+    print(f"\n--- setup_run {group_id}  "
+          f"({gstart} -> {gend}, {ndays} days)  ({rdir}) ---")
+
+    if (rdir / "setup_run.done").exists():
+        print(f"  {group_id}: already set up, skipping.")
+        return True
+
+    if not idir.is_dir():
+        print(f"  ERROR {group_id}: input dir not found: {idir}")
+        return False
+
+    rdir.mkdir(parents=True, exist_ok=True)
+
+    # --- validate executables ---
+    exes        = cfg.get("executables", {})
+    schism_exe  = exes.get("schism_wwm")
+    combine_exe = exes.get("combine_hotstart")
+
+    if not schism_exe:
+        print("  ERROR: executables.schism_wwm must be set "
+              "in project.yaml")
+        return False
+    if not combine_exe:
+        print("  ERROR: executables.combine_hotstart must be set "
+              "in project.yaml")
+        return False
+
+    missing = []
+    for p in (fix / "run_test", fix / "run_comb",
+              bind / schism_exe, bind / combine_exe):
+        if not p.exists():
+            missing.append(str(p))
+    if missing:
+        print("  ERROR: required file(s) not found:")
+        for m in missing:
+            print(f"    {m}")
+        return False
+
+    # --- check preprocessing sentinels ---
+    def _check_sentinel(sentinel_path: Path,
+                        step: str) -> bool:
+        if not sentinel_path.exists():
+            print(f"  ERROR {group_id}: '{step}' has not "
+                  f"completed successfully.")
+            print(f"    Missing sentinel: {sentinel_path}")
+            print(f"    Re-run:  stofs-ak --run --only {step} "
+                  f"--config <cfg>")
+            return False
+        return True
+
+    if not _check_sentinel(
+            idir / "gen_3Dth.done", "gen_3Dth"):
+        return False
+    if not _check_sentinel(
+            idir / "gen_nudge.done", "gen_nudge"):
+        return False
+    if not _check_sentinel(
+            idir / "sflux" / "gen_sflux.done", "gen_sflux"):
+        return False
+    if not _check_sentinel(
+            idir / "gen_wwminput.done", "gen_wwminput"):
+        return False
+    if not (fix / "wwmbnd.gr3").exists():
+        print(f"  ERROR {group_id}: fix/wwmbnd.gr3 not found — "
+              f"run gen_wwmbnd first.")
+        return False
+    if not (fix / "hgrid_WWM.gr3").exists():
+        print(f"  ERROR {group_id}: fix/hgrid_WWM.gr3 not found.")
+        print("    Create it with:  "
+              "cp fix/hgrid.gr3 fix/hgrid_WWM.gr3")
+        return False
+    if group_index == 0:
+        if not _check_sentinel(
+                idir / "gen_hotstart.done",
+                "gen_hotstart"):
+            return False
+
+    # --- symlink static fix/ files ---
+    for name in FIX_LINKS:
+        if not _link(fix / name, rdir / name):
+            print(f"  NOTE: fix/{name} not found, skipped.")
+
+    # --- symlink per-group inputs ---
+    for name in INPUT_LINKS:
+        if not _link(idir / name, rdir / name):
+            print(f"  ERROR {group_id}: required input missing: "
+                  f"{idir / name}")
+            return False
+
+    # --- symlink sflux/ directory ---
+    if not _link(idir / "sflux", rdir / "sflux"):
+        print(f"  ERROR {group_id}: sflux dir missing: "
+              f"{idir / 'sflux'}")
+        return False
+
+    # --- SCHISM hotstart ---
+    # First group: symlink from I{ID}_{first}/hotstart.nc (cold start file)
+    # Non-first groups: hotstart.nc is chained at runtime by auto_hotstart.py
+    if group_index == 0:
+        if not _link(idir / "hotstart.nc",
+                     rdir / "hotstart.nc"):
+            print(f"  ERROR {group_id}: first-group "
+                  f"hotstart.nc missing.")
+            return False
+
+    # --- WWM hotfile pre-link ---
+    # First group: cold start, no hotfile needed (LHOTR=.false.)
+    # Non-first groups: link previous group's hotfile_out_WWM.nc
+    # as this group's hotfile_in_WWM.nc (FILEHOT_IN in &HOTFILE).
+    # This is pre-linked here so the run directory is self-contained
+    # even if auto_hotstart.py from the previous group did not run
+    # the chaining step yet. If the previous group has not finished,
+    # the file won't exist yet and auto_hotstart.py will link it
+    # at chain time instead.
+    if group_index > 0:
+        prev_group_id = groups[group_index - 1]
+        prev_rdir     = mdir / f"R{pid}" / f"R{pid}_{prev_group_id}"
+        prev_wwm_hot  = prev_rdir / "hotfile_out_WWM.nc"
+        this_wwm_in   = rdir / "hotfile_in_WWM.nc"
+        if prev_wwm_hot.exists():
+            if this_wwm_in.exists() or this_wwm_in.is_symlink():
+                this_wwm_in.unlink()
+            this_wwm_in.symlink_to(prev_wwm_hot)
+            print(f"  {group_id}: pre-linked WWM hotfile: "
+                  f"hotfile_in_WWM.nc -> "
+                  f"{prev_wwm_hot}")
+        else:
+            print(f"  {group_id}: NOTE: previous group's "
+                  f"hotfile_out_WWM.nc not yet available "
+                  f"({prev_wwm_hot}). "
+                  f"auto_hotstart.py will link it at "
+                  f"chain time.")
+
+    # --- copy SCHISM+WWM executable ---
+    shutil.copy2(bind / schism_exe, rdir / schism_exe)
+
+    # --- outputs/ + placeholders + combine exe ---
+    outdir = rdir / "outputs"
+    outdir.mkdir(exist_ok=True)
+    for name in OUTPUT_PLACEHOLDERS:
+        f = outdir / name
+        if not f.exists():
+            f.touch()
+    shutil.copy2(bind / combine_exe, outdir / combine_exe)
+
+    # --- nhot_write from param.nml ---
+    nhot_write = _read_nml_int(idir / "param.nml", "nhot_write")
+    if nhot_write is None:
+        print(f"  ERROR {group_id}: could not read nhot_write "
+              f"from param.nml")
+        return False
+
+    # --- adapt run_test ---
+    run_jobname = f"R{pid}_{group_index + 1:02d}"
+    run_test    = _set_sbatch_jobname(
+        (fix / "run_test").read_text(), run_jobname)
+    run_test    = _set_sbatch_workdir(run_test, ".")
+    (rdir / "run_test").write_text(run_test)
+
+    # --- adapt run_comb ---
+    comb_jobname = f"C{pid}_{group_index + 1:02d}"
+    run_comb     = _set_sbatch_jobname(
+        (fix / "run_comb").read_text(), comb_jobname)
+    run_comb     = _set_sbatch_workdir(run_comb, "./outputs")
+    run_comb     = _set_combine_command(
+        run_comb, combine_exe, nhot_write)
+    (rdir / "run_comb").write_text(run_comb)
+
+    # --- render auto_hotstart.py ---
+    next_rdir = (
+        mdir / f"R{pid}" / f"R{pid}_{next_group_id}"
+        if next_group_id else None
+    )
+    _render_auto_hotstart(rdir, {
+        "RUNDIR":                 str(rdir),
+        "NEXT_RUNDIR":            (f'r"{next_rdir}"'
+                                   if next_rdir else "None"),
+        "CHAIN_HOTSTART":         bool(cfg.get(
+                                       "chain_hotstart", True)),
+        "IS_LAST_MONTH":          bool(is_last),
+        "NHOT_WRITE":             nhot_write,
+        "MONTH":                  group_id,
+        "RUN_JOBNAME":            run_jobname,
+        "DIAG_ENABLED":           False,
+        "DIAG_SBATCH":            "",
+        "DIAG_VARS_MANIFEST":     "",
+        "DIAG_NVAR":              0,
+        "COMBINE_DIAG_ENABLED":   False,
+        "COMBINE_DIAG_SBATCH":    "",
+        "COMBINE_DIAG_NRANKS":    0,
+        "COMBINE_OUTPUT_ENABLED": False,
+        "COMBINE_OUTPUT_EXE":     "",
+        "COMBINE_OUTPUT_NRANKS":  0,
+        "COMBINE_OUTPUT_SBATCH":  "",
+    })
+
+    (rdir / "setup_run.done").touch()
+    print(f"  {group_id}: run directory ready  "
+          f"(job {run_jobname}, nhot_write={nhot_write}).")
+    return True
+
+
+# =============================================================================
+# Entry point
+# =============================================================================
+
+def run_setup_run(cfg: dict, config_dir=None):
+    from pathlib import Path as _Path
+    pid        = cfg["project_id"]
+    mdir       = model_dir(cfg)
+    groups     = list_groups(cfg)
+    grouping   = cfg.get("grouping", "monthly")
+    config_dir = (
+        _Path(config_dir)
+        if config_dir is not None else _Path(".")
     )
 
+    print(f"\n{'='*60}")
+    print(f"  setup_run (SCHISM+WWM) for M{pid}")
+    print(f"  Grouping  : {grouping}"
+          + (f"  (group_ndays={cfg['group_ndays']})"
+             if grouping == "ndays" else ""))
+    print(f"  {len(groups)} group(s): "
+          f"{groups[0]} -> {groups[-1]}")
+    print(f"  chain_hotstart: "
+          f"{bool(cfg.get('chain_hotstart', True))}")
+    print(f"{'='*60}")
 
-def combine_and_chain():
-    combined = (Path(RUNDIR) / "outputs"
-                / f"hotstart_it={NHOT_WRITE}.nc")
+    # Freshness summary
+    all_stale = []
+    for group_id in groups:
+        for w in check_fix_freshness(cfg, mdir, group_id):
+            all_stale.append(f"  [{group_id}] {w.strip()}")
+    if all_stale:
+        print(f"\n  {'!'*58}")
+        print("  WARNING: one or more files in fix/ are NEWER "
+              "than their derived counterparts.")
+        for w in all_stale:
+            print(w)
+        print(f"  {'!'*58}\n")
 
-    if not combined.exists():
-        comb_jobname = "C" + RUN_JOBNAME[1:]
-        log(f"Submitting combine_hotstart to build "
-            f"{combined.name} ...")
-        submit("run_comb")
-        while squeue_line_for(comb_jobname) is not None:
-            log(f"  combine_hotstart ({comb_jobname}): "
-                f"waiting for hotstart_it={NHOT_WRITE}.nc "
-                f"... (checking every "
-                f"{_COMBINE_POLL_SECONDS//60} min)")
-            time.sleep(_COMBINE_POLL_SECONDS)
-        time.sleep(10)
-        if not combined.exists():
-            log(f"ERROR: combine_hotstart finished but "
-                f"{combined} was not created.")
-            sys.exit(1)
+    failed = []
+    for i, group_id in enumerate(groups):
+        next_group_id = (groups[i + 1]
+                         if i + 1 < len(groups) else None)
+        is_last       = (i + 1 == len(groups))
+        if not _setup_group(cfg, mdir, group_id, i,
+                            groups,
+                            next_group_id, is_last,
+                            config_dir):
+            failed.append(group_id)
+
+    print(f"\n{'='*60}")
+    if not failed:
+        print("  setup_run complete. No failures.")
     else:
-        log(f"{combined.name} already exists; "
-            f"skipping combine_hotstart.")
-
-    log(f"End-of-group hotstart ready: {combined}")
-    _clean_partition_hotstarts()
-
-    # Now safe to delete local_to_global_* —
-    # combine_hotstart7.exe has finished.
-    _clean_local_to_global_files()
-
-    if IS_LAST_MONTH:
-        log("This is the last group; no chaining.")
-    elif not CHAIN_HOTSTART:
-        log("chain_hotstart=false; not launching "
-            "the next group.")
-    elif NEXT_RUNDIR is None:
-        log("No next run directory configured; "
-            "not chaining.")
-    else:
-        # ----------------------------------------------------------------
-        # Chain SCHISM hotstart
-        # ----------------------------------------------------------------
-        next_hot = Path(NEXT_RUNDIR) / "hotstart.nc"
-        if next_hot.exists() or next_hot.is_symlink():
-            next_hot.unlink()
-        next_hot.symlink_to(combined)
-        log(f"Symlinked SCHISM hotstart: "
-            f"{next_hot} -> {combined}")
-
-        # ----------------------------------------------------------------
-        # Chain WWM hotfile
-        # WWM writes: hotfile_out_WWM.nc  (FILEHOT_OUT in &HOTFILE)
-        # WWM reads:  hotfile_in_WWM.nc   (FILEHOT_IN  in &HOTFILE)
-        # The previous group's OUTPUT becomes the next group's INPUT.
-        # ----------------------------------------------------------------
-        wwm_src = Path(RUNDIR) / "hotfile_out_WWM.nc"
-        wwm_dst = Path(NEXT_RUNDIR) / "hotfile_in_WWM.nc"
-        if wwm_src.exists():
-            if wwm_dst.exists() or wwm_dst.is_symlink():
-                wwm_dst.unlink()
-            wwm_dst.symlink_to(wwm_src)
-            log(f"Symlinked WWM hotfile: "
-                f"{wwm_dst.name} -> {wwm_src}")
-        else:
-            log(f"WARNING: WWM hotfile not found at "
-                f"{wwm_src}. Next group will abort on "
-                f"startup because LHOTR=.true. in "
-                f"wwminput.nml. Fix: ensure hotfile_out_WWM.nc "
-                f"was written by the current group and "
-                f"re-run combine_and_chain.")
-
-    (Path(RUNDIR) / "run.done").touch()
-    log(f"Wrote sentinel: "
-        f"{Path(RUNDIR) / 'run.done'}")
-
-    if ((not IS_LAST_MONTH)
-            and CHAIN_HOTSTART
-            and NEXT_RUNDIR is not None):
-        next_script = (Path(NEXT_RUNDIR)
-                       / "auto_hotstart.py")
-        if not next_script.exists():
-            log(f"ERROR: {next_script} not found; "
-                f"run setup_run for the next group.")
-            sys.exit(1)
-        log(f"Launching next group: {next_script}")
-        r = subprocess.run(
-            [sys.executable, str(next_script)],
-            cwd=str(NEXT_RUNDIR))
-        if r.returncode != 0:
-            log(f"ERROR: next group ({NEXT_RUNDIR}) "
-                f"failed (exit {r.returncode}).")
-            sys.exit(r.returncode)
-
-
-# =============================================================================
-# Main
-# =============================================================================
-
-def main():
-    os.chdir(RUNDIR)
-    log(f"=== auto_hotstart for {MONTH}  "
-        f"({RUNDIR}) ===")
-    log(f"run job name: {RUN_JOBNAME}   "
-        f"combine step: {NHOT_WRITE}")
-
-    if (Path(RUNDIR) / "run.done").exists():
-        log("run.done already present; nothing to do.")
-        return
-
-    if not (Path(RUNDIR) / "hotstart.nc").exists():
-        log("ERROR: hotstart.nc not found in run "
-            "directory.")
+        print(f"  setup_run finished with "
+              f"{len(failed)} failure(s):")
+        for g in failed:
+            print(f"    {g}")
+    print(f"{'='*60}\n")
+    if failed:
         sys.exit(1)
-
-    combined = (Path(RUNDIR) / "outputs"
-                / f"hotstart_it={NHOT_WRITE}.nc")
-    if (run_completed()
-            and (combined.exists()
-                 or _partition_hotstarts_exist())):
-        log("Run already complete; proceeding to "
-            "combine outputs and chain.")
-        dispatch_diag_plots(run_finished=True)
-        combine_output_stacks()
-        combine_and_chain()
-        log(f"=== auto_hotstart for {MONTH} done ===")
-        return
-
-    _clean_outputs()
-    job_id         = submit("run_test")
-    previous_step  = -1
-    poll_iter      = 0
-    resubmit_count = 0
-
-    while not run_completed():
-        _poll_sleep(poll_iter)
-        poll_iter += 1
-        print(
-            f"\n{'%'*72}\n"
-            f"  {datetime.now():%Y-%m-%d %H:%M:%S}  "
-            f"(poll #{poll_iter})\n"
-            f"{'%'*72}")
-        status = squeue_line_for(RUN_JOBNAME)
-        _, full = sh(QUEUE_CMD)
-        print(full)
-
-        dispatch_diag_plots(run_finished=False)
-
-        if status is not None:
-            m = re.search(r"\b\d+\b", status)
-            job_id = m.group() if m else job_id
-            if re.search(
-                    rf"{re.escape(RUN_JOBNAME)}"
-                    rf"\s+\S+\s+R",
-                    status):
-                if poll_iter >= 4:
-                    step = mirror_time_step()
-                    if step is None:
-                        log(f"{RUN_JOBNAME}: running "
-                            f"but mirror.out has no "
-                            f"TIME STEP yet.")
-                    elif step == previous_step:
-                        log(f"{RUN_JOBNAME}: HANG "
-                            f"detected at TIME STEP "
-                            f"{step}; cancelling.")
-                        sh(f"scancel {job_id}")
-                    else:
-                        log(f"{RUN_JOBNAME}: advancing,"
-                            f" TIME STEP {step}.")
-                        previous_step = step
-                else:
-                    log(f"{RUN_JOBNAME}: running "
-                        f"(job {job_id}), early poll "
-                        f"— skipping hang check.")
-            else:
-                log(f"{RUN_JOBNAME}: queued "
-                    f"(job {job_id}), waiting ...")
-        else:
-            if run_completed():
-                break
-
-            log(f"{RUN_JOBNAME}: not in queue — "
-                f"waiting up to "
-                f"{_GRACE_CHECKS * _GRACE_SLEEP}s "
-                f"for mirror.out to flush ...")
-            for _grace in range(_GRACE_CHECKS):
-                time.sleep(_GRACE_SLEEP)
-                if run_completed():
-                    log(f"{RUN_JOBNAME}: run completed "
-                        f"successfully (detected after "
-                        f"{(_grace+1)*_GRACE_SLEEP}s "
-                        f"grace period).")
-                    break
-            else:
-                diag = diagnose_failure(
-                    job_id if job_id != "?" else "0")
-                exit_code = job_exit_code(
-                    job_id if job_id != "?" else "0")
-
-                if diag:
-                    log("ERROR: SCHISM run failed with "
-                        "a non-recoverable error.")
-                    log("Do NOT resubmit until the "
-                        "problem is fixed.")
-                    log("Details:")
-                    for line in diag.splitlines()[:12]:
-                        log(f"  {line}")
-                    log(f"SLURM output log: "
-                        f"{Path(RUNDIR) / 'myout'}")
-                    log(f"SLURM error log:  "
-                        f"{Path(RUNDIR) / 'err2.out'}")
-                    log(f"SCHISM abort:     "
-                        f"{Path(RUNDIR) / 'outputs' / 'fatal.error'}")
-                    log("Fix the input, then re-run:")
-                    log("  stofs-ak --run --phase run "
-                        "--only submit_run --config <cfg>")
-                    sys.exit(1)
-
-                if exit_code > 0:
-                    log(f"WARNING: job {job_id} exited "
-                        f"with code {exit_code}.")
-                    resubmit_count += 1
-                    if resubmit_count > _MAX_RESUBMITS:
-                        log(f"ERROR: max resubmit limit "
-                            f"reached. Exiting.")
-                        sys.exit(1)
-                    log(f"Resubmitting "
-                        f"(attempt "
-                        f"{resubmit_count}/"
-                        f"{_MAX_RESUBMITS}).")
-                    previous_step = -1
-                    _clean_outputs()
-                    submit("run_test")
-                    continue
-
-                previous_step   = -1
-                resubmit_count += 1
-                if resubmit_count > _MAX_RESUBMITS:
-                    log(f"ERROR: max resubmit limit "
-                        f"reached. Exiting.")
-                    sys.exit(1)
-                log(f"{RUN_JOBNAME}: not in queue and "
-                    f"run incomplete after grace period "
-                    f"— resubmitting "
-                    f"(attempt {resubmit_count}/"
-                    f"{_MAX_RESUBMITS}).")
-                _clean_outputs()
-                submit("run_test")
-
-            if run_completed():
-                break
-
-    log(f"{RUN_JOBNAME}: run completed successfully.")
-    dispatch_diag_plots(run_finished=True)
-    combine_output_stacks()
-    combine_and_chain()
-    log(f"=== auto_hotstart for {MONTH} done ===")
-
-
-if __name__ == "__main__":
-    main()

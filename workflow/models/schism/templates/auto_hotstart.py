@@ -12,7 +12,7 @@ Behaviour (ihot=1, single end-of-month hotstart):
        - submit run_comb (combine_hotstart7) and wait
        - delete per-rank hotstart files
        - symlink combined SCHISM hotstart into next group's run directory
-       - symlink WWM hotfile (hotfile_out_WWM.nc) into next group's run directory
+       - symlink WWM hotfile_out_WWM.nc -> next group's hotfile_in_WWM.nc
        - launch next group's auto_hotstart.py (if chain_hotstart=True)
        - write run.done sentinel
 
@@ -21,7 +21,7 @@ Key fixes
 * local_to_global_* deleted AFTER combine_hotstart7 (not before)
 * Combine poll interval: 5 minutes (not 60 seconds)
 * Waiting messages distinguish combine_schout from combine_hotstart
-* WWM hotfile (hotfile_out_WWM.nc) is now chained alongside SCHISM hotstart
+* WWM hotfile chaining: hotfile_out_WWM.nc -> next group's hotfile_in_WWM.nc
 """
 
 import os
@@ -479,25 +479,26 @@ def combine_and_chain():
             f"{next_hot} -> {combined}")
 
         # ----------------------------------------------------------------
-        # Chain WWM hotfile (hotfile_out_WWM.nc)
-        # SCHISM+WWM writes hotfile_out_WWM.nc in the run directory
-        # (not inside outputs/).  The next group's wwminput.nml has
-        # LHOTR=.true. and expects this file to be present at startup.
+        # Chain WWM hotfile
+        # WWM writes: hotfile_out_WWM.nc  (FILEHOT_OUT in &HOTFILE)
+        # WWM reads:  hotfile_in_WWM.nc   (FILEHOT_IN  in &HOTFILE)
+        # The previous group's OUTPUT becomes the next group's INPUT.
         # ----------------------------------------------------------------
         wwm_src = Path(RUNDIR) / "hotfile_out_WWM.nc"
+        wwm_dst = Path(NEXT_RUNDIR) / "hotfile_in_WWM.nc"
         if wwm_src.exists():
-            wwm_dst = Path(NEXT_RUNDIR) / "hotfile_out_WWM.nc"
             if wwm_dst.exists() or wwm_dst.is_symlink():
                 wwm_dst.unlink()
             wwm_dst.symlink_to(wwm_src)
             log(f"Symlinked WWM hotfile: "
-                f"{wwm_dst} -> {wwm_src}")
+                f"{wwm_dst.name} -> {wwm_src}")
         else:
             log(f"WARNING: WWM hotfile not found at "
-                f"{wwm_src}. Next group will attempt a "
-                f"WWM cold start (LHOTR will need to be "
-                f"false in wwminput.nml or the run will "
-                f"abort).")
+                f"{wwm_src}. Next group will abort on "
+                f"startup because LHOTR=.true. in "
+                f"wwminput.nml. Fix: ensure hotfile_out_WWM.nc "
+                f"was written by the current group and "
+                f"re-run combine_and_chain.")
 
     (Path(RUNDIR) / "run.done").touch()
     log(f"Wrote sentinel: "

@@ -1,29 +1,25 @@
 """
 core/environment.py
 ====================
-Shared environment plumbing for the workflow. Two responsibilities:
+Shared environment plumbing for the workflow.
 
-1. Conda environment management (`setup_envs`, invoked via
-   `stofs-ak --setup-envs`). Creates/verifies the conda envs the workflow
-   needs:
-     * swf_main : orchestrator + NCO/CDO + downloads + TPXO (bctides)
-                  + ocstrack (Argo collocation, DTN download_argo step)
-     * swf_plot : plotting (matplotlib/cartopy) + mesh diagnostics
+swf_main provides everything needed for --phase all from a single
+conda environment without switching:
+  - NCO/CDO:     data processing tools
+  - cdsapi:      ERA5/GloFAS downloads
+  - netcdf4/xarray/scipy: scientific computing
+  - ocstrack:    Argo float collocation (DTN + interactive)
+  - matplotlib/pandas: station skill plots + data manipulation
 
-2. Runtime environment guards shared by the downloaders and preprocessors:
-     * check_dtn            -- refuse to run internet steps off the DTN
-     * check_cdsapi         -- verify cdsapi + ~/.cdsapirc for CDS/EWDS
-     * check_active_env     -- warn (soft) if the wrong conda env is active
-     * check_required_tools -- ensure NCO/CDO binaries are on PATH
-     * env_python           -- full path to a step's conda interpreter
+swf_plot adds:
+  - cartopy:     geographic map projections (SLURM plot jobs)
+  - imageio:     GIF assembly (SLURM plot jobs)
+  - mpi4py:      MPI parallel frame generation (SLURM plot jobs)
+  - gsw/dask:    Argo profile analysis (SLURM collocate jobs)
 
 check_dtn() raises DtnRequiredError instead of sys.exit(1) so that
-drivers can catch it and skip the step gracefully when running
---phase all on a login node with all steps.yaml flags set to true.
-
-ocstrack is installed in swf_main (not just swf_plot) so that
-download_argo and collocate_argo work from the same DTN session
-without requiring a conda environment switch.
+drivers can catch it and skip gracefully when running --phase all
+on a login node with all steps.yaml flags set to true.
 """
 
 import os
@@ -42,29 +38,16 @@ DTN_HOSTNAME_HINT = "dtn"
 # =============================================================================
 
 class DtnRequiredError(RuntimeError):
-    """Raised when a DTN-only step is attempted on a non-DTN node.
-
-    Drivers catch this and print a [N/A] message instead of crashing,
-    allowing --phase all to proceed past DTN-only steps when running
-    on a login node.
-    """
+    """Raised when a DTN-only step is attempted on a non-DTN node."""
     pass
 
 
 # =============================================================================
-# Runtime environment guards (shared by downloaders + preprocessors)
+# Runtime environment guards
 # =============================================================================
 
 def check_dtn(what: str = "This step"):
-    """Raise DtnRequiredError on a non-DTN host unless ALLOW_NON_DTN=1.
-
-    `what` is used only for the error message (e.g. 'HYCOM download').
-
-    Raises
-    ------
-    DtnRequiredError
-        When the current host is not a DTN and ALLOW_NON_DTN is not set.
-    """
+    """Raise DtnRequiredError on a non-DTN host unless ALLOW_NON_DTN=1."""
     hostname = socket.gethostname()
     if DTN_HOSTNAME_HINT in hostname.lower():
         print(f"  Host check: '{hostname}' (DTN). OK.")
@@ -102,9 +85,7 @@ def check_cdsapi(
 
 
 def check_active_env(cfg: dict, step: str):
-    """Soft-warn if the active conda env doesn't match the one
-    configured for `step` in envs.yaml. Never exits; guard rail only.
-    """
+    """Soft-warn if the active conda env doesn't match envs.yaml."""
     expected = cfg.get("conda_envs", {}).get(step)
     if not expected:
         return
@@ -121,9 +102,7 @@ def check_active_env(cfg: dict, step: str):
 
 
 def check_required_tools(tools, provider: str = "NCO/CDO"):
-    """Ensure a list of CLI tools is on PATH; exit with guidance if
-    not.
-    """
+    """Ensure a list of CLI tools is on PATH."""
     missing = [t for t in tools if shutil.which(t) is None]
     if missing:
         print("ERROR: required command-line tools not found "
@@ -137,9 +116,7 @@ def check_required_tools(tools, provider: str = "NCO/CDO"):
 
 def env_python(cfg: dict, step: str,
                default: str = "swf_main") -> str:
-    """Full path to the Python interpreter of the conda env
-    configured for `step` in envs.yaml.
-    """
+    """Full path to the Python interpreter for a step's conda env."""
     conda_base = Path(cfg["conda_base"])
     env = cfg.get("conda_envs", {}).get(step, default)
     if env == "base":
@@ -153,19 +130,23 @@ def env_python(cfg: dict, step: str,
 
 ENV_SPECS = {
     "swf_main": {
+        # Core scientific stack + everything needed for interactive
+        # postprocess steps (station_skill, collocate_argo, etc.)
+        # so --phase all works from a single environment.
         "conda_packages": [
             "python=3.11", "pyyaml", "python-dateutil",
-            "nco", "cdo", "cdsapi", "netcdf4", "xarray",
-            "scipy",
+            "nco", "cdo",
+            "cdsapi", "netcdf4", "xarray", "scipy",
+            "matplotlib", "pandas",
         ],
-        # ocstrack is pip-only (not on conda-forge).
-        # Installed in swf_main so that download_argo and
-        # collocate_argo work from the DTN session without
-        # requiring a conda environment switch.
+        # ocstrack: Argo float collocation (download_argo,
+        # collocate_argo). pip-only, no conda-forge package.
         "pip_packages": ["ocstrack"],
         "verify_imports": [
             "yaml", "dateutil", "cdsapi", "netCDF4",
-            "xarray", "scipy", "ocstrack",
+            "xarray", "scipy",
+            "matplotlib", "pandas",
+            "ocstrack",
         ],
         "verify_tools": [
             "ncks", "ncpdq", "ncap2", "ncrename",
@@ -173,20 +154,23 @@ ENV_SPECS = {
         ],
     },
     "swf_plot": {
+        # Full plotting stack for SLURM jobs that render frames
+        # and assemble GIFs. Adds cartopy, imageio, mpi4py, gsw,
+        # dask on top of what swf_main provides.
         "conda_packages": [
-            "python=3.11", "xarray", "matplotlib", "cartopy",
-            "imageio", "netcdf4", "h5netcdf", "pandas",
-            "numpy", "pyyaml", "python-dateutil", "mpi4py",
+            "python=3.11", "xarray", "matplotlib",
+            "cartopy", "imageio", "netcdf4", "h5netcdf",
+            "pandas", "numpy", "pyyaml",
+            "python-dateutil", "mpi4py",
             "gsw", "tqdm", "requests", "dask", "scipy",
         ],
-        # ocstrack also installed in swf_plot for SLURM jobs
-        # that use the swf_plot interpreter (collocate_argo
-        # Stage 1 array tasks, plot_argo).
+        # ocstrack also in swf_plot for SLURM collocate jobs
+        # that use the swf_plot interpreter.
         "pip_packages": ["ocstrack"],
         "verify_imports": [
             "xarray", "matplotlib", "cartopy", "imageio",
-            "netCDF4", "pandas", "numpy", "yaml", "dateutil",
-            "mpi4py", "gsw", "ocstrack",
+            "netCDF4", "pandas", "numpy", "yaml",
+            "dateutil", "mpi4py", "gsw", "ocstrack",
         ],
         "verify_tools": [],
     },
@@ -194,12 +178,11 @@ ENV_SPECS = {
 
 
 def conda_exe(cfg: dict) -> Path:
-    """Path to the conda executable inside conda_base."""
     return Path(cfg["conda_base"]) / "bin" / "conda"
 
 
-def _env_python_by_name(cfg: dict, env_name: str) -> Path:
-    """Interpreter path for a conda env *by name*."""
+def _env_python_by_name(cfg: dict,
+                         env_name: str) -> Path:
     if env_name == "base":
         return Path(cfg["conda_base"]) / "bin" / "python"
     return (Path(cfg["conda_base"]) / "envs"
@@ -207,7 +190,6 @@ def _env_python_by_name(cfg: dict, env_name: str) -> Path:
 
 
 def existing_envs(conda: Path):
-    """Return the set of existing conda env names."""
     result = subprocess.run(
         [str(conda), "env", "list"],
         capture_output=True, text=True)
@@ -239,8 +221,8 @@ def create_env(conda: Path, name: str, packages):
     return True
 
 
-def pip_install(cfg: dict, name: str, packages) -> bool:
-    """pip-install packages into an existing conda env."""
+def pip_install(cfg: dict, name: str,
+                packages) -> bool:
     if not packages:
         return True
     py = _env_python_by_name(cfg, name)
@@ -255,14 +237,14 @@ def pip_install(cfg: dict, name: str, packages) -> bool:
     print("  CMD:", " ".join(cmd))
     result = subprocess.run(cmd)
     if result.returncode != 0:
-        print(f"  ERROR: pip install into '{name}' failed "
-              f"for: {packages}")
+        print(f"  ERROR: pip install into '{name}' "
+              f"failed for: {packages}")
         return False
     return True
 
 
-def verify_env(cfg: dict, name: str, spec: dict) -> bool:
-    """Verify required imports and CLI tools inside an existing env."""
+def verify_env(cfg: dict, name: str,
+               spec: dict) -> bool:
     ok = True
     py = _env_python_by_name(cfg, name)
     if not py.exists():
@@ -284,8 +266,8 @@ def verify_env(cfg: dict, name: str, spec: dict) -> bool:
             ok = False
             print(f"  [{name}] MISSING python packages:")
             lines = result.stderr.strip().splitlines()
-            print("    " + (lines[-1] if lines else
-                             "(no details)"))
+            print("    " + (lines[-1] if lines
+                             else "(no details)"))
 
     tools   = spec.get("verify_tools", [])
     env_bin = py.parent
@@ -314,9 +296,11 @@ def setup_envs(cfg: dict):
         sys.exit(1)
 
     referenced = set(cfg.get("conda_envs", {}).values())
-    targets    = [e for e in referenced if e in ENV_SPECS]
+    targets    = [e for e in referenced
+                  if e in ENV_SPECS]
     unknown    = [e for e in referenced
-                  if e not in ENV_SPECS and e != "base"]
+                  if e not in ENV_SPECS
+                  and e != "base"]
 
     print(f"\n{'='*60}")
     print(f"  Conda environment setup")

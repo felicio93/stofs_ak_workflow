@@ -8,9 +8,7 @@ Extends standalone SCHISM setup_run with WWM-specific additions:
   - Symlinks wwminput.nml from I{ID}_{group_id}/
   - Uses executables.schism_wwm instead of executables.schism
   - Checks gen_wwminput sentinel
-
-Works for all grouping modes (monthly, ndays/weekly/daily).
-Group IDs are either YYYYMM (monthly) or YYYYMMDD (ndays).
+  - Pre-links hotfile_in_WWM.nc for non-first groups
 
 Sentinel: R{ID}_{group_id}/setup_run.done
 """
@@ -35,27 +33,20 @@ SCHISM_TEMPLATE_DIR = (
     / "schism" / "templates"
 )
 AUTO_HOTSTART_TEMPLATE = SCHISM_TEMPLATE_DIR / "auto_hotstart.py"
-DIAG_SBATCH_TEMPLATE   = (
-    SCHISM_TEMPLATE_DIR / "slurm" / "diag_run.sbatch"
-)
 
-# Static files symlinked from fix/
 FIX_LINKS = [
     "hgrid.gr3", "hgrid.ll", "vgrid.in", "partition.prop", "tvd.prop",
     "albedo.gr3", "diffmin.gr3", "diffmax.gr3", "watertype.gr3",
     "shapiro.gr3", "windrot_geo2proj.gr3", "rough.gr3",
     "estuary.gr3", "TEM_nudge.gr3", "SAL_nudge.gr3", "station.in",
-    # WWM-specific fix/ files
     "wwmbnd.gr3",
     "hgrid_WWM.gr3",
 ]
 
-# Per-group inputs symlinked from I{ID}_{group_id}/
 INPUT_LINKS = [
     "bctides.in", "param.nml", "source.nc",
     "TEM_3D.th.nc", "SAL_3D.th.nc", "elev2D.th.nc", "uv3D.th.nc",
     "TEM_nu.nc", "SAL_nu.nc",
-    # WWM-specific per-group input
     "wwminput.nml",
 ]
 
@@ -64,55 +55,44 @@ OUTPUT_PLACEHOLDERS = (
 )
 
 
-# =============================================================================
-# Freshness helpers
-# =============================================================================
-
-def _mtime(p: Path) -> float:
+def _mtime(p):
     try:
         return p.stat().st_mtime
     except OSError:
         return float("-inf")
 
 
-def _fmt_mtime(p: Path) -> str:
+def _fmt_mtime(p):
     t = _mtime(p)
     if t == float("-inf"):
         return "(missing)"
     return datetime.fromtimestamp(t).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def check_fix_freshness(cfg: dict, mdir: Path,
-                        group_id: str) -> list:
+def check_fix_freshness(cfg, mdir, group_id):
     pid  = cfg["project_id"]
     fix  = mdir / "fix"
     bind = mdir / "bin"
     idir = mdir / f"I{pid}" / f"I{pid}_{group_id}"
     rdir = mdir / f"R{pid}" / f"R{pid}_{group_id}"
     exes = cfg.get("executables", {})
-
-    checks = {
-        "param.nml": ("idir", "param.nml"),
-        "run_test":  ("rdir", "run_test"),
-        "run_comb":  ("rdir", "run_comb"),
-    }
-
     warnings = []
-    for fix_name, (dest_key, dest_name) in checks.items():
+    for fix_name, dest_key, dest_name in [
+        ("param.nml", "idir", "param.nml"),
+        ("run_test",  "rdir", "run_test"),
+        ("run_comb",  "rdir", "run_comb"),
+    ]:
         src = fix / fix_name
         if not src.exists():
             continue
         dest_dir = idir if dest_key == "idir" else rdir
-        dst      = dest_dir / dest_name
+        dst = dest_dir / dest_name
         if not dst.exists():
             continue
         if _mtime(src) > _mtime(dst):
             warnings.append(
                 f"  fix/{fix_name} ({_fmt_mtime(src)}) is NEWER "
-                f"than {dest_dir.name}/{dest_name} "
-                f"({_fmt_mtime(dst)})."
-            )
-
+                f"than {dest_dir.name}/{dest_name} ({_fmt_mtime(dst)}).")
     wwm_exe = exes.get("schism_wwm")
     if wwm_exe:
         src_exe = bind / wwm_exe
@@ -120,18 +100,12 @@ def check_fix_freshness(cfg: dict, mdir: Path,
         if src_exe.exists() and dst_exe.exists():
             if _mtime(src_exe) > _mtime(dst_exe):
                 warnings.append(
-                    f"  bin/{wwm_exe} ({_fmt_mtime(src_exe)}) is "
-                    f"NEWER than the copy in {rdir.name}/ "
-                    f"({_fmt_mtime(dst_exe)})."
-                )
+                    f"  bin/{wwm_exe} ({_fmt_mtime(src_exe)}) is NEWER "
+                    f"than the copy in {rdir.name}/ ({_fmt_mtime(dst_exe)}).")
     return warnings
 
 
-# =============================================================================
-# Namelist helper
-# =============================================================================
-
-def _read_nml_int(nml_path: Path, param: str):
+def _read_nml_int(nml_path, param):
     text = nml_path.read_text()
     m = re.search(
         r'^\s*' + re.escape(param) + r'\s*=\s*([^\s!]+)',
@@ -144,33 +118,24 @@ def _read_nml_int(nml_path: Path, param: str):
         return None
 
 
-# =============================================================================
-# Job-card helpers
-# =============================================================================
-
-def _set_sbatch_jobname(text: str, jobname: str) -> str:
+def _set_sbatch_jobname(text, jobname):
     return re.sub(
         r'(#SBATCH\s+-J\s+)(\S+)', rf'\g<1>{jobname}', text)
 
 
-def _set_sbatch_workdir(text: str, workdir: str) -> str:
+def _set_sbatch_workdir(text, workdir):
     return re.sub(
         r'(#SBATCH\s+-D\s+)(\S+)', rf'\g<1>{workdir}', text)
 
 
-def _set_combine_command(text: str, combine_exe: str,
-                         step: int) -> str:
+def _set_combine_command(text, combine_exe, step):
     configured_name = Path(combine_exe).name
     possible_names  = {
-        "combine_hotstart7",
-        "combine_hotstart7.exe",
-        configured_name,
-    }
+        "combine_hotstart7", "combine_hotstart7.exe", configured_name}
     escaped = "|".join(
         re.escape(n)
-        for n in sorted(possible_names, key=len, reverse=True)
-    )
-    pattern  = re.compile(
+        for n in sorted(possible_names, key=len, reverse=True))
+    pattern = re.compile(
         rf"(?:\S*/)?(?:{escaped})\s+-i\s+\d+")
     new_text, n = pattern.subn(
         f"./{configured_name} -i {step}", text)
@@ -180,11 +145,7 @@ def _set_combine_command(text: str, combine_exe: str,
     return new_text
 
 
-# =============================================================================
-# Template renderers
-# =============================================================================
-
-def _render_auto_hotstart(run_dir: Path, subs: dict):
+def _render_auto_hotstart(run_dir, subs):
     text = AUTO_HOTSTART_TEMPLATE.read_text()
     for key, val in subs.items():
         text = text.replace("{{" + key + "}}", str(val))
@@ -193,11 +154,7 @@ def _render_auto_hotstart(run_dir: Path, subs: dict):
     out.chmod(out.stat().st_mode | stat.S_IXUSR)
 
 
-# =============================================================================
-# Symlink helper
-# =============================================================================
-
-def _link(src: Path, dst: Path) -> bool:
+def _link(src, dst):
     if not src.exists():
         return False
     if dst.exists() or dst.is_symlink():
@@ -206,13 +163,8 @@ def _link(src: Path, dst: Path) -> bool:
     return True
 
 
-# =============================================================================
-# Per-group setup
-# =============================================================================
-
-def _setup_group(cfg: dict, mdir: Path, group_id: str,
-                 group_index: int, next_group_id: str,
-                 is_last: bool, config_dir: Path) -> bool:
+def _setup_group(cfg, mdir, group_id, group_index,
+                 all_groups, next_group_id, is_last, config_dir):
     pid  = cfg["project_id"]
     fix  = mdir / "fix"
     bind = mdir / "bin"
@@ -235,7 +187,6 @@ def _setup_group(cfg: dict, mdir: Path, group_id: str,
 
     rdir.mkdir(parents=True, exist_ok=True)
 
-    # --- validate executables ---
     exes        = cfg.get("executables", {})
     schism_exe  = exes.get("schism_wwm")
     combine_exe = exes.get("combine_hotstart")
@@ -260,38 +211,24 @@ def _setup_group(cfg: dict, mdir: Path, group_id: str,
             print(f"    {m}")
         return False
 
-    # --- check preprocessing sentinels ---
-    def _check_sentinel(sentinel_path: Path,
-                        step: str) -> bool:
-        if not sentinel_path.exists():
-            print(f"  ERROR {group_id}: '{step}' has not "
-                  f"completed successfully.")
-            print(f"    Missing sentinel: {sentinel_path}")
-            print(f"    Re-run:  stofs-ak --run --only {step} "
-                  f"--config <cfg>")
+    def _check_sentinel(path, step):
+        if not path.exists():
+            print(f"  ERROR {group_id}: '{step}' not complete. "
+                  f"Missing: {path}")
             return False
         return True
 
+    if not _check_sentinel(idir / "gen_3Dth.done",  "gen_3Dth"):  return False
+    if not _check_sentinel(idir / "gen_nudge.done", "gen_nudge"): return False
     if not _check_sentinel(
-            idir / "gen_3Dth.done", "gen_3Dth"):
-        return False
+            idir / "sflux" / "gen_sflux.done", "gen_sflux"):     return False
     if not _check_sentinel(
-            idir / "gen_nudge.done", "gen_nudge"):
-        return False
-    if not _check_sentinel(
-            idir / "sflux" / "gen_sflux.done", "gen_sflux"):
-        return False
-    if not _check_sentinel(
-            idir / "gen_wwminput.done", "gen_wwminput"):
-        return False
+            idir / "gen_wwminput.done", "gen_wwminput"):          return False
     if not (fix / "wwmbnd.gr3").exists():
-        print(f"  ERROR {group_id}: fix/wwmbnd.gr3 not found — "
-              f"run gen_wwmbnd first.")
+        print(f"  ERROR {group_id}: fix/wwmbnd.gr3 not found.")
         return False
     if not (fix / "hgrid_WWM.gr3").exists():
         print(f"  ERROR {group_id}: fix/hgrid_WWM.gr3 not found.")
-        print("    Create it with:  "
-              "cp fix/hgrid.gr3 fix/hgrid_WWM.gr3")
         return False
     if group_index == 0:
         if not _check_sentinel(
@@ -310,20 +247,37 @@ def _setup_group(cfg: dict, mdir: Path, group_id: str,
                   f"{idir / name}")
             return False
 
-    # --- symlink sflux/ directory ---
+    # --- symlink sflux/ ---
     if not _link(idir / "sflux", rdir / "sflux"):
-        print(f"  ERROR {group_id}: sflux dir missing: "
-              f"{idir / 'sflux'}")
+        print(f"  ERROR {group_id}: sflux dir missing.")
         return False
 
-    # --- first group: symlink hotstart ---
+    # --- SCHISM hotstart (first group only) ---
     if group_index == 0:
-        if not _link(idir / "hotstart.nc",
-                     rdir / "hotstart.nc"):
-            print(f"  ERROR {group_id}: first-group "
-                  f"hotstart.nc missing.")
+        if not _link(idir / "hotstart.nc", rdir / "hotstart.nc"):
+            print(f"  ERROR {group_id}: first-group hotstart.nc missing.")
             return False
-    # groups 2+: hotstart.nc chained at run time
+
+    # --- WWM hotfile pre-link ---
+    # First group: cold start, LHOTR=.false., no hotfile needed.
+    # Non-first groups: link previous group's hotfile_out_WWM.nc
+    # as this group's hotfile_in_WWM.nc (FILEHOT_IN in &HOTFILE).
+    if group_index > 0:
+        prev_group_id = all_groups[group_index - 1]
+        prev_rdir     = mdir / f"R{pid}" / f"R{pid}_{prev_group_id}"
+        prev_wwm_hot  = prev_rdir / "hotfile_out_WWM.nc"
+        this_wwm_in   = rdir / "hotfile_in_WWM.nc"
+        if prev_wwm_hot.exists():
+            if this_wwm_in.exists() or this_wwm_in.is_symlink():
+                this_wwm_in.unlink()
+            this_wwm_in.symlink_to(prev_wwm_hot)
+            print(f"  {group_id}: pre-linked WWM hotfile: "
+                  f"hotfile_in_WWM.nc -> {prev_wwm_hot}")
+        else:
+            print(f"  {group_id}: NOTE: previous group's "
+                  f"hotfile_out_WWM.nc not yet available "
+                  f"({prev_wwm_hot}). "
+                  f"auto_hotstart.py will link it at chain time.")
 
     # --- copy SCHISM+WWM executable ---
     shutil.copy2(bind / schism_exe, rdir / schism_exe)
@@ -388,26 +342,29 @@ def _setup_group(cfg: dict, mdir: Path, group_id: str,
         "COMBINE_OUTPUT_SBATCH":  "",
     })
 
+    # --- verify rendering succeeded ---
+    rendered = (rdir / "auto_hotstart.py").read_text()
+    if "{{RUNDIR}}" in rendered or "{{NEXT_RUNDIR}}" in rendered:
+        print(f"  ERROR {group_id}: auto_hotstart.py still contains "
+              f"unrendered placeholders. Check the template file at:")
+        print(f"    {AUTO_HOTSTART_TEMPLATE}")
+        return False
+
     (rdir / "setup_run.done").touch()
     print(f"  {group_id}: run directory ready  "
           f"(job {run_jobname}, nhot_write={nhot_write}).")
     return True
 
 
-# =============================================================================
-# Entry point
-# =============================================================================
-
-def run_setup_run(cfg: dict, config_dir=None):
+def run_setup_run(cfg, config_dir=None):
     from pathlib import Path as _Path
     pid        = cfg["project_id"]
     mdir       = model_dir(cfg)
     groups     = list_groups(cfg)
     grouping   = cfg.get("grouping", "monthly")
     config_dir = (
-        _Path(config_dir)
-        if config_dir is not None else _Path(".")
-    )
+        _Path(config_dir) if config_dir is not None
+        else _Path("."))
 
     print(f"\n{'='*60}")
     print(f"  setup_run (SCHISM+WWM) for M{pid}")
@@ -420,15 +377,14 @@ def run_setup_run(cfg: dict, config_dir=None):
           f"{bool(cfg.get('chain_hotstart', True))}")
     print(f"{'='*60}")
 
-    # Freshness summary
     all_stale = []
     for group_id in groups:
         for w in check_fix_freshness(cfg, mdir, group_id):
             all_stale.append(f"  [{group_id}] {w.strip()}")
     if all_stale:
         print(f"\n  {'!'*58}")
-        print("  WARNING: one or more files in fix/ are NEWER "
-              "than their derived counterparts.")
+        print("  WARNING: some fix/ files are newer than "
+              "their deployed counterparts.")
         for w in all_stale:
             print(w)
         print(f"  {'!'*58}\n")
@@ -437,10 +393,11 @@ def run_setup_run(cfg: dict, config_dir=None):
     for i, group_id in enumerate(groups):
         next_group_id = (groups[i + 1]
                          if i + 1 < len(groups) else None)
-        is_last       = (i + 1 == len(groups))
-        if not _setup_group(cfg, mdir, group_id, i,
-                            next_group_id, is_last,
-                            config_dir):
+        is_last = (i + 1 == len(groups))
+        if not _setup_group(
+                cfg, mdir, group_id, i,
+                groups,           # <-- full ordered group list
+                next_group_id, is_last, config_dir):
             failed.append(group_id)
 
     print(f"\n{'='*60}")

@@ -4,12 +4,8 @@ models/schism/run/submit_run.py
 Phase 4, step "submit_run".
 
 When chain_hotstart=True, launches ONLY the first pending group.
-auto_hotstart.py chains to subsequent groups automatically on completion.
-Launching more than one group here would double-launch every group
-after the first.
-
-When chain_hotstart=False, launches each pending group one at a time
-and waits for each to finish before starting the next.
+auto_hotstart.py chains subsequent groups automatically.
+When chain_hotstart=False, launches each group independently.
 """
 
 import subprocess
@@ -37,7 +33,6 @@ def run_submit_run(cfg: dict):
     print(f"  NOTE: this is BLOCKING. Run inside screen/tmux.")
     print(f"{'='*60}")
 
-    # Identify pending groups
     pending = []
     for group_id in groups:
         rdir = mdir / f"R{pid}" / f"R{pid}_{group_id}"
@@ -53,15 +48,12 @@ def run_submit_run(cfg: dict):
         return
 
     if chain:
-        # Launch only the first pending group.
-        # auto_hotstart.py chains all subsequent groups itself.
         launch_groups = pending[:1]
         print(f"\n  chain_hotstart=True: launching only "
               f"group {launch_groups[0]}. "
               f"Remaining {len(pending)-1} group(s) will be "
-              f"chained automatically.")
+              f"chained automatically by auto_hotstart.py.")
     else:
-        # No chaining — launch each group independently.
         launch_groups = pending
         print(f"\n  chain_hotstart=False: launching "
               f"{len(launch_groups)} group(s) independently.")
@@ -80,16 +72,13 @@ def run_submit_run(cfg: dict):
             print(f"  ERROR {group_id}: {auto} not found.")
             sys.exit(1)
 
-        # Sanity check: confirm auto_hotstart.py is rendered
-        # (no unreplaced {{}} placeholders at module level)
+        # Guard: confirm auto_hotstart.py is rendered
         content = auto.read_text()
         if "{{RUNDIR}}" in content or "{{NEXT_RUNDIR}}" in content:
-            print(f"  ERROR {group_id}: {auto} still contains "
-                  f"unrendered template placeholders.")
-            print("    Re-run setup_run to fix it:")
-            print("      rm {rdir}/setup_run.done")
-            print("      stofs-ak --run --phase run "
-                  "--only setup_run --config <cfg>")
+            print(f"  ERROR {group_id}: auto_hotstart.py "
+                  f"contains unrendered placeholders.")
+            print(f"    Delete {rdir}/setup_run.done and "
+                  f"re-run setup_run.")
             sys.exit(1)
 
         print(f"\n{'='*60}")

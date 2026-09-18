@@ -73,6 +73,8 @@ download_coops:  false   # DTN: download NOAA CO-OPS station obs (WL, water temp
                          # pressure, wind) -> M{ID}/obs/coops/ (based on fix/station.in)
 download_ndbc:   false   # DTN: download NOAA NDBC buoy obs (WTMP, wind, PRES) ->
                          # M{ID}/obs/ndbc/ (annual + current-year monthly + realtime)
+download_altimetry: false   # DTN: download CCI or CoastWatch satellite altimetry Hs
+                            # CCI requires: export CCI_FTP_USER=... CCI_FTP_PASS=...
 download_argo:   false   # DTN: download Argo float profiles (IFREMER GDAC via OCSTrack)
                          # -> M{ID}/obs/argo/{region}/processed/ (domain-cropped)
 plot_outputs:    false   # Full-run field GIFs -> P{ID} (SLURM: parallel frames + GIF)
@@ -82,6 +84,8 @@ station_skill:   false   # Interactive: CO-OPS/NDBC obs vs model staout_* time-s
 wave_skill:      false   # Interactive: NDBC wave obs (Hs, TM02, DM) vs WWM
                          # wwm_sta_*.nc station output. Needs download_ndbc first.
                          # Output -> P{ID}/P{ID}_station_skill/
+collocate_altimetry: false  # SLURM: collocate SCHISM+WWM sigWaveHeight vs satellite Hs
+                            # Needs download_altimetry first.
 collocate_argo:  false   # Interactive: OCSTrack 3-D collocation of SCHISM T/S profiles
                          # vs Argo floats -> P{ID}/P{ID}_collocate_argo/ (needs download_argo)
 plot_argo:       false   # Interactive: Argo diagnostic plots (location map, skill

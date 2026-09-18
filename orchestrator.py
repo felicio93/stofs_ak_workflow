@@ -394,6 +394,8 @@ def reset_sentinels(cfg: dict):
         (f"P{pid}_station_skill",  ["station_skill.done"]),
         (f"P{pid}_collocate_argo", ["collocate_argo.done", ".daily_done",
                                     "plot_argo.done"]),
+        (f"P{pid}_collocate_altimetry", ["collocate_altimetry.done",
+                                         ".daily_done"]),
     ]:
         for name in sentinels:
             _remove(pdir / subdir / name)

@@ -7,18 +7,24 @@ Two-stage SLURM design (parallel per-day array -> serial merge),
 mirroring collocate_argo.py exactly.
 
 Stage 1 — one SLURM array task per calendar day:
-    Loads the satellite altimetry data for that day and collocates
-    it against SCHISM+WWM sigWaveHeight from out2d_*.nc using
-    OCSTrack's SCHISM model class + Collocate engine.
+    Loads the merged multisat satellite file produced by download_altimetry,
+    filters it to the day's time window, and collocates against SCHISM+WWM
+    sigWaveHeight from out2d_*.nc using OCSTrack's SCHISM model class +
+    Collocate engine.
     Per-day output:
         P{ID}/P{ID}_collocate_altimetry/daily/collocated_hs_{YYYYMMDD}.nc
 
 Stage 2 — serial merge (afterok on Stage 1):
-    Concatenates all daily files into one combined NetCDF and
-    writes the collocate_altimetry.done sentinel.
+    Concatenates all daily files into one combined NetCDF and writes
+    the collocate_altimetry.done sentinel.
     Final output:
         P{ID}/P{ID}_collocate_altimetry/collocated_hs.nc
         P{ID}/P{ID}_collocate_altimetry/collocate_altimetry.done
+
+Longitude convention:
+    CCI/CoastWatch files use -180..180.
+    SCHISM+WWM mesh uses 0..360 (lon_reference: "360").
+    Mesh longitudes are converted to -180..180 before passing to OCSTrack.
 
 Works for all grouping modes (monthly, ndays/weekly/daily).
 _group_for_day() maps each calendar day to the correct run directory
@@ -59,6 +65,22 @@ def _altimetry_obs_dir(cfg: dict) -> Path:
     return model_dir(cfg) / "obs" / "altimetry" / source
 
 
+def _find_merged_sat_file(obs_dir: Path):
+    """Find the merged multisat NetCDF file produced by OCSTrack.
+
+    OCSTrack names it:
+      CCI:        multisat_cci_cropped_{start}_{end}.nc
+      CoastWatch: multisat_coastwatch_cropped_{start}_{end}.nc
+
+    If multiple exist (re-downloads), return the most recently modified.
+    Returns None if not found.
+    """
+    candidates = list(obs_dir.glob("multisat_*.nc"))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: p.stat().st_mtime)
+
+
 def _window(cfg: dict) -> tuple:
     start = cfg.get("collocate_altimetry_start") or cfg["start_date"]
     end   = cfg.get("collocate_altimetry_end")   or cfg["end_date"]
@@ -94,12 +116,21 @@ def _group_for_day(cfg: dict, day_str: str):
     return None
 
 
+def _to_180(lon_arr):
+    """Convert longitude array from 0..360 to -180..180."""
+    import numpy as np
+    arr = np.asarray(lon_arr, dtype=float)
+    arr = arr % 360.0
+    arr[arr > 180.0] -= 360.0
+    return arr
+
+
 # =============================================================================
 # Stage 1 worker: collocate one day
 # =============================================================================
 
 def _collocate_one_day(cfg: dict, day_str: str,
-                        out_dir: Path) -> Path | None:
+                        out_dir: Path):
     """Collocate satellite altimetry Hs against SCHISM+WWM for one day.
 
     Returns the path to the output NetCDF, or None if no collocation
@@ -127,21 +158,12 @@ def _collocate_one_day(cfg: dict, day_str: str,
         print(f"  [{day_str}] already done, skipping.")
         return out_nc
 
-    # ---- Find satellite data file(s) for this day ----
-    obs_dir = _altimetry_obs_dir(cfg)
-    if not obs_dir.is_dir():
-        print(f"  [{day_str}] no altimetry obs dir found at "
-              f"{obs_dir}. Run download_altimetry first.")
-        return None
-
-    # OCSTrack SatelliteData accepts a directory and loads all
-    # NetCDF files inside it. We point it at the full obs dir and
-    # rely on OCSTrack's internal time filtering to select only
-    # the passes that overlap this day.
-    sat_files = list(obs_dir.glob("*.nc"))
-    if not sat_files:
-        print(f"  [{day_str}] no satellite files found in "
-              f"{obs_dir}.")
+    # ---- Find the merged satellite file ----
+    obs_dir  = _altimetry_obs_dir(cfg)
+    sat_file = _find_merged_sat_file(obs_dir)
+    if sat_file is None:
+        print(f"  [{day_str}] no merged satellite file found "
+              f"in {obs_dir}. Run download_altimetry first.")
         return None
 
     # ---- Find the group run directory for this day ----
@@ -159,9 +181,7 @@ def _collocate_one_day(cfg: dict, day_str: str,
               f"{gid}, skipping.")
         return None
 
-    # Check that out2d files exist for this group
-    out2d_files = list(outputs.glob("out2d_*.nc"))
-    if not out2d_files:
+    if not list(outputs.glob("out2d_*.nc")):
         print(f"  [{day_str}] no out2d_*.nc files in "
               f"{outputs}, skipping.")
         return None
@@ -171,8 +191,7 @@ def _collocate_one_day(cfg: dict, day_str: str,
               f"skipping.")
         return None
 
-    n_nearest = int(cfg.get("collocate_altimetry_n_nearest", 3))
-
+    n_nearest  = int(cfg.get("collocate_altimetry_n_nearest", 3))
     model_dict = {
         "startswith": "out2d_",
         "var":        "sigWaveHeight",
@@ -180,8 +199,11 @@ def _collocate_one_day(cfg: dict, day_str: str,
     }
 
     # ---- Load satellite data ----
+    # SatelliteData loads the full merged file. OCSTrack handles
+    # temporal filtering internally during collocation against the
+    # model files selected for this specific day.
     try:
-        sat_data = SatelliteData(str(obs_dir))
+        sat_data = SatelliteData(str(sat_file))
     except Exception as exc:
         print(f"  [{day_str}] SatelliteData load failed: "
               f"{type(exc).__name__}: {exc}")
@@ -204,6 +226,10 @@ def _collocate_one_day(cfg: dict, day_str: str,
         print(f"  [{day_str}] no model files overlap "
               f"this day, skipping.")
         return None
+
+    # Convert mesh longitudes from 0..360 to -180..180
+    # to match CCI/CoastWatch convention.
+    model.mesh_x = _to_180(model.mesh_x)
 
     # ---- Collocate ----
     try:
@@ -229,6 +255,9 @@ def _collocate_one_day(cfg: dict, day_str: str,
         out_nc.unlink(missing_ok=True)
         return None
 
+    print(f"  [{day_str}] "
+          f"{ds.sizes.get('time', '?')} collocated "
+          f"point(s) -> {out_nc.name}")
     return out_nc
 
 
@@ -240,10 +269,10 @@ def run_merge(cfg: dict):
     """Stage 2: concatenate daily collocation files into one NetCDF."""
     import xarray as xr
 
-    out_dir   = _out_dir(cfg)
-    daily_dir = out_dir / "daily"
-    combined  = out_dir / "collocated_hs.nc"
-    sentinel  = out_dir / "collocate_altimetry.done"
+    out_dir    = _out_dir(cfg)
+    daily_dir  = out_dir / "daily"
+    combined   = out_dir / "collocated_hs.nc"
+    sentinel   = out_dir / "collocate_altimetry.done"
     done_daily = out_dir / ".daily_done"
 
     print(f"\n{'='*60}")
@@ -251,27 +280,31 @@ def run_merge(cfg: dict):
     print(f"  Output: {out_dir}")
     print(f"{'='*60}\n")
 
-    files = sorted(daily_dir.glob("collocated_hs_????????.nc"))
+    files = sorted(
+        daily_dir.glob("collocated_hs_????????.nc"))
     if not files:
         print("  [merge] no daily files found. "
               "Check that Stage 1 array ran successfully.")
         return
 
-    print(f"  [merge] concatenating {len(files)} daily file(s) ...")
+    print(f"  [merge] concatenating "
+          f"{len(files)} daily file(s) ...")
 
     dsets = []
     for f in files:
         try:
             dsets.append(xr.open_dataset(str(f)))
         except (OSError, ValueError) as exc:
-            print(f"  [merge] could not open {f.name}: {exc}")
+            print(f"  [merge] could not open "
+                  f"{f.name}: {exc}")
 
     if not dsets:
         print("  [merge] no readable daily files found.")
         return
 
     try:
-        merged = xr.concat(dsets, dim="time", join="outer")
+        merged = xr.concat(dsets, dim="time",
+                           join="outer")
         merged = merged.sortby("time")
     except (ValueError, KeyError) as exc:
         print(f"  [merge] concat failed: {exc}")
@@ -290,41 +323,23 @@ def run_merge(cfg: dict):
 
     print(f"\n{'='*60}")
     print(f"  Altimetry collocation merge complete.")
-    print(f"  Combined NetCDF: {combined}")
-    print(f"  Sentinel: {sentinel}")
+    print(f"  Combined NetCDF : {combined}")
+    print(f"  Sentinel        : {sentinel}")
     print(f"{'='*60}\n")
 
 
 # =============================================================================
-# Dispatcher
+# Serial fallback
 # =============================================================================
-
-def run_collocate_altimetry(cfg: dict, config_dir=None):
-    """Dispatcher: submit SLURM pipeline or run serial fallback."""
-    import shutil
-
-    allow_serial = os.environ.get("ALLOW_NON_SLURM") == "1"
-
-    if allow_serial or shutil.which("sbatch") is None:
-        if shutil.which("sbatch") is None:
-            print("  [collocate_altimetry] sbatch not found "
-                  "— running serial fallback.")
-        _run_serial(cfg)
-        return
-
-    from workflow.models.schism_wwm.postprocess.submit_collocate_altimetry import (
-        submit_collocate_altimetry,
-    )
-    submit_collocate_altimetry(
-        cfg, Path(config_dir) if config_dir else None)
-
 
 def _run_serial(cfg: dict):
     """Serial fallback: collocate day by day without SLURM."""
-    obs_dir = _altimetry_obs_dir(cfg)
-    if not obs_dir.is_dir() or not list(obs_dir.glob("*.nc")):
-        print(f"ERROR: no altimetry files found in {obs_dir}. "
-              f"Run download_altimetry first.")
+    obs_dir  = _altimetry_obs_dir(cfg)
+    sat_file = _find_merged_sat_file(obs_dir)
+
+    if sat_file is None:
+        print(f"ERROR: no merged satellite file found in "
+              f"{obs_dir}. Run download_altimetry first.")
         return
 
     days    = _build_day_list(cfg)
@@ -333,11 +348,13 @@ def _run_serial(cfg: dict):
 
     sentinel = out_dir / "collocate_altimetry.done"
     if sentinel.exists():
-        print("  collocate_altimetry: already complete, skipping.")
+        print("  collocate_altimetry: already complete, "
+              "skipping.")
         return
 
     print(f"\n{'='*60}")
     print(f"  Altimetry collocation (serial mode)")
+    print(f"  Satellite file : {sat_file.name}")
     print(f"  {len(days)} day(s)")
     print(f"{'='*60}\n")
 
@@ -352,13 +369,42 @@ def _run_serial(cfg: dict):
 
 
 # =============================================================================
+# Dispatcher
+# =============================================================================
+
+def run_collocate_altimetry(cfg: dict,
+                             config_dir=None):
+    """Dispatcher: submit SLURM pipeline or run serial fallback."""
+    import shutil
+
+    allow_serial = (
+        os.environ.get("ALLOW_NON_SLURM") == "1")
+
+    if allow_serial or shutil.which("sbatch") is None:
+        if shutil.which("sbatch") is None:
+            print("  [collocate_altimetry] sbatch not "
+                  "found — running serial fallback.")
+        _run_serial(cfg)
+        return
+
+    from workflow.models.schism_wwm.postprocess.submit_collocate_altimetry import (
+        submit_collocate_altimetry,
+    )
+    submit_collocate_altimetry(
+        cfg,
+        Path(config_dir) if config_dir else None)
+
+
+# =============================================================================
 # CLI
 # =============================================================================
 
 def main():
     ap  = argparse.ArgumentParser(
-        description="Altimetry collocation CLI (SLURM tasks)")
-    sub = ap.add_subparsers(dest="stage", required=True)
+        description="Altimetry collocation CLI "
+                    "(SLURM tasks)")
+    sub = ap.add_subparsers(dest="stage",
+                             required=True)
 
     pd_p = sub.add_parser(
         "day",

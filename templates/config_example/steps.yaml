@@ -88,5 +88,8 @@ collocate_altimetry: false  # SLURM: collocate SCHISM+WWM sigWaveHeight vs satel
                             # Needs download_altimetry first.
 collocate_argo:  false   # Interactive: OCSTrack 3-D collocation of SCHISM T/S profiles
                          # vs Argo floats -> P{ID}/P{ID}_collocate_argo/ (needs download_argo)
+plot_altimetry:  false   # Interactive: satellite altimetry track maps + scatter plots
+                         # -> P{ID}/P{ID}_collocate_altimetry/ (needs collocate_altimetry first)
+                         # (SCHISM+WWM only)
 plot_argo:       false   # Interactive: Argo diagnostic plots (location map, skill
                          # histograms, profile matrix) -> P{ID}/P{ID}_collocate_argo/

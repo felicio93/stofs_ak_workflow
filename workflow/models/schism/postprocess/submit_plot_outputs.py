@@ -26,11 +26,12 @@ from workflow.models.schism.postprocess import plot_common as pc
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates" / "slurm"
 
-# Ranks per node for MPI plotting jobs.  Plotting is memory-intensive: each
-# rank reads one ~6 GB output NetCDF plus builds mesh triangulation and renders
-# matplotlib frames.  Using all 80 cores per node (512 GB / 80 = 6.4 GB each)
-# causes OOM kills.  Limiting to 20 ranks/node gives ~25 GB headroom per rank.
-_RANKS_PER_NODE = 20
+# Ranks per node for MPI plotting jobs.
+# out2d_*.nc for a 2.6M node SCHISM+WWM mesh can exceed 6 GB per file.
+# Each rank reads one file plus builds mesh triangulation and renders frames.
+# Using 10 ranks/node gives ~51 GB headroom per rank on a 512 GB Hercules node.
+# Override via slurm.plot_outputs_ranks_per_node in project.yaml if needed.
+_DEFAULT_RANKS_PER_NODE = 10
 
 
 def _unique_prefixes(cfg) -> list:
@@ -62,6 +63,11 @@ def submit_plot_outputs(cfg: dict, config_dir: Path) -> str:
         return ""
 
     slurm = cfg.get("slurm", {})
+
+    # Ranks per node: configurable via slurm.plot_outputs_ranks_per_node,
+    # default 10 (conservative for large SCHISM+WWM meshes).
+    ranks_per_node = int(slurm.get(
+        "plot_outputs_ranks_per_node", _DEFAULT_RANKS_PER_NODE))
 
     # --- If frames are done but GIF is missing, submit only GIF assembly ---
     if done_frames.exists():
@@ -107,13 +113,14 @@ def submit_plot_outputs(cfg: dict, config_dir: Path) -> str:
         print("  plot_outputs: no output files found. Has the model run completed?")
         return ""
 
-    # Cap ntasks at a user-configurable maximum (default: unlimited = ntasks).
-    max_tasks = int(slurm.get("plot_outputs_max_ntasks", ntasks))
-    ntasks = min(ntasks, max_tasks)
-    nnodes = math.ceil(ntasks / _RANKS_PER_NODE)
+    # Cap ntasks at a user-configurable maximum.
+    # Handle null/None from YAML gracefully.
+    max_tasks_cfg = slurm.get("plot_outputs_max_ntasks")
+    if max_tasks_cfg is not None:
+        ntasks = min(ntasks, int(max_tasks_cfg))
 
-    # plot_outputs uses windfall QOS by default — 55 nodes for 1092 files
-    # exceeds the debug QOS node limit. Override with slurm.plot_outputs_qos.
+    nnodes = math.ceil(ntasks / ranks_per_node)
+
     common = {
         "ACCOUNT":    slurm.get("account",   "nos-surge"),
         "PARTITION":  slurm.get("plot_outputs_partition",
@@ -135,11 +142,12 @@ def submit_plot_outputs(cfg: dict, config_dir: Path) -> str:
         "JOBNAME":  f"plotout_frm_M{pid}",
         "NNODES":   str(nnodes),
         "NTASKS":   str(ntasks),
-        "MEM":      slurm.get("plot_outputs_mem",      "16G"),
+        "MEM":      slurm.get("plot_outputs_mem",      "32G"),
         "WALLTIME": slurm.get("plot_outputs_walltime", "02:00:00"),
     })
     print(f"  Submitting plot_outputs MPI frames: {ntasks} rank(s) on "
-          f"{nnodes} node(s)  ({ntasks} output files)")
+          f"{nnodes} node(s)  ({ntasks} output files, "
+          f"{ranks_per_node} ranks/node)")
     out1 = submitter.render_and_submit(
         "plot_outputs_mpi.sbatch", stage1,
         logdir / "plot_outputs_mpi.sbatch")

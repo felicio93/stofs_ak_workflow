@@ -117,6 +117,12 @@ plot_outputs_vars:
   - {file_prefix: viscosity,           var_name: viscosity,          label: "Viscosity (m²/s)",         cmap: viridis, vmin: 0,       vmax: 0.01,   is_3d: true, layer: surface}
   - {file_prefix: turbulentKineticEner, var_name: turbulentKineticEner, label: "TKE (m²/s²)",           cmap: viridis, vmin: 0,       vmax: 0.01,   is_3d: true, layer: surface}
   - {file_prefix: mixingLength,        var_name: mixingLength,       label: "Mixing Length (m)",        cmap: viridis, vmin: 0,       vmax: 0.5,    is_3d: true, layer: surface}
+  # --- SCHISM+WWM wave variables (in out2d_*.nc) ---
+  - {file_prefix: out2d, var_name: sigWaveHeight,      label: "Significant Wave Height (m)",  cmap: turbo,   vmin: 0,    vmax: 6,    is_3d: false}
+  - {file_prefix: out2d, var_name: meanWavePeriod,     label: "Mean Wave Period (s)",          cmap: viridis, vmin: 0,    vmax: 20,   is_3d: false}
+  - {file_prefix: out2d, var_name: zeroDowncrossPeriod,label: "Zero-Downcross Period (s)",     cmap: viridis, vmin: 0,    vmax: 20,   is_3d: false}
+  - {file_prefix: out2d, var_name: meanWaveDirection,  label: "Mean Wave Direction (deg)",     cmap: hsv,     vmin: 0,    vmax: 360,  is_3d: false}
+  - {file_prefix: out2d, var_name: peakPeriod,         label: "Peak Wave Period (s)",          cmap: viridis, vmin: 0,    vmax: 25,   is_3d: false}
 
 # Date range for the GIF (null = whole run). Format YYYY-MM-DD.
 plot_outputs_start: null
@@ -251,3 +257,11 @@ collocate_altimetry_end:   null
 
 # Number of nearest model nodes for spatial collocation
 collocate_altimetry_n_nearest: 3
+
+# plot_altimetry settings
+altimetry_plot_dpi: 150
+altimetry_plot_min_quality: 3       # obs_swh_quality_level threshold (0-3, 3=good)
+altimetry_plot_max_dist_km: null    # optional: only use obs within X km of a model node
+altimetry_scatter_vmax_hs: null     # null = 98th percentile of Hs values
+altimetry_scatter_time_delta_vmax: null   # minutes, null = auto 98th percentile
+altimetry_scatter_dist_delta_vmax: null   # km, null = auto 98th percentile

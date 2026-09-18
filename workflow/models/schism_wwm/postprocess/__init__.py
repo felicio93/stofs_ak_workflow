@@ -5,7 +5,7 @@ Phase 5 — SCHISM+WWM post-processing.
 
 Inherits all standard SCHISM postprocessing steps and adds
 wave-specific validation (wave_skill, download_altimetry,
-collocate_altimetry).
+collocate_altimetry, plot_altimetry).
 """
 
 from pathlib import Path
@@ -24,7 +24,8 @@ def postprocess_phase(cfg: dict, config_dir,
     config_dir = Path(config_dir)
 
     # Run all inherited SCHISM Phase 5 steps
-    _schism_postprocess_phase(cfg, config_dir, only=only)
+    _schism_postprocess_phase(cfg, config_dir,
+                               only=only)
 
     def enabled(step: str) -> bool:
         if only is not None:
@@ -49,15 +50,19 @@ def postprocess_phase(cfg: dict, config_dir,
     if enabled("download_altimetry"):
         import os
         import socket
-        on_dtn = ("dtn" in socket.gethostname().lower()
-                  or os.environ.get("ALLOW_NON_DTN") == "1")
+        on_dtn = (
+            "dtn" in socket.gethostname().lower()
+            or os.environ.get(
+                "ALLOW_NON_DTN") == "1")
         if not on_dtn:
             print(
                 "[N/A]  download_altimetry  "
-                "(DTN required — run separately on the DTN with:\n"
-                "         stofs-ak --run --phase postprocess "
-                "--only download_altimetry --config <cfg>)"
-            )
+                "(DTN required — run separately "
+                "on the DTN with:\n"
+                "         stofs-ak --run "
+                "--phase postprocess "
+                "--only download_altimetry "
+                "--config <cfg>)")
         else:
             print("[STEP] download_altimetry")
             from workflow.models.schism_wwm.postprocess.downloaders.altimetry import (
@@ -78,3 +83,37 @@ def postprocess_phase(cfg: dict, config_dir,
         run_collocate_altimetry(cfg, config_dir)
     else:
         print("[SKIP] collocate_altimetry")
+
+    # ----------------------------------------------------------------
+    # plot_altimetry
+    # When collocate_altimetry was submitted via SLURM and the
+    # merge job has not yet finished, print a [NOTE].
+    # When collocate_altimetry.done already exists, run directly.
+    # ----------------------------------------------------------------
+    if enabled("plot_altimetry"):
+        from workflow.core.config import (
+            model_dir as _model_dir,
+        )
+        _pid      = cfg["project_id"]
+        _done_col = (
+            _model_dir(cfg) / f"P{_pid}"
+            / f"P{_pid}_collocate_altimetry"
+            / "collocate_altimetry.done"
+        )
+        if _done_col.exists():
+            print("[STEP] plot_altimetry")
+            from workflow.models.schism_wwm.postprocess.altimetry_plots import (
+                run_plot_altimetry,
+            )
+            run_plot_altimetry(cfg, config_dir)
+        else:
+            print(
+                "[NOTE] plot_altimetry: "
+                "collocate_altimetry.done not found. "
+                "Run collocate_altimetry first, then:\n"
+                "         stofs-ak --run "
+                "--phase postprocess "
+                "--only plot_altimetry "
+                "--config <cfg>")
+    else:
+        print("[SKIP] plot_altimetry")

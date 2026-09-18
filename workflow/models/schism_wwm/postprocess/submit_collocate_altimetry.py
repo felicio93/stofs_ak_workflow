@@ -6,8 +6,9 @@ Mirrors submit_collocate_argo.py exactly.
 
 Stage 1 — SLURM array, one task per day (throttled):
     A manifest lists every day in the collocation window. Each array
-    task collocates satellite altimetry Hs against SCHISM+WWM
-    sigWaveHeight for its assigned day. Per-day NetCDFs written to:
+    task collocates the merged satellite altimetry file (filtered to
+    that day) against SCHISM+WWM sigWaveHeight for its assigned day.
+    Per-day NetCDFs written to:
         P{ID}/P{ID}_collocate_altimetry/daily/collocated_hs_{YYYYMMDD}.nc
 
 Stage 2 — serial merge (--dependency=afterok on Stage 1):
@@ -40,8 +41,10 @@ TEMPLATES_DIR = (
 
 def _build_day_list(cfg: dict) -> list:
     """Return every calendar day in the collocation window."""
-    start = cfg.get("collocate_altimetry_start") or cfg["start_date"]
-    end   = cfg.get("collocate_altimetry_end")   or cfg["end_date"]
+    start = (cfg.get("collocate_altimetry_start")
+             or cfg["start_date"])
+    end   = (cfg.get("collocate_altimetry_end")
+             or cfg["end_date"])
     s = date.fromisoformat(str(start))
     e = date.fromisoformat(str(end))
     days = []
@@ -54,7 +57,22 @@ def _build_day_list(cfg: dict) -> list:
 
 def _out_dir(cfg: dict) -> Path:
     pid = cfg["project_id"]
-    return model_dir(cfg) / f"P{pid}" / f"P{pid}_collocate_altimetry"
+    return (model_dir(cfg)
+            / f"P{pid}"
+            / f"P{pid}_collocate_altimetry")
+
+
+def _find_merged_sat_file(cfg: dict):
+    """Return the merged satellite file path, or None."""
+    source  = str(cfg.get(
+        "altimetry_source", "cci")).lower()
+    obs_dir = (model_dir(cfg)
+               / "obs" / "altimetry" / source)
+    candidates = list(obs_dir.glob("multisat_*.nc"))
+    if not candidates:
+        return None
+    return max(candidates,
+               key=lambda p: p.stat().st_mtime)
 
 
 # =============================================================================
@@ -63,17 +81,17 @@ def _out_dir(cfg: dict) -> Path:
 
 def submit_collocate_altimetry(cfg: dict,
                                 config_dir: Path) -> str:
-    """Submit the two-stage altimetry collocation pipeline to SLURM.
+    """Submit the two-stage altimetry collocation pipeline.
 
-    Returns the SLURM job ID of the last submitted job, or '' if
-    nothing was submitted.
+    Returns the SLURM job ID of the last submitted job,
+    or '' if nothing was submitted.
     """
     pid    = cfg["project_id"]
     mdir   = model_dir(cfg)
     logdir = mdir / "logs"
     logdir.mkdir(parents=True, exist_ok=True)
 
-    out_dir    = _out_dir(cfg)
+    out_dir = _out_dir(cfg)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     done_all   = out_dir / "collocate_altimetry.done"
@@ -81,16 +99,21 @@ def submit_collocate_altimetry(cfg: dict,
 
     slurm  = cfg.get("slurm", {})
     common = {
-        "ACCOUNT":    slurm.get("account",   "nos-surge"),
-        "PARTITION":  slurm.get("partition", "hercules-2"),
-        "MAILUSER":   slurm.get("mail_user",
-                                "felicio.cassalho@noaa.gov"),
+        "ACCOUNT":    slurm.get("account",
+                                "nos-surge"),
+        "PARTITION":  slurm.get("partition",
+                                "hercules-2"),
+        "MAILUSER":   slurm.get(
+            "mail_user",
+            "felicio.cassalho@noaa.gov"),
         "WORKDIR":    str(mdir),
         "LOGDIR":     str(logdir),
-        "PY":         env_python(cfg, "collocate_altimetry",
-                                 default="swf_plot"),
-        "SCRIPT":     ("-m workflow.models.schism_wwm"
-                       ".postprocess.collocate_altimetry"),
+        "PY":         env_python(
+            cfg, "collocate_altimetry",
+            default="swf_plot"),
+        "SCRIPT":     (
+            "-m workflow.models.schism_wwm"
+            ".postprocess.collocate_altimetry"),
         "CONFIG_DIR": str(config_dir),
     }
 
@@ -102,6 +125,18 @@ def submit_collocate_altimetry(cfg: dict,
               "skipping.")
         return ""
 
+    # ---- Check satellite file exists ----
+    sat_file = _find_merged_sat_file(cfg)
+    if sat_file is None:
+        source = str(cfg.get(
+            "altimetry_source", "cci")).lower()
+        print(f"ERROR: no merged satellite file found in "
+              f"obs/altimetry/{source}/.")
+        print("  Run download_altimetry first.")
+        return ""
+
+    print(f"  Satellite file : {sat_file.name}")
+
     days = _build_day_list(cfg)
     if not days:
         print("  collocate_altimetry: empty date range. "
@@ -110,20 +145,24 @@ def submit_collocate_altimetry(cfg: dict,
 
     # ---- Daily done, only merge missing ----
     if done_daily.exists():
-        print("  collocate_altimetry: daily collocation done "
-              "(.daily_done). Submitting merge only.")
+        print("  collocate_altimetry: daily collocation "
+              "done (.daily_done). "
+              "Submitting merge only.")
         stage2 = dict(common)
         stage2.update({
             "JOBNAME":  f"alt_merge_M{pid}",
             "MEM":      slurm.get(
-                "collocate_altimetry_merge_mem", "32G"),
+                "collocate_altimetry_merge_mem",
+                "32G"),
             "WALLTIME": slurm.get(
                 "collocate_altimetry_merge_walltime",
                 "01:00:00"),
         })
         out2 = submitter.render_and_submit(
-            "collocate_altimetry_merge.sbatch", stage2,
-            logdir / "collocate_altimetry_merge.sbatch")
+            "collocate_altimetry_merge.sbatch",
+            stage2,
+            logdir
+            / "collocate_altimetry_merge.sbatch")
         return SlurmSubmitter.parse_jobid(out2)
 
     # ---- Full pipeline: Stage 1 + Stage 2 ----
@@ -131,7 +170,8 @@ def submit_collocate_altimetry(cfg: dict,
     throttle = str(slurm.get(
         "collocate_altimetry_array_throttle", 50))
 
-    manifest = logdir / "collocate_altimetry_days.manifest"
+    manifest = (logdir
+                / "collocate_altimetry_days.manifest")
     manifest.write_text("\n".join(days) + "\n")
 
     stage1 = dict(common)
@@ -140,13 +180,15 @@ def submit_collocate_altimetry(cfg: dict,
         "NTASKS":         str(ntasks),
         "ARRAY_THROTTLE": throttle,
         "MEM":            slurm.get(
-            "collocate_altimetry_mem", "32G"),
+            "collocate_altimetry_mem", "16G"),
         "WALLTIME":       slurm.get(
-            "collocate_altimetry_walltime", "01:00:00"),
+            "collocate_altimetry_walltime",
+            "00:30:00"),
         "MANIFEST":       str(manifest),
     })
-    print(f"  Submitting collocate_altimetry Stage 1 array: "
-          f"{ntasks} day(s) ({days[0]} -> {days[-1]})  "
+    print(f"  Submitting collocate_altimetry Stage 1 "
+          f"array: {ntasks} day(s) "
+          f"({days[0]} -> {days[-1]})  "
           f"throttle={throttle}")
     out1 = submitter.render_and_submit(
         "collocate_altimetry_day.sbatch", stage1,
@@ -159,10 +201,11 @@ def submit_collocate_altimetry(cfg: dict,
         "MEM":      slurm.get(
             "collocate_altimetry_merge_mem", "32G"),
         "WALLTIME": slurm.get(
-            "collocate_altimetry_merge_walltime", "01:00:00"),
+            "collocate_altimetry_merge_walltime",
+            "01:00:00"),
     })
-    print(f"  Submitting collocate_altimetry Stage 2 merge "
-          f"(afterok:{jid1})")
+    print(f"  Submitting collocate_altimetry Stage 2 "
+          f"merge (afterok:{jid1})")
     out2 = submitter.render_and_submit(
         "collocate_altimetry_merge.sbatch", stage2,
         logdir / "collocate_altimetry_merge.sbatch",

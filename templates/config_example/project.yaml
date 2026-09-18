@@ -121,7 +121,7 @@ slurm:
   combine_output_walltime: "02:00:00"
   plot_outputs_qos: windfall
   plot_outputs_walltime: "02:00:00"
-  plot_outputs_mem: "16G"
+  plot_outputs_mem: "32G"
   plot_outputs_max_ntasks:
   plot_outputs_gif_walltime: "00:30:00"
   plot_outputs_gif_mem: "32G"

@@ -79,6 +79,9 @@ plot_outputs:    false   # Full-run field GIFs -> P{ID} (SLURM: parallel frames 
 compare_sst:     false   # Model vs satellite SST GIF -> P{ID} (needs download_sst first)
 station_skill:   false   # Interactive: CO-OPS/NDBC obs vs model staout_* time-series
                          # plots + skill_metrics.csv -> P{ID} (needs download_coops/ndbc first)
+wave_skill:      false   # Interactive: NDBC wave obs (Hs, TM02, DM) vs WWM
+                         # wwm_sta_*.nc station output. Needs download_ndbc first.
+                         # Output -> P{ID}/P{ID}_station_skill/
 collocate_argo:  false   # Interactive: OCSTrack 3-D collocation of SCHISM T/S profiles
                          # vs Argo floats -> P{ID}/P{ID}_collocate_argo/ (needs download_argo)
 plot_argo:       false   # Interactive: Argo diagnostic plots (location map, skill

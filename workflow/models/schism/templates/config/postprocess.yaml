@@ -106,23 +106,23 @@ plot_outputs_vars:
   - {file_prefix: out2d,          var_name: windSpeedY,        label: "Wind V (m/s)",                 cmap: RdBu_r,   vmin: -25,    vmax: 25,     is_3d: false}
   - {file_prefix: out2d,          var_name: windStressX,       label: "Wind Stress X (Pa)",           cmap: RdBu_r,   vmin: -0.01,  vmax: 0.01,   is_3d: false}
   - {file_prefix: out2d,          var_name: windStressY,       label: "Wind Stress Y (Pa)",           cmap: RdBu_r,   vmin: -0.01,  vmax: 0.01,   is_3d: false}
+  # --- SCHISM+WWM wave variables (in out2d_*.nc) ---
+  - {file_prefix: out2d,          var_name: sigWaveHeight,       label: "Significant Wave Height (m)",  cmap: turbo,   vmin: 0,    vmax: 6,    is_3d: false}
+  - {file_prefix: out2d,          var_name: meanWavePeriod,      label: "Mean Wave Period (s)",          cmap: viridis, vmin: 0,    vmax: 20,   is_3d: false}
+  - {file_prefix: out2d,          var_name: zeroDowncrossPeriod, label: "Zero-Downcross Period (s)",     cmap: viridis, vmin: 0,    vmax: 20,   is_3d: false}
+  - {file_prefix: out2d,          var_name: meanWaveDirection,   label: "Mean Wave Direction (deg)",     cmap: hsv,     vmin: 0,    vmax: 360,  is_3d: false}
+  - {file_prefix: out2d,          var_name: peakPeriod,          label: "Peak Wave Period (s)",          cmap: viridis, vmin: 0,    vmax: 25,   is_3d: false}
   # --- 3D node-centered variables ---
   - {file_prefix: temperature,    var_name: temperature,       label: "Temperature (°C)",             cmap: jet,     vmin: -2,      vmax: 12,     is_3d: true, layer: surface}
   - {file_prefix: salinity,       var_name: salinity,          label: "Salinity (psu)",               cmap: viridis, vmin: 30,      vmax: 34.5,   is_3d: true, layer: surface}
   - {file_prefix: horizontalVelX, var_name: horizontalVelX,    label: "Horizontal Vel X (m/s)",       cmap: RdBu_r,  vmin: -1.5,    vmax: 1.5,    is_3d: true, layer: surface}
   - {file_prefix: horizontalVelY, var_name: horizontalVelY,    label: "Horizontal Vel Y (m/s)",       cmap: RdBu_r,  vmin: -1.5,    vmax: 1.5,    is_3d: true, layer: surface}
-  - {file_prefix: verticalVelocity,    var_name: verticalVelocity,   label: "Vertical Velocity (m/s)",  cmap: RdBu_r,  vmin: -5.0e-4, vmax: 5.0e-4, is_3d: true, layer: surface}
-  - {file_prefix: waterDensity,        var_name: waterDensity,       label: "Water Density (kg/m³)",    cmap: viridis, vmin: 1015,    vmax: 1028,   is_3d: true, layer: surface}
-  - {file_prefix: diffusivity,         var_name: diffusivity,        label: "Diffusivity (m²/s)",       cmap: viridis, vmin: 0,       vmax: 0.01,   is_3d: true, layer: surface}
-  - {file_prefix: viscosity,           var_name: viscosity,          label: "Viscosity (m²/s)",         cmap: viridis, vmin: 0,       vmax: 0.01,   is_3d: true, layer: surface}
-  - {file_prefix: turbulentKineticEner, var_name: turbulentKineticEner, label: "TKE (m²/s²)",           cmap: viridis, vmin: 0,       vmax: 0.01,   is_3d: true, layer: surface}
-  - {file_prefix: mixingLength,        var_name: mixingLength,       label: "Mixing Length (m)",        cmap: viridis, vmin: 0,       vmax: 0.5,    is_3d: true, layer: surface}
-  # --- SCHISM+WWM wave variables (in out2d_*.nc) ---
-  - {file_prefix: out2d, var_name: sigWaveHeight,      label: "Significant Wave Height (m)",  cmap: turbo,   vmin: 0,    vmax: 6,    is_3d: false}
-  - {file_prefix: out2d, var_name: meanWavePeriod,     label: "Mean Wave Period (s)",          cmap: viridis, vmin: 0,    vmax: 20,   is_3d: false}
-  - {file_prefix: out2d, var_name: zeroDowncrossPeriod,label: "Zero-Downcross Period (s)",     cmap: viridis, vmin: 0,    vmax: 20,   is_3d: false}
-  - {file_prefix: out2d, var_name: meanWaveDirection,  label: "Mean Wave Direction (deg)",     cmap: hsv,     vmin: 0,    vmax: 360,  is_3d: false}
-  - {file_prefix: out2d, var_name: peakPeriod,         label: "Peak Wave Period (s)",          cmap: viridis, vmin: 0,    vmax: 25,   is_3d: false}
+  - {file_prefix: verticalVelocity,     var_name: verticalVelocity,    label: "Vertical Velocity (m/s)",  cmap: RdBu_r,  vmin: -5.0e-4, vmax: 5.0e-4, is_3d: true, layer: surface}
+  - {file_prefix: waterDensity,         var_name: waterDensity,        label: "Water Density (kg/m³)",    cmap: viridis, vmin: 1015,    vmax: 1028,   is_3d: true, layer: surface}
+  - {file_prefix: diffusivity,          var_name: diffusivity,         label: "Diffusivity (m²/s)",       cmap: viridis, vmin: 0,       vmax: 0.01,   is_3d: true, layer: surface}
+  - {file_prefix: viscosity,            var_name: viscosity,           label: "Viscosity (m²/s)",         cmap: viridis, vmin: 0,       vmax: 0.01,   is_3d: true, layer: surface}
+  - {file_prefix: turbulentKineticEner, var_name: turbulentKineticEner, label: "TKE (m²/s²)",            cmap: viridis, vmin: 0,       vmax: 0.01,   is_3d: true, layer: surface}
+  - {file_prefix: mixingLength,         var_name: mixingLength,        label: "Mixing Length (m)",        cmap: viridis, vmin: 0,       vmax: 0.5,    is_3d: true, layer: surface}
 
 # Date range for the GIF (null = whole run). Format YYYY-MM-DD.
 plot_outputs_start: null
@@ -164,19 +164,61 @@ keep_frames: true
 # =============================================================================
 # CO-OPS station observations (download_coops + station_skill)
 # =============================================================================
+# download_coops (DTN): downloads observations for CO-OPS stations listed in
+# fix/station.in with source=CO-OPS. Downloads only the products in
+# coops_variables. One CSV per station/product/month into M{ID}/obs/coops/.
+#
+# Supported variable tokens for CO-OPS:
+#   WL / ELEV      water level        (tide gauge water level)
+#   T / TEMP       water temperature
+#   AIR_PRESSURE / AIRPRESSURE / PATM / PRESSURE   barometric pressure
+#   WIND / WINDX / WINDY               wind speed + direction (-> u,v)
+#
+# These tokens must appear in each station's VARS bracket in station.in
+# e.g.: ![WL,T,AIR_PRESSURE,WIND],9462620,CO-OPS,Unalaska
+
+# Water-level datum for CO-OPS water_level product.
+# Common choices: MSL, MLLW, MHHW, NAVD, STND.
 coops_datum: MSL
+
+# Which CO-OPS products to download. Only products listed here are fetched.
 coops_variables: [WL, T, air_pressure, wind]
 
 # =============================================================================
 # NDBC buoy observations (download_ndbc + station_skill)
 # =============================================================================
+# download_ndbc (DTN): downloads observations for NDBC stations listed in
+# fix/station.in with source=NDBC. Always downloads the FULL stdmet table
+# regardless of VARS tokens — the stdmet format is not split by variable.
+# One CSV per station/year into M{ID}/obs/ndbc/.
+#
+# Supported variable tokens for NDBC (stdmet column mapping):
+#   T / TEMP       water temperature  -> WTMP column
+#   AIR_PRESSURE / AIRPRESSURE / PATM / PRESSURE  -> PRES column
+#   WIND / WINDX / WINDY  wind speed+direction -> WSPD + WDIR columns (-> u,v)
+#
+# Note: NDBC has NO water level. WL/ELEV tokens are silently skipped for NDBC.
+#
+# ndbc_variables: optional filter restricting which NDBC variables are
+# ASSESSED in station_skill (does NOT affect what is downloaded).
+# null = assess all variables listed in each station's VARS bracket.
 ndbc_variables: null
 
 # =============================================================================
 # station_skill — obs vs model time-series plots + skill CSV
 # =============================================================================
+# Reads obs/coops/ + obs/ndbc/ and model R{ID}/R{ID}_YYYYMM/outputs/staout_*
+# Produces obs-vs-model time-series plots (with bias/RMSE/R² in the legend)
+# and a skill_metrics.csv under P{ID}/P{ID}_station_skill/.
+#
+# Re-run for any sub-period by setting station_skill_start/end and deleting
+# the station_skill.done sentinel — no re-download needed.
+
+# Skill-assessment comparison window (null = use the run's start_date/end_date).
 station_skill_start: null
 station_skill_end:   null
+
+# Resample interval for skill metrics.
 station_skill_resample: "1h"
 
 # =============================================================================
@@ -237,9 +279,13 @@ collocate_argo_plot_skill_s: 20
 #
 # CoastWatch has no credentials but caps SWH at 8 m and may delete
 # old data without notice.
+#
+# Longitude convention: the downloader automatically converts the project
+# domain bounds (domain.yaml lon_min/lon_max) to -180..180 for OCSTrack,
+# correctly handling dateline-crossing domains (e.g. Alaska 150..230 deg).
 altimetry_source: cci
 
-# Satellite list. null = all satellites available for the chosen source.
+# Satellite list. null = all satellites for the chosen source.
 #
 # CCI options (16 total):
 #   cfosat, cryosat-2, envisat, ers-1, ers-2, gfo,
@@ -258,10 +304,57 @@ collocate_altimetry_end:   null
 # Number of nearest model nodes for spatial collocation
 collocate_altimetry_n_nearest: 3
 
+# =============================================================================
+# Collocation-time distance filter
+# =============================================================================
+# Applied during the merge stage (Stage 2 of collocate_altimetry).
+# Points where min(dist_deltas) > this threshold are removed and the
+# result is saved as collocated_hs_clean.nc alongside collocated_hs.nc.
+# plot_altimetry will automatically prefer collocated_hs_clean.nc.
+#
+# null = no distance filter, no clean file written
+#        (collocated_hs.nc contains all collocated points)
+#
+# Recommended: set to your typical offshore mesh resolution.
+# For this domain, offshore resolution is approximately 2-10 km.
+# A value of 5 km is a reasonable starting point.
+collocate_altimetry_dist_threshold_km: 5
+
+# =============================================================================
 # plot_altimetry settings
+# =============================================================================
+# DPI for all altimetry plots
 altimetry_plot_dpi: 150
-altimetry_plot_min_quality: 3       # obs_swh_quality_level threshold (0-3, 3=good)
-altimetry_plot_max_dist_km: null    # optional: only use obs within X km of a model node
-altimetry_scatter_vmax_hs: null     # null = 98th percentile of Hs values
-altimetry_scatter_time_delta_vmax: null   # minutes, null = auto 98th percentile
-altimetry_scatter_dist_delta_vmax: null   # km, null = auto 98th percentile
+
+# Plot-time filters (applied before plotting; secondary to the
+# collocation-time filter above). These do not require re-collocation —
+# just delete plot_altimetry.done and re-run plot_altimetry.
+#
+# Quality filter: obs_swh_quality_level >= this value
+#   0=undefined, 1=bad, 2=acceptable, 3=good
+altimetry_plot_min_quality: 3
+
+# Time delta filter: only keep observations where
+# |model_time - obs_time| <= this value in SECONDS.
+# 1800 = 30 minutes. Reduce to tighten temporal matching.
+altimetry_plot_max_time_delta_s: 1800
+
+# Distance filter: only keep observations where the nearest model node
+# is within this distance in KM. null = no additional distance filter
+# (beyond what collocate_altimetry_dist_threshold_km already applied).
+altimetry_plot_max_dist_km: null
+
+# Map scatter marker size (points²). Default 7.
+altimetry_plot_location_s: 7
+
+# Scatter plot Hs axis upper limit (m).
+# null = 98th percentile of the filtered data.
+altimetry_scatter_vmax_hs: null
+
+# Time delta colorbar upper limit in SECONDS.
+# Default 1800 (= 30 min). Matches altimetry_plot_max_time_delta_s.
+altimetry_scatter_time_delta_vmax: 1800
+
+# Distance delta colorbar upper limit in KM.
+# null = 98th percentile of the filtered data.
+altimetry_scatter_dist_delta_vmax: null

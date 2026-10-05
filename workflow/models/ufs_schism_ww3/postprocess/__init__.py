@@ -22,9 +22,14 @@ import os
 import socket
 from pathlib import Path
 
+# ---- THE FIX: import the SCHISM postprocess dispatcher ----
+from workflow.models.schism.postprocess import (
+    postprocess_phase as _schism_postprocess_phase,
+)
+
 from workflow.models.ufs_schism_ww3.postprocess.collocate_altimetry import (
-        run_collocate_altimetry,
-        )
+    run_collocate_altimetry,
+)
 
 
 def _is_dtn() -> bool:
@@ -102,9 +107,6 @@ def postprocess_phase(cfg: dict, config_dir,
     # ----------------------------------------------------------------
     if enabled("collocate_altimetry"):
         print("[STEP] collocate_altimetry")
-        from workflow.models.schism_wwm.postprocess.collocate_altimetry import (
-            run_collocate_altimetry,
-        )
         run_collocate_altimetry(cfg, config_dir)
     else:
         print("[SKIP] collocate_altimetry")

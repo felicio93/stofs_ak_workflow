@@ -13,48 +13,6 @@ written by the ``collocate_altimetry`` step:
   Scatter Plot 3 — Coloured by model depth (altimetry_scatter_depth.jpg)
   Scatter Plot 4 — Coloured by distance to coast (altimetry_scatter_coast_dist.jpg)
   Scatter Plot 5 — Coloured by satellite source (altimetry_scatter_source.jpg)
-
-Input file preference:
-    1. collocated_hs_clean.nc  (distance-filtered, written by run_merge
-                                when collocate_altimetry_dist_threshold_km
-                                is set)
-    2. collocated_hs.nc        (all collocated points, fallback)
-
-All scatter plots apply additional plot-time filters:
-    obs_swh_quality_level >= altimetry_plot_min_quality (default 3)
-    |time_delta| <= altimetry_plot_max_time_delta_s (default 1800 s)
-    dist_delta <= altimetry_plot_max_dist_km (default null = no filter)
-
-Map plots show ALL observations (no filters) with lon_obs converted
-from -180..180 to 0..360 for correct display on the Alaska domain.
-
-Inputs
-------
-  P{ID}/P{ID}_collocate_altimetry/collocated_hs_clean.nc  (preferred)
-  P{ID}/P{ID}_collocate_altimetry/collocated_hs.nc        (fallback)
-  fix/hgrid.gr3  (for mesh boundaries)
-
-Outputs
--------
-  P{ID}/P{ID}_collocate_altimetry/altimetry_tracks_by_source.jpg
-  P{ID}/P{ID}_collocate_altimetry/altimetry_tracks_by_time.jpg
-  P{ID}/P{ID}_collocate_altimetry/altimetry_scatter_time_delta.jpg
-  P{ID}/P{ID}_collocate_altimetry/altimetry_scatter_dist_delta.jpg
-  P{ID}/P{ID}_collocate_altimetry/altimetry_scatter_depth.jpg
-  P{ID}/P{ID}_collocate_altimetry/altimetry_scatter_coast_dist.jpg
-  P{ID}/P{ID}_collocate_altimetry/altimetry_scatter_source.jpg
-  P{ID}/P{ID}_collocate_altimetry/plot_altimetry.done
-
-Config keys (postprocess.yaml) — all optional
-----------------------------------------------
-  altimetry_plot_dpi                  150
-  altimetry_plot_min_quality          3
-  altimetry_plot_max_time_delta_s     1800   seconds
-  altimetry_plot_max_dist_km          null   km, null = no filter
-  altimetry_plot_location_s           7      map marker size
-  altimetry_scatter_vmax_hs           null   null = 98th percentile
-  altimetry_scatter_time_delta_vmax   1800   seconds
-  altimetry_scatter_dist_delta_vmax   null   km, null = auto
 """
 
 import argparse
@@ -78,6 +36,35 @@ from workflow.core.plot_style import (
     TITLE_FS, LABEL_FS, TICK_FS, CBAR_FS,
     PADDING_LON, PADDING_LAT,
 )
+
+
+# =============================================================================
+# Model variable name helper
+# =============================================================================
+
+def _model_hs_varname(ds) -> str:
+    """Return the model Hs variable name present in the dataset.
+
+    OCSTrack names the weighted model field after the variable name
+    used at collocation time:
+      SCHISM+WWM collocates 'sigWaveHeight' -> 'model_sigWaveHeight_weighted'
+      WW3        collocates 'HS'            -> 'model_HS_weighted'
+
+    We try both and return whichever exists. Raises KeyError if neither
+    is found.
+    """
+    candidates = [
+        "model_sigWaveHeight_weighted",
+        "model_HS_weighted",
+    ]
+    for name in candidates:
+        if name in ds:
+            return name
+    raise KeyError(
+        f"No model Hs variable found in dataset. "
+        f"Tried: {candidates}. "
+        f"Available variables: {list(ds.data_vars)}"
+    )
 
 
 # =============================================================================
@@ -107,12 +94,6 @@ def _load_boundaries(cfg: dict):
 
 
 def _load_collocated(out_dir: Path):
-    """Load collocated_hs_clean.nc if it exists,
-    otherwise fall back to collocated_hs.nc.
-
-    Mirrors the same preference pattern used in
-    argo_plots.py for collocated Argo data.
-    """
     import xarray as xr
 
     clean_nc = out_dir / "collocated_hs_clean.nc"
@@ -151,13 +132,6 @@ def _load_collocated(out_dir: Path):
 # =============================================================================
 
 def _lon_to_360(lon_arr: np.ndarray) -> np.ndarray:
-    """Convert longitude array from -180..180 to 0..360.
-
-    The collocated file stores lon_obs in -180..180
-    (CCI convention). The Alaska/Bering Sea mesh
-    domain is in 0..360. This ensures observations
-    plot correctly across the full domain (150..230).
-    """
     arr = np.asarray(lon_arr, dtype=float)
     return np.where(arr < 0, arr + 360.0, arr)
 
@@ -190,19 +164,7 @@ def _domain_extent(boundaries):
 # =============================================================================
 
 def _apply_filters(ds, cfg: dict) -> np.ndarray:
-    """Apply plot-time quality, time delta, and
-    distance filters.
-
-    These are secondary filters applied after any
-    collocation-time distance filter already baked
-    into collocated_hs_clean.nc.
-
-    Filters:
-      1. obs_swh_quality_level >= min_quality
-      2. |time_deltas| <= max_time_delta_s (s)
-      3. min(dist_deltas) <= max_dist_km (km) [opt]
-      4. finite obs and model values
-    """
+    """Apply plot-time quality, time delta, and distance filters."""
     min_quality = int(cfg.get(
         "altimetry_plot_min_quality", 3))
     max_td_s    = float(cfg.get(
@@ -227,10 +189,10 @@ def _apply_filters(ds, cfg: dict) -> np.ndarray:
         mask &= (dist_m
                  < float(max_dist_km) * 1000.0)
 
-    # 4. Finite values
+    # 4. Finite values — use whichever model variable is present
+    mod_varname = _model_hs_varname(ds)
     obs_swh = np.array(ds["obs_swh_adjusted"])
-    mod_swh = np.array(
-        ds["model_sigWaveHeight_weighted"])
+    mod_swh = np.array(ds[mod_varname])
     mask &= np.isfinite(obs_swh)
     mask &= np.isfinite(mod_swh)
 
@@ -611,10 +573,11 @@ def plot_scatter_time_delta(cfg: dict, ds,
                              mask: np.ndarray,
                              out_dir: Path,
                              dpi: int):
+    mod_varname = _model_hs_varname(ds)
     obs   = np.array(
         ds["obs_swh_adjusted"])[mask]
     mod   = np.array(
-        ds["model_sigWaveHeight_weighted"])[mask]
+        ds[mod_varname])[mask]
     td_ns = np.array(ds["time_deltas"])[mask]
     td_s  = np.abs(td_ns) / 1e9
 
@@ -647,10 +610,11 @@ def plot_scatter_dist_delta(cfg: dict, ds,
                              mask: np.ndarray,
                              out_dir: Path,
                              dpi: int):
+    mod_varname = _model_hs_varname(ds)
     obs     = np.array(
         ds["obs_swh_adjusted"])[mask]
     mod     = np.array(
-        ds["model_sigWaveHeight_weighted"])[mask]
+        ds[mod_varname])[mask]
     dist_m  = np.array(
         ds["dist_deltas"])[mask].min(axis=1)
     dist_km = dist_m / 1000.0
@@ -684,10 +648,11 @@ def plot_scatter_depth(cfg: dict, ds,
                         mask: np.ndarray,
                         out_dir: Path,
                         dpi: int):
+    mod_varname = _model_hs_varname(ds)
     obs   = np.array(
         ds["obs_swh_adjusted"])[mask]
     mod   = np.array(
-        ds["model_sigWaveHeight_weighted"])[mask]
+        ds[mod_varname])[mask]
     depth = np.array(
         ds["model_dpt"])[mask].mean(axis=1)
 
@@ -715,10 +680,11 @@ def plot_scatter_coast_dist(cfg: dict, ds,
                              mask: np.ndarray,
                              out_dir: Path,
                              dpi: int):
+    mod_varname = _model_hs_varname(ds)
     obs      = np.array(
         ds["obs_swh_adjusted"])[mask]
     mod      = np.array(
-        ds["model_sigWaveHeight_weighted"])[mask]
+        ds[mod_varname])[mask]
     coast_m  = np.array(
         ds["obs_distance_to_coast"])[mask]
     coast_km = coast_m / 1000.0
@@ -748,10 +714,11 @@ def plot_scatter_source(cfg: dict, ds,
                          mask: np.ndarray,
                          out_dir: Path,
                          dpi: int):
+    mod_varname = _model_hs_varname(ds)
     obs     = np.array(
         ds["obs_swh_adjusted"])[mask]
     mod     = np.array(
-        ds["model_sigWaveHeight_weighted"])[mask]
+        ds[mod_varname])[mask]
     sources = np.array(
         ds["source_obs"], dtype=str)[mask]
 

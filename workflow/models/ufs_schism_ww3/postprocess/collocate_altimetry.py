@@ -31,6 +31,7 @@ from workflow.core.config import (
     group_date_range,
     model_dir,
 )
+from workflow.core.environment import env_python
 
 # Import everything from SCHISM+WWM — only override _collocate_one_day
 from workflow.models.schism_wwm.postprocess.collocate_altimetry import (
@@ -42,12 +43,6 @@ from workflow.models.schism_wwm.postprocess.collocate_altimetry import (
     _build_day_list,
     _to_180,
     _write_clean,
-    run_merge,
-    _run_serial as _run_serial_base,
-)
-
-# Re-export run_merge and dispatcher unchanged
-from workflow.models.schism_wwm.postprocess.collocate_altimetry import (
     run_merge,
 )
 
@@ -63,12 +58,6 @@ def _collocate_one_day(cfg: dict,
 
     Uses OCSTrack's WW3 class which reads *.out_grd.ww3.nc files
     directly from the run directory root (not outputs/).
-
-    Parameters
-    ----------
-    cfg      : workflow config dict
-    day_str  : date string YYYYMMDD
-    out_dir  : output directory for daily NetCDF files
     """
     from ocstrack.Model.model import WW3
     from ocstrack.Observation.satellite import SatelliteData
@@ -190,11 +179,12 @@ def _collocate_one_day(cfg: dict,
 
 
 # ---------------------------------------------------------------------------
-# Serial fallback — override to use WW3 _collocate_one_day
+# Serial fallback — uses WW3 _collocate_one_day
 # ---------------------------------------------------------------------------
 
 def _run_serial(cfg: dict):
     """Serial fallback using WW3 collocation."""
+    # FIX: compute obs_dir first, then pass to _find_merged_sat_file
     obs_dir  = _altimetry_obs_dir(cfg)
     sat_file = _find_merged_sat_file(obs_dir)
 
@@ -258,34 +248,15 @@ def run_collocate_altimetry(cfg: dict,
         _run_serial(cfg)
         return
 
-    # Use SCHISM+WWM SLURM submission but with our overridden
-    # _collocate_one_day. The SLURM array tasks call this module
-    # directly via `python -m workflow.models.ufs_schism_ww3
-    # .postprocess.collocate_altimetry day --date YYYYMMDD`
-    from workflow.models.schism_wwm.postprocess.submit_collocate_altimetry import (
-        submit_collocate_altimetry as _submit,
-    )
-
-    # Override the script path in the SLURM submission to point
-    # to this module instead of schism_wwm's
-    import workflow.models.schism_wwm.postprocess.submit_collocate_altimetry as _sub_mod
-    _orig_script = None
-
-    # Patch the SCRIPT key used in common subs
     from pathlib import Path as _Path
     config_dir = _Path(config_dir) if config_dir else None
 
-    # Build subs manually to override SCRIPT
     pid    = cfg["project_id"]
     mdir   = model_dir(cfg)
     logdir = mdir / "logs"
     logdir.mkdir(parents=True, exist_ok=True)
 
-    from workflow.core.config import model_dir as _model_dir
-    from workflow.core.environment import env_python
-    from workflow.core.slurm import SlurmSubmitter
-
-    out_dir    = _out_dir(cfg)
+    out_dir = _out_dir(cfg)
     out_dir.mkdir(parents=True, exist_ok=True)
     done_all   = out_dir / "collocate_altimetry.done"
     done_daily = out_dir / ".daily_done"
@@ -294,13 +265,18 @@ def run_collocate_altimetry(cfg: dict,
         print("  collocate_altimetry: already complete, skipping.")
         return ""
 
-    sat_file = _find_merged_sat_file(cfg)
+    # FIX: compute obs_dir first, then pass to _find_merged_sat_file
+    obs_dir  = _altimetry_obs_dir(cfg)
+    sat_file = _find_merged_sat_file(obs_dir)
+
     if sat_file is None:
         source = str(cfg.get("altimetry_source", "cci")).lower()
         print(f"ERROR: no merged satellite file found in "
               f"obs/altimetry/{source}/.")
         print("  Run download_altimetry first.")
         return ""
+
+    print(f"  Satellite file : {sat_file.name}")
 
     days = _build_day_list(cfg)
     if not days:
@@ -330,8 +306,11 @@ def run_collocate_altimetry(cfg: dict,
         "CONFIG_DIR": str(config_dir),
     }
 
+    from workflow.core.slurm import SlurmSubmitter
+
     submitter = SlurmSubmitter(TEMPLATES_DIR)
 
+    # ---- daily done, only merge missing ----
     if done_daily.exists():
         print("  collocate_altimetry: daily done. Submitting merge.")
         stage2 = dict(common)
@@ -348,6 +327,7 @@ def run_collocate_altimetry(cfg: dict,
             logdir / "collocate_altimetry_merge.sbatch")
         return SlurmSubmitter.parse_jobid(out2)
 
+    # ---- Full pipeline: Stage 1 array + Stage 2 merge ----
     ntasks   = len(days)
     throttle = str(slurm.get(
         "collocate_altimetry_array_throttle", 50))
@@ -388,7 +368,11 @@ def run_collocate_altimetry(cfg: dict,
         "collocate_altimetry_merge.sbatch", stage2,
         logdir / "collocate_altimetry_merge.sbatch",
         dependency=f"afterok:{jid1}")
-    return SlurmSubmitter.parse_jobid(out2)
+    jid2 = SlurmSubmitter.parse_jobid(out2)
+
+    print(f"  Monitor: squeue -u $USER | "
+          f"Logs: {logdir}/alt_*.out")
+    return jid2
 
 
 # ---------------------------------------------------------------------------
@@ -419,5 +403,4 @@ def main():
 
 
 if __name__ == "__main__":
-    from workflow.core.config import load_config
     main()

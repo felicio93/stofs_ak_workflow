@@ -17,6 +17,18 @@ fix/ file will be substituted; the other is silently ignored:
       model_meshfile = 'forcing/datm_esmf_mesh.nc'
       nx_global = 384
 
+skip_restart_read
+-----------------
+For groups 2+ (start_type = continue), skip_restart_read = .true. is
+added to bypass the DATM restart read. This is required because
+datamode=ATMMESH has a CDEPS bug where ATMMESH is present in the
+restart WRITE and ADVANCE case lists but missing from the restart READ
+case list, causing a "datamode ATMMESH not recognized" error when
+start_type=continue. Since DATM reads forcing from pre-computed NetCDF
+files (not a prognostic state), skipping the restart read is safe —
+DATM simply re-initializes its time interpolation from the correct
+group start date.
+
 Works for all grouping modes (monthly, ndays/weekly/daily).
 Sentinel: I{ID}_{group_id}/gen_datm_in.done
 """
@@ -43,24 +55,11 @@ def _substitute(text: str,
                 at_key: str,
                 kv_key: str,
                 new_value: str) -> str:
-    """Replace a placeholder in text regardless of template style.
-
-    Handles:
-      Style A  @[AT_KEY]            -> new_value
-      Style B  kv_key = <old>       -> kv_key = new_value
-               kv_key: <old>        -> kv_key: new_value  (YAML style)
-
-    Parameters
-    ----------
-    text      : template text to search
-    at_key    : token name used in @[AT_KEY] style
-    kv_key    : key name used in key = value / key: value style
-    new_value : replacement string (NOT quoted — wrap in quotes if needed)
-    """
-    # Style A: @[AT_KEY]
+    """Replace a placeholder in text regardless of template style."""
+    # Style A
     text = text.replace(f"@[{at_key}]", new_value)
 
-    # Style B =  (Fortran namelist / model_configure style)
+    # Style B =
     text = re.sub(
         r'(^\s*' + re.escape(kv_key) + r'\s*=\s*)([^\n]*)',
         lambda m: m.group(1) + new_value,
@@ -68,7 +67,7 @@ def _substitute(text: str,
         flags=re.IGNORECASE | re.MULTILINE,
     )
 
-    # Style B :  (YAML style)
+    # Style B :
     text = re.sub(
         r'(^\s*' + re.escape(kv_key) + r'\s*:\s*)([^\n]*)',
         lambda m: m.group(1) + new_value,
@@ -84,6 +83,7 @@ def _substitute(text: str,
 # =============================================================================
 
 def _datm_nc_path(cfg: dict, group_id: str) -> Path:
+    """Return the path to the DATM forcing NetCDF for this group."""
     pid    = cfg["project_id"]
     mdir   = model_dir(cfg)
     subdir = str(cfg.get("datm_subdir", "forcing"))
@@ -131,6 +131,10 @@ def gen_datm_in_group(cfg: dict, group_id: str) -> bool:
               f"Skipping.")
         return True
 
+    # Determine if this is the first group
+    groups   = list_groups(cfg)
+    is_first = (group_id == groups[0])
+
     print(f"--- gen_datm_in {group_id} -> {out_path} ---")
 
     subdir    = str(cfg.get("datm_subdir", "forcing"))
@@ -140,13 +144,10 @@ def gen_datm_in_group(cfg: dict, group_id: str) -> bool:
     text = template_path.read_text()
 
     # When @[DATM_INPUT_DIR]/@[DATM_MESH_FILE] appear together
-    # in a quoted string, replace the combined token first so we
-    # don't leave a bare @[DATM_MESH_FILE] behind.
     combined_at = (f"@[DATM_INPUT_DIR]"
                    f"/@[DATM_MESH_FILE]")
     text = text.replace(combined_at, f'"{mesh_path}"')
 
-    # Then substitute any remaining individual tokens / kv pairs
     text = _substitute(text,
                         "DATM_INPUT_DIR",
                         "datm_input_dir",
@@ -163,9 +164,6 @@ def gen_datm_in_group(cfg: dict, group_id: str) -> bool:
                         "NY_GLOBAL",
                         "ny_global",
                         str(ny))
-
-    # Style B: also handle model_maskfile / model_meshfile
-    # as full path strings
     text = _substitute(text,
                         "DATM_MESH_PATH",
                         "model_maskfile",
@@ -175,10 +173,22 @@ def gen_datm_in_group(cfg: dict, group_id: str) -> bool:
                         "model_meshfile",
                         f"'{mesh_path}'")
 
+    # For groups 2+, add skip_restart_read = .true. to bypass the DATM
+    # restart read (ATMMESH datamode has a CDEPS bug where it is missing
+    # from the restart READ case list — see module docstring).
+    if not is_first:
+        text = text.replace(
+            '  restfilm = "null"',
+            '  restfilm = "null"\n  skip_restart_read = .true.'
+        )
+        print(f"  Added skip_restart_read = .true. "
+              f"(group 2+: ATMMESH restart read bug workaround)")
+
     out_path.write_text(text)
     sentinel.touch()
     print(f"  Wrote {out_path}  (nx={nx}, ny={ny})")
     print(f"  mesh path: {mesh_path}")
+    print(f"  is_first:  {is_first}")
     print(f"  Sentinel: {sentinel}")
     return True
 
@@ -195,6 +205,9 @@ def run_gen_datm_in(cfg: dict):
     print(f"\n{'='*60}")
     print(f"  gen_datm_in: {groups[0]} -> {groups[-1]}  "
           f"({len(groups)} group(s), grouping={grouping})")
+    print(f"  Group 1: no skip_restart_read (cold start)")
+    print(f"  Groups 2+: skip_restart_read=.true. "
+          f"(ATMMESH restart read bug workaround)")
     print(f"{'='*60}\n")
 
     for group_id in groups:

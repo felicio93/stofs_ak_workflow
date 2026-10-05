@@ -10,6 +10,10 @@ Stage 1 — MPI parallel frame generation:
     ranks equals the number of output files so each rank handles exactly one
     file. Nodes are computed automatically: ceil(ntasks / cores_per_node).
 
+    Supports both New I/O (out2d_*.nc, temperature_*.nc, etc.) and
+    Old I/O (schout_*.nc). Output format is detected automatically.
+    For Old I/O, one task per schout_N.nc file regardless of variable.
+
 Stage 2 — GIF assembly (single serial job, --dependency=afterok on Stage 1):
     Collects the frames per variable into one GIF spanning the requested
     date range. Kept separate so the user can re-run GIF assembly with
@@ -27,10 +31,6 @@ from workflow.models.schism.postprocess import plot_common as pc
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates" / "slurm"
 
 # Ranks per node for MPI plotting jobs.
-# out2d_*.nc for a 2.6M node SCHISM+WWM mesh can exceed 6 GB per file.
-# Each rank reads one file plus builds mesh triangulation and renders frames.
-# Using 10 ranks/node gives ~51 GB headroom per rank on a 512 GB Hercules node.
-# Override via slurm.plot_outputs_ranks_per_node in project.yaml if needed.
 _DEFAULT_RANKS_PER_NODE = 10
 
 
@@ -64,8 +64,6 @@ def submit_plot_outputs(cfg: dict, config_dir: Path) -> str:
 
     slurm = cfg.get("slurm", {})
 
-    # Ranks per node: configurable via slurm.plot_outputs_ranks_per_node,
-    # default 10 (conservative for large SCHISM+WWM meshes).
     ranks_per_node = int(slurm.get(
         "plot_outputs_ranks_per_node", _DEFAULT_RANKS_PER_NODE))
 
@@ -99,22 +97,29 @@ def submit_plot_outputs(cfg: dict, config_dir: Path) -> str:
             logdir / "plot_outputs_gif.sbatch")
         return SlurmSubmitter.parse_jobid(out2)
 
-    # Count the total number of output files to size the MPI job.
+    # --- Count output files — supports both New I/O and Old I/O ---
     prefixes = _unique_prefixes(cfg)
-    ntasks = 0
+    ntasks   = 0
     for ym in list_months(cfg):
         outputs = mdir / f"R{pid}" / f"R{pid}_{ym}" / "outputs"
         if not outputs.is_dir():
             continue
-        for prefix in prefixes:
-            ntasks += len(pc.list_output_stacks(outputs, prefix))
+        fmt = pc.detect_output_format(outputs)
+        if fmt == "new":
+            # New I/O: one task per variable-prefix file
+            for prefix in prefixes:
+                ntasks += len(pc.list_output_stacks(outputs, prefix))
+        elif fmt == "old":
+            # Old I/O: one task per combined schout_N.nc file
+            # (all variables extracted from each schout file by a single rank)
+            ntasks += len(pc.list_oldio_stacks(outputs))
 
     if ntasks == 0:
-        print("  plot_outputs: no output files found. Has the model run completed?")
+        print("  plot_outputs: no output files found. "
+              "Has the model run completed?")
         return ""
 
     # Cap ntasks at a user-configurable maximum.
-    # Handle null/None from YAML gracefully.
     max_tasks_cfg = slurm.get("plot_outputs_max_ntasks")
     if max_tasks_cfg is not None:
         ntasks = min(ntasks, int(max_tasks_cfg))

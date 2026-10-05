@@ -1,32 +1,30 @@
 """
-models/schism_wwm/postprocess/wave_skill.py
-===========================================
+models/ufs_schism_ww3/postprocess/wave_skill.py
+=================================================
 Phase 5 step "wave_skill" (interactive; runs in swf_plot env).
 
-Compares NDBC wave observations against WWM station output
-(wwm_sta_*.nc files) for stations that have HS, TM01, or DM
-tokens in their station.in VARS bracket.
+Compares NDBC wave observations against WW3 station output
+(ww3.{YYYYMM}_tab.nc files produced by ww3_ounp) for stations
+that have HS, TM01, or DM tokens in their station.in VARS bracket.
 
-NDBC column mapping
--------------------
-  HS   <- WVHT  (significant wave height, m)
-  TM01 <- APD   (average wave period, s)
-         Note: NDBC APD = average period ≈ TM01 (spectral moment 0,1)
-         not TM02 (spectral moment 0,2). WWM outputs TM01 directly.
-  DM   <- MWD   (mean wave direction, degrees)
+WW3 station NetCDF source
+--------------------------
+  ww3_ounp converts out_pnt.ww3 -> ww3.{YYYYMM}_tab.nc
+  (ITYPE=2, OTYPE=2 — mean wave parameters).
+  One file per group, written to the run directory by auto_hotstart.py
+  after each group completes.
 
-WWM model output
-----------------
-  wwm_sta_000N.nc files in each R{ID}_{group_id}/ run directory.
-  Each file contains one day of half-hourly records (DELTC=1800s).
-  Station index in the NetCDF matches the position in the NOUTS
-  list in wwminput.nml (confirmed by lon/lat comparison).
+Variable mapping
+-----------------
+  WW3 var   NDBC col  Description
+  --------  --------  -----------
+  hs        WVHT      Significant wave height (m)
+  tr        APD       Average period = TM01 (s)
+  th1m      MWD       Mean wave direction (deg)
 
-Station index mapping
----------------------
-  wwminput.nml NOUTS list is parsed to build a name->index map.
-  The wwminput.nml is read from the first available run directory
-  (all groups share the same station list).
+Note: NDBC APD = average period ≈ TM01 (spectral moment 0,1).
+WW3 ww3_ounp OTYPE=2 writes 'tr' for TM01.
+TM02 token in station.in is treated as TM01 alias.
 
 Output
 ------
@@ -57,168 +55,190 @@ from workflow.core.station_parser import parse_station_in
 # ---------------------------------------------------------------------------
 
 # Maps station.in VARS token ->
-#   (NDBC column, WWM netcdf varname, label, unit, color)
+#   (NDBC column, WW3 netcdf varname, label, unit, color)
 #
-# Note: NDBC APD = Average Period ≈ TM01 (spectral moment 0,1).
-# WWM writes TM01 directly in wwm_sta_*.nc.
+# WW3 ww3_ounp OTYPE=2 variable names:
+#   hs    = significant wave height
+#   tr    = mean wave period (TM01, from spectral moments 0,1)
+#   th1m  = mean wave direction
+#   fp    = peak frequency
+#   th1p  = peak direction
+#   sth1m = directional spreading
+#
+# NDBC APD = Average Period ≈ TM01
 WAVE_VAR_PLAN = {
-    "HS":   ("WVHT", "HS",   "Significant Wave Height", "m",   "steelblue"),
-    "TM01": ("APD",  "TM01", "Average Wave Period (TM01)", "s", "darkorange"),
-    "DM":   ("MWD",  "DM",   "Mean Wave Direction",    "deg",  "seagreen"),
+    "HS":   ("WVHT", "hs",   "Significant Wave Height", "m",   "steelblue"),
+    "TM01": ("APD",  "tr",   "Average Wave Period (TM01)", "s", "darkorange"),
+    "DM":   ("MWD",  "th1m", "Mean Wave Direction",    "deg",  "seagreen"),
 }
 
-# Keep TM02 as alias for TM01 for backward compatibility with
-# station.in files that have [TM02] tokens.
+# TM02 token treated as TM01 alias (NDBC APD ≈ TM01)
 WAVE_VAR_PLAN["TM02"] = WAVE_VAR_PLAN["TM01"]
 
 WAVE_TOKENS = set(WAVE_VAR_PLAN.keys())
 
-WIND_COMPONENTS = [
-    ("windx", 3, "u"),
-    ("windy", 4, "v"),
-]
-
-NDBC_COL_MAP = {
-    "T":            "WTMP",
-    "TEMP":         "WTMP",
-    "AIR_PRESSURE": "PRES",
-    "AIRPRESSURE":  "PRES",
-    "PATM":         "PRES",
-    "PRESSURE":     "PRES",
-}
-
-# NDBC missing value sentinels for wave variables
+# NDBC missing value sentinels
 NDBC_WAVE_MISSING = {99.0, 999.0, 9999.0, 99.00, 999.00}
 
 
 # ---------------------------------------------------------------------------
-# wwminput.nml NOUTS parser
+# WW3 station data loader
 # ---------------------------------------------------------------------------
 
-def _parse_nouts(wwminput_path: Path) -> list:
-    """Parse the NOUTS list from wwminput.nml."""
-    text = wwminput_path.read_text(errors="ignore")
-    m = re.search(
-        r"NOUTS\s*=\s*(.*?)(?=\n\s*[A-Z]|\n\s*\/)",
-        text, re.DOTALL | re.IGNORECASE)
-    if not m:
-        return []
-    block = m.group(1)
-    names = re.findall(r"'([^']+)'", block)
-    return [n.strip() for n in names]
-
-
-def _build_station_index_map(cfg: dict) -> dict:
-    """Return {station_name: 0-based column index} from the first
-    available wwminput.nml in the run directories."""
-    pid  = cfg["project_id"]
-    mdir = model_dir(cfg)
-
+def _ww3_tab_files(cfg: dict) -> list:
+    """Return sorted list of ww3.{YYYYMM}_tab.nc files across all groups."""
+    pid   = cfg["project_id"]
+    mdir  = model_dir(cfg)
+    files = []
     for group_id in list_groups(cfg):
-        wwminput = (mdir / f"R{pid}" / f"R{pid}_{group_id}"
-                    / "wwminput.nml")
-        if wwminput.exists():
-            nouts = _parse_nouts(wwminput)
-            if nouts:
-                return {name: i for i, name in enumerate(nouts)}
-    return {}
+        rdir = mdir / f"R{pid}" / f"R{pid}_{group_id}"
+        tab_files = sorted(rdir.glob("ww3.*_tab.nc"))
+        files.extend(tab_files)
+    return files
 
 
-# ---------------------------------------------------------------------------
-# WWM model data loader
-# ---------------------------------------------------------------------------
+def _load_ww3_station(cfg: dict,
+                      station_name: str,
+                      var_name: str,
+                      start_str: str,
+                      end_str: str) -> pd.Series:
+    """Load a WW3 variable for one station from all ww3.*_tab.nc files.
 
-def _mjd_to_datetime64(mjd_array: np.ndarray) -> np.ndarray:
-    """Convert Modified Julian Date to numpy datetime64[ns]."""
-    epoch = np.datetime64("1858-11-17T00:00:00", "s")
-    return epoch + (mjd_array * 1e9).astype("timedelta64[ns]")
+    The ww3_tab NetCDF has dimensions (time, station) with station
+    identified by name in the station_name variable (char array).
+    Time is in days since 1990-01-01.
 
+    Parameters
+    ----------
+    cfg          : workflow config dict
+    station_name : station name string matching ww3_points.list
+    var_name     : WW3 variable name (e.g. 'hs', 'tr', 'th1m')
+    start_str    : start date string YYYY-MM-DD
+    end_str      : end date string YYYY-MM-DD
 
-def _load_wwm_station(cfg: dict, station_name: str,
-                      col_idx: int, var_name: str,
-                      start_str: str, end_str: str) -> pd.Series:
-    """Load a single variable for one station from all wwm_sta_*.nc files."""
+    Returns
+    -------
+    pd.Series with datetime index, or empty Series if not found.
+    """
     import netCDF4 as nc4
 
-    pid  = cfg["project_id"]
-    mdir = model_dir(cfg)
+    tab_files = _ww3_tab_files(cfg)
+    if not tab_files:
+        return pd.Series(dtype="float64")
 
     records = []
 
-    for group_id in list_groups(cfg):
-        rdir = mdir / f"R{pid}" / f"R{pid}_{group_id}"
-        if not rdir.is_dir():
-            continue
+    for nc_path in tab_files:
+        ds = None
+        try:
+            ds = nc4.Dataset(str(nc_path))
 
-        wwm_files = sorted(
-            rdir.glob("wwm_sta_*.nc"),
-            key=lambda p: int(
-                re.search(r"(\d+)\.nc$", p.name).group(1))
-        )
-
-        for nc_path in wwm_files:
-            ds = None
-            try:
-                ds = nc4.Dataset(str(nc_path))
-
-                if var_name not in ds.variables:
-                    ds.close()
-                    ds = None
-                    continue
-
-                times_mjd = np.asarray(
-                    ds.variables["ocean_time"][:])
-                vals = np.asarray(
-                    ds.variables[var_name][:, col_idx],
-                    dtype="float64")
-
+            if var_name not in ds.variables:
                 ds.close()
                 ds = None
-
-                dt_arr = _mjd_to_datetime64(times_mjd)
-
-                vals = np.where(vals < -900, np.nan, vals)
-                vals = np.where(~np.isfinite(vals), np.nan, vals)
-
-                for dt, v in zip(dt_arr, vals):
-                    records.append((dt, v))
-
-            except Exception as exc:
-                print(f"  WARNING: error reading "
-                      f"{nc_path.name}: {exc}")
-                if ds is not None:
-                    try:
-                        ds.close()
-                    except Exception:
-                        pass
-                    ds = None
                 continue
+
+            # Read station names (char array: station x string40)
+            sta_names_raw = ds.variables["station_name"][:]
+            sta_names = []
+            for i in range(sta_names_raw.shape[0]):
+                row = sta_names_raw[i]
+                if hasattr(row, 'compressed'):
+                    s = "".join(
+                        c.decode("utf-8", errors="ignore")
+                        if isinstance(c, bytes) else str(c)
+                        for c in row.compressed()
+                    ).strip()
+                else:
+                    s = "".join(
+                        c.decode("utf-8", errors="ignore")
+                        if isinstance(c, bytes) else str(c)
+                        for c in row
+                    ).strip()
+                sta_names.append(s)
+
+            # Find station index
+            sta_idx = None
+            for i, name in enumerate(sta_names):
+                if name.strip() == station_name.strip():
+                    sta_idx = i
+                    break
+
+            if sta_idx is None:
+                ds.close()
+                ds = None
+                continue
+
+            # Read time (days since 1990-01-01)
+            time_var = ds.variables["time"]
+            times_days = np.asarray(time_var[:])
+
+            # Convert to datetime
+            epoch = pd.Timestamp("1990-01-01")
+            timestamps = [
+                epoch + pd.Timedelta(days=float(t))
+                for t in times_days
+            ]
+
+            # Read variable values for this station
+            # Shape is (time, station) with ORDER=T
+            raw = ds.variables[var_name][:, sta_idx]
+
+            # Ensure 1D — squeeze out any extra dimensions
+            vals = np.asarray(raw, dtype="float64").squeeze()
+            if vals.ndim == 0:
+                vals = vals.reshape(1)
+            elif vals.ndim > 1:
+                # Take first column along extra dimension
+                vals = vals[:, 0]
+
+            ds.close()
+            ds = None
+
+            # Replace fill values with NaN
+            fill = 9.96921e+36
+            vals = np.where(np.abs(vals) > fill * 0.9,
+                            np.nan, vals)
+            vals = np.where(~np.isfinite(vals), np.nan, vals)
+
+            # Append records as scalar floats
+            for t, v in zip(timestamps, vals.ravel()):
+                records.append((t, float(v)))
+
+        except Exception as exc:
+            print(f"  WARNING: error reading "
+                  f"{nc_path.name}: {exc}")
+            if ds is not None:
+                try:
+                    ds.close()
+                except Exception:
+                    pass
+                ds = None
+            continue
 
     if not records:
         return pd.Series(dtype="float64")
 
-    idx  = pd.DatetimeIndex(
-        [pd.Timestamp(r[0]) for r in records])
-    vals = np.array([r[1] for r in records], dtype="float64")
+    idx  = pd.DatetimeIndex([r[0] for r in records])
+    vals = np.array([float(r[1]) for r in records],
+                    dtype="float64")
 
     s = pd.Series(vals, index=idx).sort_index()
     s.index = s.index.tz_localize(None)
     s = s[~s.index.duplicated(keep="first")]
-
-    return s.loc[start_str:end_str]
+    return s.loc[start_str:end_str].dropna()
 
 
 # ---------------------------------------------------------------------------
-# NDBC wave observation loader
+# NDBC observation loader
 # ---------------------------------------------------------------------------
 
 def _load_ndbc_wave_var(cfg: dict, station_id: str,
                         ndbc_col: str,
                         start_str: str,
                         end_str: str) -> pd.Series:
-    """Load one NDBC wave column for a station."""
-    pid  = cfg["project_id"]
-    mdir = model_dir(cfg)
+    """Load one NDBC wave column for a station from obs/ndbc/ CSVs."""
+    mdir     = model_dir(cfg)
     ndbc_dir = mdir / "obs" / "ndbc"
 
     start_year = int(str(start_str)[:4])
@@ -256,14 +276,13 @@ def _load_ndbc_wave_var(cfg: dict, station_id: str,
 
     for mv in NDBC_WAVE_MISSING:
         s = s.where(s != mv, other=np.nan)
-
     s = s.where(s < 900, other=np.nan)
 
     return s.loc[start_str:end_str].dropna()
 
 
 # ---------------------------------------------------------------------------
-# Metrics
+# Metrics and plotting
 # ---------------------------------------------------------------------------
 
 def _metrics(obs: pd.Series, mod: pd.Series,
@@ -285,10 +304,6 @@ def _metrics(obs: pd.Series, mod: pd.Series,
 
     return len(df), float(np.mean(df["obs"])), bias, rmse, r2
 
-
-# ---------------------------------------------------------------------------
-# Plot
-# ---------------------------------------------------------------------------
 
 def _plot_wave(obs: pd.Series, mod: pd.Series,
                title: str, ylabel: str,
@@ -317,8 +332,7 @@ def _plot_wave(obs: pd.Series, mod: pd.Series,
 # ---------------------------------------------------------------------------
 
 def run_wave_skill(cfg: dict, config_dir=None):
-    """Run wave skill assessment for all NDBC stations with wave
-    tokens in station.in."""
+    """Run wave skill assessment using WW3 station NetCDF output."""
     pid  = cfg["project_id"]
     mdir = model_dir(cfg)
 
@@ -349,29 +363,33 @@ def run_wave_skill(cfg: dict, config_dir=None):
     resample = re.sub(r"^(\d*)T$",
         lambda m: (m.group(1) or "1") + "min", resample)
 
-    # ---- Build station index map from wwminput.nml ----
-    station_index_map = _build_station_index_map(cfg)
-    if not station_index_map:
-        print("ERROR: could not parse NOUTS from any "
-              "wwminput.nml in the run directories.")
+    # ---- Check WW3 tab files exist ----
+    tab_files = _ww3_tab_files(cfg)
+    if not tab_files:
+        print("ERROR: no ww3.*_tab.nc files found in run "
+              "directories.")
+        print("  Run convert_ww3_stations (via setup_run + "
+              "submit_run) first.")
         return
 
     print(f"\n{'='*60}")
-    print(f"  Wave skill assessment (SCHISM+WWM)")
+    print(f"  Wave skill assessment (UFS-SCHISM+WW3)")
     print(f"  Window   : {start_str} -> {end_str}")
     print(f"  Resample : {resample}")
-    print(f"  Stations : {len(station_index_map)} WWM "
-          f"stations indexed from wwminput.nml")
-    print(f"  Variables: HS (WVHT), TM01 (APD), DM (MWD)")
+    print(f"  WW3 tab files: {len(tab_files)} file(s)")
+    print(f"    e.g. {tab_files[0].name}")
+    print(f"  Variables: HS (WVHT->hs), "
+          f"TM01 (APD->tr), DM (MWD->th1m)")
     print(f"  Output   : {out_dir}")
     print(f"{'='*60}\n")
 
-    # ---- Parse station.in — NDBC stations with wave tokens ----
+    # ---- Parse station.in ----
     all_stations = parse_station_in(station_in)
     wave_stations = [
         s for s in all_stations
         if s["source"] == "NDBC"
-        and any(t.upper() in WAVE_TOKENS for t in s["vars"])
+        and any(t.upper() in WAVE_TOKENS
+                for t in s["vars"])
         and s["depth"] == 0.0
     ]
 
@@ -385,22 +403,16 @@ def run_wave_skill(cfg: dict, config_dir=None):
         name = re.sub(r"\s+z=[-\d.]+m$", "",
                       st["name"]).strip()
 
-        col_idx = station_index_map.get(sid)
-        if col_idx is None:
-            print(f"  {sid}: not found in NOUTS list, skipping.")
-            continue
-
-        print(f"  Station {sid} ({name})  "
-              f"[WWM column {col_idx}]")
+        print(f"  Station {sid} ({name})")
 
         for tok in st["vars"]:
             T = tok.strip().upper()
             if T not in WAVE_TOKENS:
                 continue
 
-            # Resolve to canonical token (TM02 -> TM01)
             plan_entry = WAVE_VAR_PLAN[T]
-            ndbc_col, wwm_var, label, unit, color = plan_entry
+            ndbc_col, ww3_var, label, unit, color = plan_entry
+            # Use TM01 as canonical name for TM02 alias
             canonical_tok = "TM01" if T == "TM02" else T
 
             # ---- Load observations ----
@@ -411,16 +423,16 @@ def run_wave_skill(cfg: dict, config_dir=None):
                       f"(column {ndbc_col}), skipping.")
                 continue
 
-            # ---- Load model ----
-            mod = _load_wwm_station(
-                cfg, sid, col_idx, wwm_var,
-                start_str, end_str)
+            # ---- Load WW3 model ----
+            mod = _load_ww3_station(
+                cfg, sid, ww3_var, start_str, end_str)
             if mod.empty:
-                print(f"    {T}: no model data for "
-                      f"{wwm_var}, skipping.")
+                print(f"    {T}: no WW3 data for "
+                      f"var={ww3_var} station={sid}, "
+                      f"skipping.")
                 continue
 
-            # ---- Compute metrics ----
+            # ---- Metrics ----
             res = _metrics(obs, mod, resample)
             if res is None:
                 print(f"    {T}: fewer than 2 overlapping "
@@ -430,12 +442,13 @@ def run_wave_skill(cfg: dict, config_dir=None):
             n, mean_obs, bias, rmse, r2 = res
 
             mod_label = (
-                f"Model  "
+                f"WW3  "
                 f"[R\u00b2: {r2:.2f}; "
                 f"RMSE: {rmse:.3f} {unit}; "
                 f"Bias: {bias:.3f} {unit}]")
 
-            out_jpg = out_dir / f"{sid}_{canonical_tok.lower()}.jpg"
+            out_jpg = (out_dir
+                       / f"{sid}_{canonical_tok.lower()}.jpg")
             _plot_wave(
                 obs, mod,
                 title=(f"NDBC ({sid}): {name} "
@@ -460,7 +473,7 @@ def run_wave_skill(cfg: dict, config_dir=None):
                 end=end_str,
             ))
 
-            print(f"    {T} ({wwm_var}): n={n}  "
+            print(f"    {T} (ww3={ww3_var}): n={n}  "
                   f"bias={bias:.3f}  "
                   f"rmse={rmse:.3f}  "
                   f"r2={r2:.3f}  "
@@ -484,6 +497,6 @@ def run_wave_skill(cfg: dict, config_dir=None):
 
     sentinel.touch()
     print(f"\n{'='*60}")
-    print(f"  Wave skill assessment complete. "
+    print(f"  Wave skill assessment (WW3) complete. "
           f"Plots + CSV in {out_dir}")
     print(f"{'='*60}\n")

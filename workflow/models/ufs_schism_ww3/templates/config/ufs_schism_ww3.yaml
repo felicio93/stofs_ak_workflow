@@ -1,0 +1,112 @@
+# =============================================================================
+# ufs_schism_ww3.yaml — UFS-SCHISM+WW3 specific settings
+# =============================================================================
+# Inherits all ufs_schism.yaml keys. Only WW3-specific additions are here.
+
+# -----------------------------------------------------------------------------
+# DATM settings (inherited from ufs_schism.yaml — repeated here for clarity)
+# -----------------------------------------------------------------------------
+datm_subdir: forcing
+datm_filename_template: "datm_{YYYYMM}.nc"
+datm_time_units_template: "seconds since {YYYY}-{MM}-01 00:00:00"
+datm_fill_value: -9999.0
+dt_atmos: 720
+
+# -----------------------------------------------------------------------------
+# Coupling interval
+# -----------------------------------------------------------------------------
+coupling_dt: 3600
+
+# -----------------------------------------------------------------------------
+# UFS model coupling configuration
+# -----------------------------------------------------------------------------
+# Update petlist_bounds to match your job allocation before running setup_run.
+#
+# Current allocation (fix/run_test):
+#   48 nodes x 80 cores = 3840 total tasks (--exclusive)
+#   ATM (DATM):   PETs   0 -  159  (160 tasks,  2 nodes)
+#   OCN (SCHISM): PETs 160 - 3353 (3194 tasks, 40 nodes)
+#   WAV (WW3):    PETs 3354 - 3833  (480 tasks,  6 nodes)
+#   MED (CMEPS):  shares ATM petlist (0-159)
+#   Total: 3834 tasks on 48 nodes
+#
+med_model: "cmeps"
+atm_model: "datm"
+ocn_model: "schism"
+wav_model: "ww3"
+cpl_mode: "coastal"
+coupling_config: "none"
+run_type: "startup"
+case_name: "ufs.cpld"
+restart_n: 9999
+med_petlist_bounds: "0 159"
+atm_petlist_bounds: "0 159"
+ocn_petlist_bounds: "160 3353"
+wav_petlist_bounds: "3354 3833"
+med_omp_num_threads: 1
+atm_omp_num_threads: 1
+ocn_omp_num_threads: 1
+wav_omp_num_threads: 1
+
+# -----------------------------------------------------------------------------
+# Mediator (CMEPS) PIO settings
+# pio_typename: PNETCDF (parallel NetCDF, fast) or NETCDF (serial, slow)
+# pio_stride:   every Nth rank is an I/O task
+#               number of I/O tasks = total_tasks / pio_stride
+#               e.g. 3834 / 8 = ~480 I/O tasks
+# Using PNETCDF + stride=8 matches Yunfang's proven configuration and
+# reduces mediator restart write time from ~60 min to ~5 min.
+# -----------------------------------------------------------------------------
+med_pio_typename: "PNETCDF"
+med_pio_stride: 8
+
+# -----------------------------------------------------------------------------
+# WW3 ESMF mesh file (symlinked from fix/ into each run directory).
+# Generated from scrip.nc using:
+#   ESMF_Scrip2Unstruct scrip.nc ww3_ESMFmesh.nc 0
+# scrip.nc is produced by ww3_grid (requires SCRIPNC in the WW3 switch).
+# ww3_ESMFmesh.nc is the ESMF unstructured mesh format required by WW3 NUOPC cap.
+# -----------------------------------------------------------------------------
+wav_mesh_file: ww3_ESMFmesh.nc
+
+# -----------------------------------------------------------------------------
+# WW3 PIO (parallel I/O) settings
+# pio_numiotasks: number of I/O tasks for WW3 output
+# pio_stride:     stride between I/O tasks (-99 = auto)
+# pio_rearranger: data rearranger method ('box' recommended)
+# pio_root:       root I/O task (-99 = auto)
+# -----------------------------------------------------------------------------
+wav_pio_typename: "pnetcdf"
+wav_pio_numiotasks: 4
+wav_pio_stride: -99
+wav_pio_rearranger: "box"
+wav_pio_root: -99
+
+# -----------------------------------------------------------------------------
+# WW3 point output cadence [seconds]
+# Must match DELTC in ww3_shel.nml &output_date_nml date%point
+# and DELTC=1800 in wwminput.nml &STATION (for consistency with WWM runs)
+# -----------------------------------------------------------------------------
+ww3_point_output_dt: 1800
+
+# -----------------------------------------------------------------------------
+# WW3 static fixed files to symlink from fix/ into each run directory.
+# These never change between groups.
+# Note: scrip.nc is NOT listed here — it is only needed to generate
+# ww3_ESMFmesh.nc and is not required at runtime.
+# -----------------------------------------------------------------------------
+ww3_fix_files:
+  - mod_def.ww3
+  - namelists.nml
+  - ww3_points.list
+  - ST4TABUHF2.bin
+  - ww3_ESMFmesh.nc
+  - mesh.msh
+
+# -----------------------------------------------------------------------------
+# WW3 restart chaining between groups.
+# false: cold start for every group (safe default until restart is verified).
+# true:  symlink restart.ww3 from previous group outputs into next group
+#        run directory (enable once end-of-group restart is confirmed).
+# -----------------------------------------------------------------------------
+chain_ww3_restart: false

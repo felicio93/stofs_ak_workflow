@@ -149,5 +149,6 @@ executables:
   # schism_wwm:       pschism_HERCULES_WWM_NO_PARMETIS_PREC_EVAP_BLD_STANDALONE_SH_MEM_COMM_TVD-VL
   # UFS-SCHISM:
   # ufs_schism:       fv3_datm2sch.exe
+  # ww3_ounp:         ww3_ounp
   combine_output:   combine_output11_MPI
   combine_hotstart: combine_hotstart7.exe

@@ -7,16 +7,26 @@ Self-contained SCHISM monthly run manager for ONE run directory.
 Behaviour (ihot=1, single end-of-month hotstart):
   1. Submit run_test via sbatch.
   2. Poll squeue, watching mirror.out for advancement and hang detection.
+     _POLL_STEADY is set to 3600s (1 hour) to allow time for large
+     restart file I/O at the end of each group (WW3 + mediator restarts
+     can total 9+ GB and take 30-60 minutes to write).
   3. On successful completion:
        - (UFS-SCHISM) combine ALL output stacks at end of month
        - submit run_comb (combine_hotstart7) and wait
        - delete per-rank hotstart files
+       - (UFS-SCHISM+WW3) convert out_pnt.ww3 -> NetCDF via ww3_ounp
        - symlink combined SCHISM hotstart into next group's run directory
+       - chain WW3 restart: copy ufs.cpld.ww3.r.{date}.nc to next run dir
+       - chain DATM restart: copy ufs.cpld.datm.r.{date}.nc to next run dir
+       - chain mediator restart: copy RESTART/ufs.cpld.cpl.r.{date}.nc
+         to next group's RESTART/
+       - write rpointer.atm and rpointer.cpl in next run dir
        - symlink WWM hotfile_out_WWM.nc -> next group's hotfile_in_WWM.nc
        - launch next group's auto_hotstart.py (if chain_hotstart=True)
        - write run.done sentinel
 """
 
+import glob
 import os
 import re
 import sys
@@ -49,7 +59,10 @@ COMBINE_OUTPUT_SBATCH   = r"{{COMBINE_OUTPUT_SBATCH}}"
 # =============================================================================
 
 _POLL_SCHEDULE  = [0, 60, 60, 60, 60, 60, 300, 1200, 1800]
-_POLL_STEADY    = 1800
+# Increased from 1800s to 3600s to allow time for large restart file I/O
+# at end of group (WW3 restart ~7GB + mediator restart ~2GB can take
+# 30-60 minutes to write after the last time step).
+_POLL_STEADY    = 3600
 _COMBINE_POLL_SECONDS = 300
 _MAX_RESUBMITS  = 5
 _GRACE_CHECKS   = 10
@@ -136,34 +149,35 @@ def mirror_time_step():
 
 
 def run_completed():
+    """Return True if the model run has finished successfully.
+
+    Checks two completion signals:
+
+    1. SCHISM standalone: 'Run completed successfully' in mirror.out
+    2. UFS coupled: 'HAS ENDED' in myout — appears only after ALL
+       components finish (including WW3 restart file I/O).
+    """
     mo    = Path(RUNDIR) / "outputs" / "mirror.out"
     myout = Path(RUNDIR) / "myout"
+
+    # Check 1: SCHISM standalone
     if mo.exists():
         try:
             lines = mo.read_text(errors="ignore").splitlines()
-        except Exception:
-            lines = []
-        for line in reversed(lines[-25:]):
-            if "Run completed successfully" in line:
-                return True
-    hotstart_written = False
-    if mo.exists():
-        try:
-            content = mo.read_text(errors="ignore")
-            if "hot start written" in content:
-                hotstart_written = True
+            for line in reversed(lines[-25:]):
+                if "Run completed successfully" in line:
+                    return True
         except Exception:
             pass
-    ufs_ended = False
+
+    # Check 2: UFS coupled
     if myout.exists():
         try:
-            content = myout.read_text(errors="ignore")
-            if "HAS ENDED" in content:
-                ufs_ended = True
+            if "HAS ENDED" in myout.read_text(errors="ignore"):
+                return True
         except Exception:
             pass
-    if hotstart_written and ufs_ended:
-        return True
+
     return False
 
 
@@ -327,6 +341,82 @@ def combine_output_stacks():
 
 
 # =============================================================================
+# WW3 station output conversion (UFS-SCHISM+WW3)
+# =============================================================================
+
+def _convert_ww3_stations():
+    """Submit ww3_ounp to convert out_pnt.ww3 -> NetCDF after each group.
+
+    Only runs if:
+      1. out_pnt.ww3 exists in the run directory (WW3 point output present)
+      2. convert_ww3_sta.sbatch exists (rendered by setup_run for
+         model_type=ufs_schism_ww3)
+      3. convert_ww3_sta.done does NOT already exist
+
+    Waits for the job to complete before returning so that the NetCDF
+    is available for wave_skill postprocessing.
+
+    The output file is ww3.{YYYYMM}_tab.nc containing hs, tr (TM01),
+    fp, th1m and other mean wave parameters for all 51 stations.
+    """
+    rundir   = Path(RUNDIR)
+    out_pnt  = rundir / "out_pnt.ww3"
+    sbatch   = rundir / "convert_ww3_sta.sbatch"
+    sentinel = rundir / "convert_ww3_sta.done"
+
+    # Skip if not a WW3 run
+    if not out_pnt.exists():
+        return
+    if not sbatch.exists():
+        log("WARNING: out_pnt.ww3 exists but convert_ww3_sta.sbatch "
+            "not found — skipping WW3 station conversion. "
+            "Re-run setup_run to generate the sbatch script.")
+        return
+
+    if sentinel.exists():
+        log("convert_ww3_stations: already complete "
+            "(sentinel found). Skipping.")
+        return
+
+    log("Submitting convert_ww3_stations job ...")
+    rc, out = sh(f"sbatch {sbatch}")
+    if rc != 0:
+        log(f"WARNING: convert_ww3_stations sbatch failed:\n{out}")
+        log("  WW3 station NetCDF will not be available "
+            "for wave_skill. Continuing.")
+        return
+
+    # Extract job name from sbatch script for squeue polling
+    try:
+        sbatch_text = sbatch.read_text()
+        m = re.search(r"#SBATCH\s+-J\s+(\S+)", sbatch_text)
+        jobname = m.group(1) if m else out.strip().split()[-1]
+    except Exception:
+        jobname = out.strip().split()[-1]
+
+    log(f"Submitted convert_ww3_stations: {out.strip()}")
+
+    # Wait for completion
+    while squeue_line_for(jobname) is not None:
+        log(f"  convert_ww3_stations ({jobname}): "
+            f"waiting ... (checking every 60s)")
+        time.sleep(60)
+
+    time.sleep(5)
+
+    # Check sentinel and report
+    if sentinel.exists():
+        nc_files = list(rundir.glob("ww3.*.nc"))
+        log(f"convert_ww3_stations complete. "
+            f"{len(nc_files)} NetCDF file(s) written: "
+            f"{[f.name for f in nc_files]}")
+    else:
+        log("WARNING: convert_ww3_stations finished but "
+            "convert_ww3_sta.done not found. "
+            f"Check {rundir.name}/convert_ww3_sta.err")
+
+
+# =============================================================================
 # Hotstart management
 # =============================================================================
 
@@ -354,6 +444,92 @@ def _partition_hotstarts_exist():
                for f in outdir.glob(f"hotstart_*_{NHOT_WRITE}.nc"))
 
 
+def _chain_ww3_restart():
+    """Copy WW3, DATM, and mediator restart files from current group
+    into next group's run directory, and write rpointer files.
+
+    Files copied to NEXT_RUNDIR/:
+      1. ufs.cpld.ww3.r.{date}.nc   — WW3 restart
+      2. ufs.cpld.datm.r.{date}.nc  — DATM restart
+      3. rpointer.atm               — plain text: DATM restart filename
+      4. rpointer.cpl               — plain text: mediator restart path
+
+    Files copied to NEXT_RUNDIR/RESTART/:
+      5. ufs.cpld.cpl.r.{date}.nc   — mediator (CMEPS) restart
+
+    Notes:
+    - rpointer.atm contains just the filename (no path)
+    - rpointer.cpl contains the path relative to the run dir:
+        RESTART/ufs.cpld.cpl.r.2025-09-03-00000.nc
+    - DATM (datamode=ATMMESH) has a CDEPS bug where ATMMESH is missing
+      from the restart READ case list. The workaround is
+      skip_restart_read=.true. in datm_in (added by gen_datm_in.py
+      for groups 2+). The rpointer.atm is still written here so it is
+      available if the bug is ever fixed in a future recompile.
+    """
+    if NEXT_RUNDIR is None:
+        return
+
+    import shutil
+    next_rdir = Path(NEXT_RUNDIR)
+
+    # ---- WW3 restart ----
+    ww3_files = sorted(glob.glob(
+        str(Path(RUNDIR) / "ufs.cpld.ww3.r.*.nc")))
+    if ww3_files:
+        src = Path(ww3_files[-1])
+        dst = next_rdir / src.name
+        if dst.exists() or dst.is_symlink():
+            dst.unlink()
+        shutil.copy2(str(src), str(dst))
+        log(f"Copied WW3 restart: {src.name} -> "
+            f"{next_rdir.name}/")
+    else:
+        log(f"WARNING: no ufs.cpld.ww3.r.*.nc found in "
+            f"{RUNDIR} — next group WW3 will cold-start.")
+
+    # ---- DATM restart + rpointer.atm ----
+    datm_files = sorted(glob.glob(
+        str(Path(RUNDIR) / "ufs.cpld.datm.r.*.nc")))
+    if datm_files:
+        src = Path(datm_files[-1])
+        dst = next_rdir / src.name
+        if dst.exists() or dst.is_symlink():
+            dst.unlink()
+        shutil.copy2(str(src), str(dst))
+        log(f"Copied DATM restart: {src.name} -> "
+            f"{next_rdir.name}/")
+        rpointer_atm = next_rdir / "rpointer.atm"
+        rpointer_atm.write_text(src.name + "\n")
+        log(f"Wrote rpointer.atm -> {src.name}")
+    else:
+        log(f"WARNING: no ufs.cpld.datm.r.*.nc found in "
+            f"{RUNDIR} — next group DATM restart missing.")
+
+    # ---- Mediator (CMEPS) restart + rpointer.cpl ----
+    restart_dir = Path(RUNDIR) / "RESTART"
+    cpl_files   = sorted(glob.glob(
+        str(restart_dir / "ufs.cpld.cpl.r.*.nc")))
+    if cpl_files:
+        src          = Path(cpl_files[-1])
+        next_restart = next_rdir / "RESTART"
+        next_restart.mkdir(parents=True, exist_ok=True)
+        dst = next_restart / src.name
+        if dst.exists() or dst.is_symlink():
+            dst.unlink()
+        shutil.copy2(str(src), str(dst))
+        log(f"Copied mediator restart: {src.name} -> "
+            f"{next_rdir.name}/RESTART/")
+        rpointer_cpl = next_rdir / "rpointer.cpl"
+        rpointer_cpl.write_text(
+            f"RESTART/{src.name}\n")
+        log(f"Wrote rpointer.cpl -> RESTART/{src.name}")
+    else:
+        log(f"WARNING: no ufs.cpld.cpl.r.*.nc found in "
+            f"{RUNDIR}/RESTART/ — next group mediator "
+            f"will cold-start.")
+
+
 def combine_and_chain():
     combined = Path(RUNDIR) / "outputs" / f"hotstart_it={NHOT_WRITE}.nc"
 
@@ -377,6 +553,9 @@ def combine_and_chain():
     _clean_partition_hotstarts()
     _clean_local_to_global_files()
 
+    # Convert WW3 station output to NetCDF (UFS-SCHISM+WW3 only)
+    _convert_ww3_stations()
+
     if IS_LAST_MONTH:
         log("This is the last group; no chaining.")
     elif not CHAIN_HOTSTART:
@@ -394,10 +573,12 @@ def combine_and_chain():
         log(f"Symlinked SCHISM hotstart: {next_hot} -> {combined}")
 
         # ----------------------------------------------------------------
-        # Chain WWM hotfile
-        # WWM writes: hotfile_out_WWM.nc  (FILEHOT_OUT in &HOTFILE)
-        # WWM reads:  hotfile_in_WWM.nc   (FILEHOT_IN  in &HOTFILE)
-        # The previous group's OUTPUT becomes the next group's INPUT.
+        # Chain WW3 + DATM + mediator restarts (UFS-SCHISM+WW3)
+        # ----------------------------------------------------------------
+        _chain_ww3_restart()
+
+        # ----------------------------------------------------------------
+        # Chain WWM hotfile (SCHISM+WWM internal coupling)
         # ----------------------------------------------------------------
         wwm_src = Path(RUNDIR) / "hotfile_out_WWM.nc"
         wwm_dst = Path(NEXT_RUNDIR) / "hotfile_in_WWM.nc"
@@ -406,10 +587,6 @@ def combine_and_chain():
                 wwm_dst.unlink()
             wwm_dst.symlink_to(wwm_src)
             log(f"Symlinked WWM hotfile: {wwm_dst.name} -> {wwm_src}")
-        else:
-            log(f"WARNING: WWM hotfile not found at {wwm_src}. "
-                f"Next group will abort on startup because LHOTR=.true. "
-                f"in wwminput.nml.")
 
     (Path(RUNDIR) / "run.done").touch()
     log(f"Wrote sentinel: {Path(RUNDIR) / 'run.done'}")

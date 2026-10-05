@@ -11,6 +11,9 @@ Works for all grouping modes (monthly, ndays/weekly/daily).
 _group_for_day() maps each calendar day to the correct group run
 directory regardless of grouping — fixes the YYYYMM vs YYYYMMDD
 mismatch that caused "no temperature_*.nc" for ndays grouping.
+
+Supports both New I/O (temperature_*.nc) and Old I/O (schout_*.nc).
+Output format is detected automatically per run directory.
 """
 
 import argparse
@@ -38,11 +41,11 @@ _mesh_cache = {}
 def _get_mesh(cfg):
     key = cfg["project_id"]
     if key not in _mesh_cache:
-        out2d0 = _find_any_out2d(cfg)
-        if out2d0 is None:
+        out0 = _find_any_output_file(cfg)
+        if out0 is None:
             _mesh_cache[key] = (None, None, None, None, None)
         else:
-            _mesh_cache[key] = pc.load_mesh(out2d0)
+            _mesh_cache[key] = pc.load_mesh(out0)
     return _mesh_cache[key]
 
 
@@ -58,11 +61,7 @@ def _gif_dir(cfg) -> Path:
 
 
 def _group_for_day(cfg, d: date):
-    """Return the group_id whose date range contains day d.
-
-    Works for both monthly (YYYYMM) and ndays (YYYYMMDD) grouping.
-    Returns None if no group contains the day.
-    """
+    """Return the group_id whose date range contains day d."""
     for gid in list_groups(cfg):
         gstart, gend = group_date_range(cfg, gid)
         if gstart <= d <= gend:
@@ -70,14 +69,22 @@ def _group_for_day(cfg, d: date):
     return None
 
 
-def _find_any_out2d(cfg):
-    """Return the first out2d_*.nc file found across all run groups."""
+def _find_any_output_file(cfg):
+    """Return the first output file found across all run groups.
+
+    Works for both New I/O (out2d_*.nc) and Old I/O (schout_*.nc).
+    """
     pid  = cfg["project_id"]
     mdir = model_dir(cfg)
     for gid in list_groups(cfg):
         outputs = (mdir / f"R{pid}" / f"R{pid}_{gid}"
                    / "outputs")
+        # New I/O
         stacks = pc.list_output_stacks(outputs, "out2d")
+        if stacks:
+            return stacks[0]
+        # Old I/O
+        stacks = pc.list_oldio_stacks(outputs)
         if stacks:
             return stacks[0]
     return None
@@ -87,23 +94,12 @@ def _find_any_out2d(cfg):
 # Model SST for one day
 # =============================================================================
 
-def _model_sst_for_day(cfg, d: date):
-    """Return (values, used_desc) — model surface SST for day d."""
+def _model_sst_for_day_newio(cfg, d: date, outputs: Path):
+    """Extract SST from New I/O temperature_*.nc stacks."""
     import numpy as np
     import xarray as xr
 
-    pid  = cfg["project_id"]
-    mdir = model_dir(cfg)
-
-    # Find the group run directory that covers this calendar day.
-    # This handles both monthly (YYYYMM) and ndays (YYYYMMDD) grouping.
-    gid = _group_for_day(cfg, d)
-    if gid is None:
-        return None, f"no group covers {d}"
-
-    outputs = (mdir / f"R{pid}" / f"R{pid}_{gid}"
-               / "outputs")
-    stacks  = pc.list_output_stacks(outputs, "temperature")
+    stacks = pc.list_output_stacks(outputs, "temperature")
     if not stacks:
         return None, "no temperature_*.nc"
 
@@ -130,7 +126,9 @@ def _model_sst_for_day(cfg, d: date):
 
         surf = pc.extract_layer(
             ds["temperature"], "surface")
-        for i in np.nonzero(in_day)[0]:
+        for i in range(len(times)):
+            if not in_day[i]:
+                continue
             v = np.asarray(surf[i])
             if v.ndim > 1:
                 v = v.ravel()
@@ -147,6 +145,7 @@ def _model_sst_for_day(cfg, d: date):
     if match == "daily_mean":
         if not day_vals:
             return None, "no model timesteps on day"
+        import numpy as np
         arr = np.nanmean(
             np.stack(day_vals, axis=0), axis=0)
         return arr, (f"daily mean of "
@@ -155,6 +154,92 @@ def _model_sst_for_day(cfg, d: date):
         if nearest_val is None:
             return None, "no model timesteps on day"
         return nearest_val, "nearest timestep to 12:00Z"
+
+
+def _model_sst_for_day_oldio(cfg, d: date, outputs: Path):
+    """Extract SST from Old I/O schout_*.nc stacks."""
+    import numpy as np
+    import xarray as xr
+
+    stacks = pc.list_oldio_stacks(outputs)
+    if not stacks:
+        return None, "no schout_*.nc"
+
+    match  = str(cfg.get("sst_match", "daily_mean")).lower()
+    day0   = np.datetime64(d.isoformat())
+    day1   = day0 + np.timedelta64(1, "D")
+    target = np.datetime64(f"{d.isoformat()}T12")
+
+    day_vals    = []
+    nearest_val = None
+    nearest_dt  = None
+
+    for nc in stacks:
+        ds = xr.open_dataset(str(nc),
+                             drop_variables=["zcor"])
+        times = ds["time"].values
+        in_day = (times >= day0) & (times < day1)
+        if not in_day.any():
+            ds.close()
+            continue
+
+        for i in range(len(times)):
+            if not in_day[i]:
+                continue
+            try:
+                ds_t = ds.isel(time=i)
+                # Use old I/O adapter: temp -> temperature
+                v = pc.extract_oldio_var(
+                    ds_t, "temperature", "surface")
+                v = np.asarray(v, dtype="float32").ravel()
+                if match == "daily_mean":
+                    day_vals.append(v)
+                else:
+                    dt = abs(times[i] - target)
+                    if (nearest_dt is None
+                            or dt < nearest_dt):
+                        nearest_dt  = dt
+                        nearest_val = v
+            except Exception:
+                continue
+        ds.close()
+
+    if match == "daily_mean":
+        if not day_vals:
+            return None, "no model timesteps on day"
+        arr = np.nanmean(
+            np.stack(day_vals, axis=0), axis=0)
+        return arr, (f"daily mean of "
+                     f"{len(day_vals)} timestep(s) "
+                     f"[Old I/O]")
+    else:
+        if nearest_val is None:
+            return None, "no model timesteps on day"
+        return nearest_val, "nearest timestep to 12:00Z [Old I/O]"
+
+
+def _model_sst_for_day(cfg, d: date):
+    """Return (values, used_desc) — model surface SST for day d.
+
+    Automatically detects New I/O or Old I/O format.
+    """
+    pid  = cfg["project_id"]
+    mdir = model_dir(cfg)
+
+    gid = _group_for_day(cfg, d)
+    if gid is None:
+        return None, f"no group covers {d}"
+
+    outputs = (mdir / f"R{pid}" / f"R{pid}_{gid}"
+               / "outputs")
+
+    fmt = pc.detect_output_format(outputs)
+    if fmt == "new":
+        return _model_sst_for_day_newio(cfg, d, outputs)
+    elif fmt == "old":
+        return _model_sst_for_day_oldio(cfg, d, outputs)
+    else:
+        return None, "no output files found"
 
 
 # =============================================================================
@@ -269,7 +354,7 @@ def frame_for_day(cfg, d: date):
 
     x, y, depth, triang, _is_tri = _get_mesh(cfg)
     if x is None:
-        print(f"  {d:%Y%m%d}: no out2d_*.nc found.")
+        print(f"  {d:%Y%m%d}: no output file found for mesh.")
         return
 
     boundaries = None

@@ -10,6 +10,15 @@ _group_for_day() maps each calendar day to the correct run directory
 regardless of whether group IDs are YYYYMM or YYYYMMDD — fixes the
 mismatch that caused all daily tasks to find no SCHISM outputs for
 ndays grouping.
+
+Supports both:
+  - New I/O (SCHISM standalone): temperature_*.nc, salinity_*.nc,
+    zCoordinates_*.nc — uses ocstrack.Model.model.SCHISM
+  - Old I/O (UFS-SCHISM): schout_*.nc with temp/salt variables —
+    uses ocstrack.Model.model.UFS_SCHISM (requires OCSTrack >= 1.1
+    with UFS_SCHISM support)
+
+Output format is detected automatically per run directory.
 """
 
 import argparse
@@ -25,18 +34,28 @@ from workflow.core.config import (
     group_date_range,
     model_dir,
 )
+from workflow.models.schism.postprocess import plot_common as pc
 
 
 # ---------------------------------------------------------------------------
-# Variable plan
+# Variable plan — New I/O (SCHISM)
 # ---------------------------------------------------------------------------
 
-VAR_PLAN = {
+VAR_PLAN_NEWIO = {
     "temperature": {"startswith": "temperature_"},
     "salinity":    {"startswith": "salinity_"},
 }
 ZCOR_VAR        = "zCoordinates"
 ZCOR_STARTSWITH = "zCoordinates_"
+
+# ---------------------------------------------------------------------------
+# Variable plan — Old I/O (UFS_SCHISM)
+# ---------------------------------------------------------------------------
+
+VAR_PLAN_OLDIO = {
+    "temperature": {"var": "temp"},
+    "salinity":    {"var": "salt"},
+}
 
 
 # ---------------------------------------------------------------------------
@@ -80,11 +99,7 @@ def _build_day_list(cfg) -> list:
 
 
 def _group_for_day(cfg, day_str: str):
-    """Return the group_id whose date range contains day_str.
-
-    Works for both monthly (YYYYMM) and ndays (YYYYMMDD) grouping.
-    day_str is 'YYYYMMDD'. Returns None if no group covers the day.
-    """
+    """Return the group_id whose date range contains day_str."""
     d = date(int(day_str[:4]),
              int(day_str[4:6]),
              int(day_str[6:8]))
@@ -107,16 +122,20 @@ def _clip(a_start, a_end, b_start, b_end):
 
 def _collocate_one_day(cfg, day_str: str,
                         out_dir: Path) -> list:
-    """Collocate all configured variables for one calendar day."""
+    """Collocate all configured variables for one calendar day.
+
+    Automatically detects New I/O (SCHISM) vs Old I/O (UFS_SCHISM)
+    and uses the appropriate OCSTrack model class.
+    """
     import numpy as np
-    from ocstrack.Model.model import SCHISM
     from ocstrack.Observation.argofloat import ArgoData
     from ocstrack.Collocation.collocate import Collocate
     from ocstrack.utils import convert_longitude
 
     variables = cfg.get("collocate_argo_vars") or [
         "temperature", "salinity"]
-    variables = [v for v in variables if v in VAR_PLAN]
+    variables = [v for v in variables
+                 if v in VAR_PLAN_NEWIO]
 
     pid  = cfg["project_id"]
     mdir = model_dir(cfg)
@@ -188,8 +207,6 @@ def _collocate_one_day(cfg, day_str: str,
         "collocate_argo_temporal_interp", True))
 
     # ---- Find the group run directory for this day ----
-    # Uses _group_for_day so it works for both YYYYMM and
-    # YYYYMMDD group IDs (ndays grouping).
     gid = _group_for_day(cfg, day_str)
     if gid is None:
         print(f"  [{day_str}] no group covers this day, "
@@ -204,6 +221,14 @@ def _collocate_one_day(cfg, day_str: str,
               f"group {gid}, skipping.")
         return []
 
+    # ---- Detect output format ----
+    fmt = pc.detect_output_format(outputs)
+
+    if fmt == "none":
+        print(f"  [{day_str}] no output files in "
+              f"{outputs}, skipping.")
+        return []
+
     # ---- Run OCSTrack for each variable ----
     for var in variables:
         out_nc = daily_dir / f"collocated_{var}_{day_str}.nc"
@@ -213,41 +238,79 @@ def _collocate_one_day(cfg, day_str: str,
             written.append(out_nc)
             continue
 
-        startswith = VAR_PLAN[var]["startswith"]
-        if not list(outputs.glob(f"{startswith}*.nc")):
-            print(f"  [{day_str} {var}] no "
-                  f"{startswith}*.nc stacks, skipping.")
-            continue
-        if not list(
-                outputs.glob(f"{ZCOR_STARTSWITH}*.nc")):
-            print(f"  [{day_str} {var}] no "
-                  f"{ZCOR_STARTSWITH}*.nc stacks, "
-                  f"skipping.")
-            continue
-        if not (rundir / "hgrid.gr3").exists():
-            print(f"  [{day_str} {var}] no hgrid.gr3, "
-                  f"skipping.")
-            continue
+        if fmt == "new":
+            # New I/O: SCHISM class with temperature_*.nc etc.
+            from ocstrack.Model.model import SCHISM
+            startswith = VAR_PLAN_NEWIO[var]["startswith"]
+            if not list(outputs.glob(f"{startswith}*.nc")):
+                print(f"  [{day_str} {var}] no "
+                      f"{startswith}*.nc stacks, skipping.")
+                continue
+            if not list(
+                    outputs.glob(f"{ZCOR_STARTSWITH}*.nc")):
+                print(f"  [{day_str} {var}] no "
+                      f"{ZCOR_STARTSWITH}*.nc stacks, "
+                      f"skipping.")
+                continue
+            if not (rundir / "hgrid.gr3").exists():
+                print(f"  [{day_str} {var}] no hgrid.gr3, "
+                      f"skipping.")
+                continue
 
-        model_dict = {
-            "var":             var,
-            "startswith":      startswith,
-            "var_type":        "3D_Profile",
-            "zcor_var":        ZCOR_VAR,
-            "zcor_startswith": ZCOR_STARTSWITH,
-        }
+            model_dict = {
+                "var":             var,
+                "startswith":      startswith,
+                "var_type":        "3D_Profile",
+                "zcor_var":        ZCOR_VAR,
+                "zcor_startswith": ZCOR_STARTSWITH,
+            }
+            try:
+                model = SCHISM(
+                    rundir=str(rundir),
+                    model_dict=model_dict,
+                    start_date=np.datetime64(day_iso),
+                    end_date=np.datetime64(dnxt_iso),
+                )
+            except Exception as exc:
+                print(f"  [{day_str} {var}] SCHISM init "
+                      f"failed: {exc}")
+                continue
 
-        try:
-            model = SCHISM(
-                rundir=str(rundir),
-                model_dict=model_dict,
-                start_date=np.datetime64(day_iso),
-                end_date=np.datetime64(dnxt_iso),
-            )
-        except Exception as exc:
-            print(f"  [{day_str} {var}] SCHISM init "
-                  f"failed: {exc}")
-            continue
+        else:
+            # Old I/O: UFS_SCHISM class with schout_*.nc
+            try:
+                from ocstrack.Model.model import UFS_SCHISM
+            except ImportError:
+                print(f"  [{day_str} {var}] UFS_SCHISM not "
+                      f"available in this OCSTrack version. "
+                      f"Update OCSTrack: "
+                      f"pip install --upgrade "
+                      f"git+https://github.com/"
+                      f"noaa-ocs-modeling/OCSTrack.git")
+                continue
+
+            old_var = VAR_PLAN_OLDIO[var]["var"]
+            # Check schout files exist
+            if not list(outputs.glob("schout_*.nc")):
+                print(f"  [{day_str} {var}] no schout_*.nc "
+                      f"files, skipping.")
+                continue
+
+            model_dict = {
+                "var":      old_var,
+                "var_type": "3D_Profile",
+            }
+            try:
+                model = UFS_SCHISM(
+                    rundir=str(rundir),
+                    model_dict=model_dict,
+                    start_date=np.datetime64(day_iso),
+                    end_date=np.datetime64(dnxt_iso),
+                )
+            except Exception as exc:
+                print(f"  [{day_str} {var}] UFS_SCHISM init "
+                      f"failed: {exc}")
+                continue
 
         if not model.files:
             print(f"  [{day_str} {var}] no model files "
@@ -259,7 +322,7 @@ def _collocate_one_day(cfg, day_str: str,
                   f"{argo_full.ds.sizes['JULD']} "
                   f"profile(s) against "
                   f"{len(model.files)} model file(s) "
-                  f"-> {out_nc.name}")
+                  f"({fmt} I/O) -> {out_nc.name}")
             coll = Collocate(
                 model_run=model,
                 observation=argo_full,
@@ -372,7 +435,8 @@ def run_merge(cfg: dict):
     """Stage 2: merge daily outputs and write clean files."""
     variables = cfg.get("collocate_argo_vars") or [
         "temperature", "salinity"]
-    variables   = [v for v in variables if v in VAR_PLAN]
+    variables   = [v for v in variables
+                   if v in VAR_PLAN_NEWIO]
     out_dir     = _out_dir(cfg)
     daily_dir   = out_dir / "daily"
     dist_thresh = float(cfg.get(
@@ -418,16 +482,17 @@ def _month_bounds(ym: str):
 
 def _collocate_one_month(cfg, ym, var,
                           win_start, win_end, out_dir):
-    """Serial fallback: collocate one variable for one group."""
+    """Serial fallback: collocate one variable for one group.
+
+    Supports both New I/O (SCHISM) and Old I/O (UFS_SCHISM).
+    """
     import numpy as np
-    from ocstrack.Model.model import SCHISM
     from ocstrack.Observation.argofloat import ArgoData
     from ocstrack.Collocation.collocate import Collocate
     from ocstrack.utils import convert_longitude
 
     pid     = cfg["project_id"]
     mdir    = model_dir(cfg)
-    # ym here is a group_id (YYYYMM or YYYYMMDD)
     rundir  = mdir / f"R{pid}" / f"R{pid}_{ym}"
     outputs = rundir / "outputs"
 
@@ -436,18 +501,10 @@ def _collocate_one_month(cfg, ym, var,
               f"skipping.")
         return None
 
-    startswith = VAR_PLAN[var]["startswith"]
-    if not list(outputs.glob(f"{startswith}*.nc")):
-        print(f"  [{ym} {var}] no {startswith}*.nc "
-              f"stacks, skipping.")
-        return None
-    if not list(
-            outputs.glob(f"{ZCOR_STARTSWITH}*.nc")):
-        print(f"  [{ym} {var}] no "
-              f"{ZCOR_STARTSWITH}*.nc stacks, skipping.")
-        return None
-    if not (rundir / "hgrid.gr3").exists():
-        print(f"  [{ym} {var}] no hgrid.gr3, skipping.")
+    # Detect output format
+    fmt = pc.detect_output_format(outputs)
+    if fmt == "none":
+        print(f"  [{ym} {var}] no output files, skipping.")
         return None
 
     # Get date range for this group
@@ -475,31 +532,73 @@ def _collocate_one_month(cfg, ym, var,
     if lon_ref == "360":
         argo.lon = convert_longitude(argo.lon, mode=1)
 
-    model_dict = {
-        "var":             var,
-        "startswith":      startswith,
-        "var_type":        "3D_Profile",
-        "zcor_var":        ZCOR_VAR,
-        "zcor_startswith": ZCOR_STARTSWITH,
-    }
-    model = SCHISM(
-        rundir=str(rundir),
-        model_dict=model_dict,
-        start_date=np.datetime64(c_start),
-        end_date=np.datetime64(c_end),
-    )
-    if not model.files:
-        return None
-
     n_nearest = int(cfg.get(
         "collocate_argo_n_nearest", 3))
     temporal  = bool(cfg.get(
         "collocate_argo_temporal_interp", True))
     out_nc    = out_dir / f"collocated_{var}_{ym}.nc"
+
+    if fmt == "new":
+        from ocstrack.Model.model import SCHISM
+        startswith = VAR_PLAN_NEWIO[var]["startswith"]
+        if not list(outputs.glob(f"{startswith}*.nc")):
+            print(f"  [{ym} {var}] no {startswith}*.nc "
+                  f"stacks, skipping.")
+            return None
+        if not list(
+                outputs.glob(f"{ZCOR_STARTSWITH}*.nc")):
+            print(f"  [{ym} {var}] no "
+                  f"{ZCOR_STARTSWITH}*.nc stacks, skipping.")
+            return None
+        if not (rundir / "hgrid.gr3").exists():
+            print(f"  [{ym} {var}] no hgrid.gr3, skipping.")
+            return None
+
+        model_dict = {
+            "var":             var,
+            "startswith":      startswith,
+            "var_type":        "3D_Profile",
+            "zcor_var":        ZCOR_VAR,
+            "zcor_startswith": ZCOR_STARTSWITH,
+        }
+        model = SCHISM(
+            rundir=str(rundir),
+            model_dict=model_dict,
+            start_date=np.datetime64(c_start),
+            end_date=np.datetime64(c_end),
+        )
+    else:
+        try:
+            from ocstrack.Model.model import UFS_SCHISM
+        except ImportError:
+            print(f"  [{ym} {var}] UFS_SCHISM not available. "
+                  f"Update OCSTrack.")
+            return None
+
+        old_var = VAR_PLAN_OLDIO[var]["var"]
+        if not list(outputs.glob("schout_*.nc")):
+            print(f"  [{ym} {var}] no schout_*.nc "
+                  f"files, skipping.")
+            return None
+
+        model_dict = {
+            "var":      old_var,
+            "var_type": "3D_Profile",
+        }
+        model = UFS_SCHISM(
+            rundir=str(rundir),
+            model_dict=model_dict,
+            start_date=np.datetime64(c_start),
+            end_date=np.datetime64(c_end),
+        )
+
+    if not model.files:
+        return None
+
     print(f"  [{ym} {var}] collocating "
           f"{argo.ds.sizes['JULD']} profile(s) "
           f"against {len(model.files)} model file(s) "
-          f"-> {out_nc.name}")
+          f"({fmt} I/O) -> {out_nc.name}")
 
     coll = Collocate(
         model_run=model, observation=argo,
@@ -557,7 +656,8 @@ def run_collocate_argo_serial(cfg: dict):
 
     variables = cfg.get("collocate_argo_vars") or [
         "temperature", "salinity"]
-    variables = [v for v in variables if v in VAR_PLAN]
+    variables = [v for v in variables
+                 if v in VAR_PLAN_NEWIO]
     if not variables:
         print("ERROR: collocate_argo_vars has no known "
               "variables.")
@@ -566,7 +666,6 @@ def run_collocate_argo_serial(cfg: dict):
     win_start, win_end = _window(cfg)
     out_dir     = _out_dir(cfg)
     out_dir.mkdir(parents=True, exist_ok=True)
-    # Use list_groups so group IDs match run dir names
     groups      = list_groups(cfg)
     dist_thresh = float(cfg.get(
         "collocate_argo_dist_threshold_km", 5)) * 1000.0
@@ -613,8 +712,11 @@ def run_collocate_argo_serial(cfg: dict):
 # ---------------------------------------------------------------------------
 
 def run_collocate_argo(cfg: dict, config_dir=None):
+    """Dispatcher: submit SLURM pipeline or run serial fallback."""
     import shutil
-    allow_serial = os.environ.get("ALLOW_NON_SLURM") == "1"
+
+    allow_serial = (
+        os.environ.get("ALLOW_NON_SLURM") == "1")
 
     if allow_serial or shutil.which("sbatch") is None:
         if shutil.which("sbatch") is None:

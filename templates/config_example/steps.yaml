@@ -49,6 +49,13 @@ gen_nudge:    false   # Step H: create TEM/SAL_nu.nc files (SLURM array, one job
 
 # SCHISM Modules
 gen_wwminput: false   # Step WWM: generate wwminput.nml from template + param.nml + station.in
+                      # (SCHISM+WWM only)
+
+# WW3 Modules (UFS-SCHISM+WW3 only)
+gen_ww3_shel: false   # Step WW3-A: generate ww3_shel.nml per group from fix/ww3_shel.nml
+                      # (dates, output cadences and restart interval updated per group)
+gen_ww3_ounp: false   # Step WW3-B: generate ww3_ounp.inp per group from fix/ww3_ounp.inp
+                      # (start time and number of records updated per group)
 
 # =============================================================================
 # Phase 4 — Run management
@@ -75,21 +82,27 @@ download_ndbc:   false   # DTN: download NOAA NDBC buoy obs (WTMP, wind, PRES) -
                          # M{ID}/obs/ndbc/ (annual + current-year monthly + realtime)
 download_altimetry: false   # DTN: download CCI or CoastWatch satellite altimetry Hs
                             # CCI requires: export CCI_FTP_USER=... CCI_FTP_PASS=...
+                            # (SCHISM+WWM and UFS-SCHISM+WW3 only)
 download_argo:   false   # DTN: download Argo float profiles (IFREMER GDAC via OCSTrack)
                          # -> M{ID}/obs/argo/{region}/processed/ (domain-cropped)
 plot_outputs:    false   # Full-run field GIFs -> P{ID} (SLURM: parallel frames + GIF)
 compare_sst:     false   # Model vs satellite SST GIF -> P{ID} (needs download_sst first)
 station_skill:   false   # Interactive: CO-OPS/NDBC obs vs model staout_* time-series
                          # plots + skill_metrics.csv -> P{ID} (needs download_coops/ndbc first)
-wave_skill:      false   # Interactive: NDBC wave obs (Hs, TM02, DM) vs WWM
-                         # wwm_sta_*.nc station output. Needs download_ndbc first.
+wave_skill:      false   # Interactive: NDBC wave obs (Hs, TM01/APD, DM) vs
+                         # WWM (wwm_sta_*.nc) or WW3 (ww3.*_tab.nc).
+                         # Needs download_ndbc first.
+                         # WW3 tab files produced automatically during run
+                         # by ww3_ounp via auto_hotstart.py.
                          # Output -> P{ID}/P{ID}_station_skill/
-collocate_altimetry: false  # SLURM: collocate SCHISM+WWM sigWaveHeight vs satellite Hs
-                            # Needs download_altimetry first.
+                         # (SCHISM+WWM and UFS-SCHISM+WW3 only)
+collocate_altimetry: false  # SLURM: collocate SCHISM+WWM/WW3 sigWaveHeight vs
+                            # satellite Hs. Needs download_altimetry first.
+                            # (SCHISM+WWM and UFS-SCHISM+WW3 only)
 collocate_argo:  false   # Interactive: OCSTrack 3-D collocation of SCHISM T/S profiles
                          # vs Argo floats -> P{ID}/P{ID}_collocate_argo/ (needs download_argo)
 plot_altimetry:  false   # Interactive: satellite altimetry track maps + scatter plots
                          # -> P{ID}/P{ID}_collocate_altimetry/ (needs collocate_altimetry first)
-                         # (SCHISM+WWM only)
+                         # (SCHISM+WWM and UFS-SCHISM+WW3 only)
 plot_argo:       false   # Interactive: Argo diagnostic plots (location map, skill
                          # histograms, profile matrix) -> P{ID}/P{ID}_collocate_argo/

@@ -1,18 +1,19 @@
 """
-models/ufs_schism/run/setup_run.py
-==================================
-Phase 4, step "setup_run" (interactive, fast) for UFS-SCHISM.
+models/ufs_schism_ww3/run/setup_run.py
+=======================================
+Phase 4, step "setup_run" (interactive, fast) for UFS-SCHISM+WW3.
 
-UFS-SCHISM specific additions vs SCHISM standalone:
-  * forcing/ replaces sflux/
-  * modulefiles/ symlinked from I{ID}_{group_id}/modulefiles/
-  * combine_output11_MPI copied to outputs/
-  * run_combine_output.sbatch rendered for end-of-group full combination
-  * auto_hotstart.py rendered with COMBINE_OUTPUT_ENABLED=True
+Extends UFS-SCHISM setup_run with WW3-specific additions:
+  - Symlinks WW3 static fixed files from fix/
+  - Symlinks per-group WW3 namelists from I{ID}_{group_id}/
+  - Uses executables.ufs_schism_ww3 instead of ufs_schism
+  - Updates the srun executable line in run_test
+  - Checks gen_ww3_shel and gen_ww3_ounp sentinels
+  - Creates RESTART/ directory (required by UFS mediator)
+  - Renders convert_ww3_sta.sbatch for ww3_ounp conversion
+    (dispatched by auto_hotstart.py after each group run)
 
 Works for all grouping modes (monthly, ndays/weekly/daily).
-Group IDs are either YYYYMM (monthly) or YYYYMMDD (ndays).
-
 Sentinel: R{ID}_{group_id}/setup_run.done
 """
 
@@ -31,24 +32,32 @@ from workflow.core.config import (
 )
 from workflow.core.environment import env_python
 
-TEMPLATE_DIR = (
+SCHISM_TEMPLATE_DIR = (
     Path(__file__).resolve().parent.parent.parent
     / "schism" / "templates"
 )
-AUTO_HOTSTART_TEMPLATE = TEMPLATE_DIR / "auto_hotstart.py"
+AUTO_HOTSTART_TEMPLATE = SCHISM_TEMPLATE_DIR / "auto_hotstart.py"
 DIAG_SBATCH_TEMPLATE   = (
-    TEMPLATE_DIR / "slurm" / "diag_run.sbatch"
+    SCHISM_TEMPLATE_DIR / "slurm" / "diag_run.sbatch"
 )
 
 UFS_SLURM_DIR = (
-    Path(__file__).resolve().parent.parent
-    / "templates" / "slurm"
+    Path(__file__).resolve().parent.parent.parent
+    / "ufs_schism" / "templates" / "slurm"
 )
 COMBINE_OUTPUT_SBATCH_TEMPLATE = (
     UFS_SLURM_DIR / "run_combine_output.sbatch"
 )
 
-FIX_LINKS = [
+WW3_SLURM_DIR = (
+    Path(__file__).resolve().parent.parent
+    / "templates" / "slurm"
+)
+CONVERT_WW3_STA_SBATCH_TEMPLATE = (
+    WW3_SLURM_DIR / "convert_ww3_stations.sbatch"
+)
+
+FIX_LINKS_BASE = [
     "hgrid.gr3", "hgrid.ll", "vgrid.in", "partition.prop",
     "tvd.prop", "albedo.gr3", "diffmin.gr3", "diffmax.gr3",
     "watertype.gr3", "shapiro.gr3", "windrot_geo2proj.gr3",
@@ -56,12 +65,17 @@ FIX_LINKS = [
     "SAL_nudge.gr3", "station.in",
 ]
 
-INPUT_LINKS = [
+INPUT_LINKS_BASE = [
     "bctides.in", "param.nml", "source.nc",
     "TEM_3D.th.nc", "SAL_3D.th.nc", "elev2D.th.nc",
     "uv3D.th.nc", "TEM_nu.nc", "SAL_nu.nc",
     "datm_in", "datm.streams", "fd_ufs.yaml",
     "noahmptable.tbl", "model_configure", "ufs.configure",
+]
+
+WW3_INPUT_LINKS = [
+    "ww3_shel.nml",
+    "ww3_ounp.inp",
 ]
 
 OUTPUT_PLACEHOLDERS = (
@@ -97,39 +111,35 @@ def check_fix_freshness(cfg: dict, mdir: Path,
     rdir = mdir / f"R{pid}" / f"R{pid}_{group_id}"
     exes = cfg.get("executables", {})
 
-    checks = {
-        "param.nml": ("idir", "param.nml"),
-        "run_test":  ("rdir", "run_test"),
-        "run_comb":  ("rdir", "run_comb"),
-    }
-
     warnings = []
-    for fix_name, (dest_key, dest_name) in checks.items():
+    for fix_name, dest_key, dest_name in [
+        ("param.nml", "idir", "param.nml"),
+        ("run_test",  "rdir", "run_test"),
+        ("run_comb",  "rdir", "run_comb"),
+    ]:
         src = fix / fix_name
         if not src.exists():
             continue
         dest_dir = idir if dest_key == "idir" else rdir
-        dst      = dest_dir / dest_name
+        dst = dest_dir / dest_name
         if not dst.exists():
             continue
         if _mtime(src) > _mtime(dst):
             warnings.append(
                 f"  fix/{fix_name} ({_fmt_mtime(src)}) is "
                 f"NEWER than {dest_dir.name}/{dest_name} "
-                f"({_fmt_mtime(dst)})."
-            )
+                f"({_fmt_mtime(dst)}).")
 
-    ufs_exe = exes.get("ufs_schism")
-    if ufs_exe:
-        src_exe = bind / ufs_exe
-        dst_exe = rdir / ufs_exe
+    ww3_exe = exes.get("ufs_schism_ww3")
+    if ww3_exe:
+        src_exe = bind / ww3_exe
+        dst_exe = rdir / ww3_exe
         if src_exe.exists() and dst_exe.exists():
             if _mtime(src_exe) > _mtime(dst_exe):
                 warnings.append(
-                    f"  bin/{ufs_exe} ({_fmt_mtime(src_exe)}) "
+                    f"  bin/{ww3_exe} ({_fmt_mtime(src_exe)}) "
                     f"is NEWER than the copy in {rdir.name}/ "
-                    f"({_fmt_mtime(dst_exe)})."
-                )
+                    f"({_fmt_mtime(dst_exe)}).")
 
     combine_exe = exes.get("combine_hotstart")
     if combine_exe:
@@ -141,8 +151,7 @@ def check_fix_freshness(cfg: dict, mdir: Path,
                     f"  bin/{combine_exe} "
                     f"({_fmt_mtime(src_c)}) is NEWER than "
                     f"the copy in {rdir.name}/outputs/ "
-                    f"({_fmt_mtime(dst_c)})."
-                )
+                    f"({_fmt_mtime(dst_c)}).")
     return warnings
 
 
@@ -196,8 +205,25 @@ def _set_combine_command(text: str, combine_exe: str,
     new_text, n = pattern.subn(
         f"./{configured_name} -i {step}", text)
     if n == 0:
-        print("  WARNING: no combine_hotstart7 '-i' line found "
-              "in run_comb.")
+        print("  WARNING: no combine_hotstart7 '-i' line "
+              "found in run_comb.")
+    return new_text
+
+
+def _set_srun_executable(text: str,
+                          exe_name: str) -> str:
+    """Replace the executable name on the srun line in run_test."""
+    pattern = re.compile(
+        r'(^\s*srun\b[^\n]*?\./)\S+',
+        re.MULTILINE)
+    new_text, n = pattern.subn(
+        rf'\g<1>{exe_name}', text)
+    if n == 0:
+        print(f"  WARNING: no 'srun ./<exe>' line found "
+              f"in run_test.")
+    else:
+        print(f"  run_test: srun executable set to "
+              f"./{exe_name}")
     return new_text
 
 
@@ -288,6 +314,54 @@ def _render_combine_output_sbatch(cfg: dict, mdir: Path,
     return out
 
 
+def _render_convert_ww3_sbatch(cfg: dict, mdir: Path,
+                                rdir: Path,
+                                group_id: str) -> Path:
+    """Render convert_ww3_sta.sbatch for ww3_ounp conversion.
+
+    Dispatched by auto_hotstart.py after the run completes to convert
+    out_pnt.ww3 -> ww3.{YYYYMM}_tab.nc using the ww3_ounp executable.
+    """
+    slurm   = cfg.get("slurm", {})
+    pid     = cfg["project_id"]
+    bind    = mdir / "bin"
+    fix     = mdir / "fix"
+    exes    = cfg.get("executables", {})
+
+    # ww3_ounp executable — use dedicated key or fall back to bin/ww3_ounp
+    ww3_ounp_name = exes.get("ww3_ounp", "ww3_ounp")
+    ww3_ounp_exe  = str(bind / ww3_ounp_name)
+
+    # Job name uses first 6 chars of group_id (YYYYMM or YYYYMMDD[:6])
+    jobname = f"ww3sta_{group_id[:6]}"
+
+    subs = {
+        "RUNDIR":       str(rdir),
+        "JOBNAME":      jobname,
+        "ACCOUNT":      slurm.get("account",   "nos-surge"),
+        "PARTITION":    slurm.get("partition", "hercules-2"),
+        "LOGDIR":       str(mdir / "logs"),
+        "MAILUSER":     slurm.get("mail_user",
+                                  "felicio.cassalho@noaa.gov"),
+        "MONTH":        group_id,
+        "FIXDIR":       str(fix),
+        "WW3_OUNP_EXE": ww3_ounp_exe,
+    }
+
+    if not CONVERT_WW3_STA_SBATCH_TEMPLATE.exists():
+        print(f"  WARNING: convert_ww3_stations.sbatch template "
+              f"not found at {CONVERT_WW3_STA_SBATCH_TEMPLATE}. "
+              f"WW3 station conversion will not run automatically.")
+        return Path("/dev/null")
+
+    text = CONVERT_WW3_STA_SBATCH_TEMPLATE.read_text()
+    for k, v in subs.items():
+        text = text.replace("{{" + k + "}}", str(v))
+    out = rdir / "convert_ww3_sta.sbatch"
+    out.write_text(text)
+    return out
+
+
 # =============================================================================
 # Symlink helper
 # =============================================================================
@@ -334,20 +408,23 @@ def _setup_group(cfg: dict, mdir: Path, group_id: str,
 
     # --- validate executables ---
     exes               = cfg.get("executables", {})
-    ufs_exe            = exes.get("ufs_schism")
+    ww3_exe            = exes.get("ufs_schism_ww3")
     combine_exe        = exes.get("combine_hotstart")
     combine_output_exe = exes.get("combine_output",
                                   "combine_output11_MPI")
 
-    if not ufs_exe or not combine_exe:
-        print("  ERROR: executables.ufs_schism and "
-              "executables.combine_hotstart must be set in "
-              "project.yaml")
+    if not ww3_exe:
+        print("  ERROR: executables.ufs_schism_ww3 must be "
+              "set in project.yaml")
+        return False
+    if not combine_exe:
+        print("  ERROR: executables.combine_hotstart must be "
+              "set in project.yaml")
         return False
 
     missing_exes = [
         str(bind / e)
-        for e in (ufs_exe, combine_exe)
+        for e in (ww3_exe, combine_exe)
         if not (bind / e).exists()
     ]
     if missing_exes:
@@ -358,8 +435,7 @@ def _setup_group(cfg: dict, mdir: Path, group_id: str,
 
     if not (bind / combine_output_exe).exists():
         print(f"  ERROR: {combine_output_exe} not found in "
-              f"bin/. Compile and copy it before running "
-              f"setup_run.")
+              f"bin/.")
         return False
 
     # --- validate job-card templates ---
@@ -369,8 +445,8 @@ def _setup_group(cfg: dict, mdir: Path, group_id: str,
         if not (fix / n).exists()
     ]
     if missing_cards:
-        print("  ERROR: required job-card templates not found "
-              "in fix/:")
+        print("  ERROR: required job-card templates not "
+              "found in fix/:")
         for m in missing_cards:
             print(f"    {m}")
         return False
@@ -396,7 +472,8 @@ def _setup_group(cfg: dict, mdir: Path, group_id: str,
             idir / "gen_nudge.done", "gen_nudge"):
         return False
     if not _check_sentinel(
-            idir / "sflux" / "gen_sflux.done", "gen_sflux"):
+            idir / "sflux" / "gen_sflux.done",
+            "gen_sflux"):
         return False
     if not _check_sentinel(
             idir / datm_subdir / "gen_datm.done",
@@ -406,6 +483,12 @@ def _setup_group(cfg: dict, mdir: Path, group_id: str,
             idir / datm_subdir / "gen_esmf_mesh.done",
             "gen_esmf_mesh"):
         return False
+    if not _check_sentinel(
+            idir / "gen_ww3_shel.done", "gen_ww3_shel"):
+        return False
+    if not _check_sentinel(
+            idir / "gen_ww3_ounp.done", "gen_ww3_ounp"):
+        return False
     if group_index == 0:
         if not _check_sentinel(
                 idir / "gen_hotstart.done",
@@ -413,14 +496,32 @@ def _setup_group(cfg: dict, mdir: Path, group_id: str,
             return False
 
     # --- symlink static fix/ files ---
-    for name in FIX_LINKS:
+    for name in FIX_LINKS_BASE:
         if not _link(fix / name, rdir / name):
             print(f"  NOTE: fix/{name} not found, skipped.")
 
-    # --- symlink group inputs ---
-    for name in INPUT_LINKS:
+    # --- symlink WW3 static fixed files ---
+    ww3_fix_files = cfg.get("ww3_fix_files", [
+        "mod_def.ww3", "namelists.nml",
+        "ww3_points.list", "ST4TABUHF2.bin",
+        "ww3_ESMFmesh.nc", "mesh.msh",
+    ])
+    for name in ww3_fix_files:
+        if not _link(fix / name, rdir / name):
+            print(f"  WARNING: fix/{name} not found, "
+                  f"skipped.")
+
+    # --- symlink per-group UFS inputs ---
+    for name in INPUT_LINKS_BASE:
         if not _link(idir / name, rdir / name):
             print(f"  ERROR {group_id}: required input "
+                  f"missing: {idir / name}")
+            return False
+
+    # --- symlink per-group WW3 namelists ---
+    for name in WW3_INPUT_LINKS:
+        if not _link(idir / name, rdir / name):
+            print(f"  ERROR {group_id}: required WW3 input "
                   f"missing: {idir / name}")
             return False
 
@@ -441,7 +542,7 @@ def _setup_group(cfg: dict, mdir: Path, group_id: str,
         print(f"  WARNING {group_id}: no modulefiles/ found "
               f"in {idir}.")
 
-    # --- first group: symlink hotstart ---
+    # --- first group: symlink SCHISM hotstart ---
     if group_index == 0:
         if not _link(idir / "hotstart.nc",
                      rdir / "hotstart.nc"):
@@ -450,10 +551,22 @@ def _setup_group(cfg: dict, mdir: Path, group_id: str,
             print("    Run gen_hotstart (Phase 3) first.")
             return False
 
-    # --- copy executables ---
-    shutil.copy2(bind / ufs_exe, rdir / ufs_exe)
+    # --- copy UFS-SCHISM+WW3 executable ---
+    shutil.copy2(bind / ww3_exe, rdir / ww3_exe)
 
-    # --- outputs/ + placeholders + combine executables ---
+    # --- copy ww3_ounp executable if present ---
+    ww3_ounp_name = exes.get("ww3_ounp", "ww3_ounp")
+    ww3_ounp_src  = bind / ww3_ounp_name
+    if ww3_ounp_src.exists():
+        shutil.copy2(ww3_ounp_src,
+                     rdir / ww3_ounp_name)
+        print(f"  Copied ww3_ounp executable: "
+              f"{ww3_ounp_name}")
+    else:
+        print(f"  WARNING: {ww3_ounp_name} not found in "
+              f"bin/ — WW3 station conversion will not run.")
+
+    # --- outputs/ + RESTART/ + placeholders + combine executables ---
     outdir = rdir / "outputs"
     outdir.mkdir(exist_ok=True)
     (rdir / "RESTART").mkdir(exist_ok=True)
@@ -479,6 +592,7 @@ def _setup_group(cfg: dict, mdir: Path, group_id: str,
     run_test    = _set_sbatch_jobname(
         (fix / "run_test").read_text(), run_jobname)
     run_test    = _set_sbatch_workdir(run_test, ".")
+    run_test    = _set_srun_executable(run_test, ww3_exe)
     (rdir / "run_test").write_text(run_test)
 
     # --- adapt run_comb ---
@@ -494,6 +608,10 @@ def _setup_group(cfg: dict, mdir: Path, group_id: str,
     # --- render end-of-group combine_output sbatch ---
     combine_output_sbatch = _render_combine_output_sbatch(
         cfg, mdir, rdir, group_index)
+
+    # --- render convert_ww3_sta.sbatch ---
+    convert_ww3_sbatch = _render_convert_ww3_sbatch(
+        cfg, mdir, rdir, group_id)
 
     # --- diagnostic hook ---
     diag_enabled       = bool(cfg.get(
@@ -544,8 +662,11 @@ def _setup_group(cfg: dict, mdir: Path, group_id: str,
 
     (rdir / "setup_run.done").touch()
     print(f"  {group_id}: run directory ready  "
-          f"(job {run_jobname}, combine step {nhot_write}, "
-          f"end-of-group output combine enabled).")
+          f"(job {run_jobname}, nhot_write={nhot_write}, "
+          f"executable={ww3_exe}, "
+          f"WW3 static files symlinked, "
+          f"RESTART/ created, "
+          f"convert_ww3_sta.sbatch rendered).")
     return True
 
 
@@ -565,16 +686,20 @@ def run_setup_run(cfg: dict, config_dir=None):
     )
 
     print(f"\n{'='*60}")
-    print(f"  setup_run for M{pid} (UFS-SCHISM)")
+    print(f"  setup_run for M{pid} (UFS-SCHISM+WW3)")
     print(f"  Grouping  : {grouping}"
           + (f"  (group_ndays={cfg['group_ndays']})"
              if grouping == "ndays" else ""))
     print(f"  {len(groups)} group(s): "
           f"{groups[0]} -> {groups[-1]}")
-    print(f"  chain_hotstart: "
+    print(f"  chain_hotstart    : "
           f"{bool(cfg.get('chain_hotstart', True))}")
-    print(f"  Output combine: end-of-group "
-          f"(all stacks in one MPI job)")
+    print(f"  executable        : "
+          f"{cfg.get('executables', {}).get('ufs_schism_ww3', '?')}")
+    print(f"  WW3 fix files     : "
+          f"{cfg.get('ww3_fix_files', ['mod_def.ww3', '...'])}")
+    print(f"  RESTART/ dir      : created automatically")
+    print(f"  convert_ww3_sta   : rendered per group")
     print(f"{'='*60}")
 
     all_stale = []

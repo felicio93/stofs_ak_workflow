@@ -38,7 +38,7 @@ from dateutil.relativedelta import relativedelta
 # ---------------------------------------------------------------------------
 
 BASE_CONFIG_FILES = ("project.yaml", "domain.yaml", "steps.yaml", "envs.yaml")
-KNOWN_MODEL_TYPES = ("schism", "schism_wwm", "schism_mice", "ufs_schism")
+KNOWN_MODEL_TYPES = ("schism", "schism_wwm", "schism_mice", "ufs_schism", "ufs_schism_ww3")
 
 # Canonical grouping values accepted in project.yaml.
 # Aliases are normalised to one of the two canonical forms at load time.

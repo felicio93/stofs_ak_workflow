@@ -3,11 +3,14 @@ models/ufs_schism_ww3/postprocess/submit_plot_outputs_ww3.py
 =============================================================
 Two-stage SLURM launcher for plot_outputs_ww3.
 
-Stage 1 — SLURM array (one task per WW3 field file, throttled).
+Stage 1 — SLURM array (one task per on-cadence WW3 field file, throttled).
 Stage 2 — serial GIF assembly (afterok on Stage 1).
+
+The manifest only includes files whose timestamp falls on the configured
+cadence (plot_outputs_ww3_every_hours, default 1 = all files).
+e.g. every_hours=6 with 192 hourly files -> 32 array tasks.
 """
 
-import math
 from pathlib import Path
 
 from workflow.core.config import list_groups, model_dir
@@ -19,6 +22,29 @@ TEMPLATES_DIR = (
     / "templates" / "slurm"
 )
 
+
+# =============================================================================
+# Cadence filter (mirrors plot_outputs_ww3._on_cadence)
+# =============================================================================
+
+def _on_cadence_path(nc_path_str: str,
+                     every_hours: int) -> bool:
+    """Return True if this file's timestamp is on the cadence."""
+    if every_hours <= 0 or every_hours == 1:
+        return True
+    name   = Path(nc_path_str).name
+    parts  = name.split(".")
+    time_s = parts[1]   # HHMMSS
+    hour   = int(time_s[:2])
+    minute = int(time_s[2:4])
+    second = int(time_s[4:6])
+    return (minute == 0 and second == 0
+            and hour % every_hours == 0)
+
+
+# =============================================================================
+# Launcher
+# =============================================================================
 
 def submit_plot_outputs_ww3(cfg: dict,
                              config_dir: Path) -> str:
@@ -32,20 +58,27 @@ def submit_plot_outputs_ww3(cfg: dict,
     done_gif    = gif_dir / "plot_outputs_ww3.done"
     done_frames = gif_dir / ".ww3_frames_done"
 
-    # Already complete
+    # Already fully complete
     if done_gif.exists():
         print("  plot_outputs_ww3: already complete, skipping.")
         return ""
 
-    # Build manifest of all WW3 field files
+    every_hours = int(cfg.get(
+        "plot_outputs_ww3_every_hours", 1))
+
+    # Build manifest — only files on the requested cadence
     all_files = []
     for gid in list_groups(cfg):
         rdir = mdir / f"R{pid}" / f"R{pid}_{gid}"
         for f in sorted(rdir.glob("*.out_grd.ww3.nc")):
-            all_files.append(str(f))
+            if _on_cadence_path(str(f), every_hours):
+                all_files.append(str(f))
 
     if not all_files:
-        print("  plot_outputs_ww3: no *.out_grd.ww3.nc files found.")
+        print(f"  plot_outputs_ww3: no files match the "
+              f"cadence (every {every_hours}h). "
+              f"Check plot_outputs_ww3_every_hours in "
+              f"postprocess.yaml.")
         return ""
 
     ntasks   = len(all_files)
@@ -53,7 +86,7 @@ def submit_plot_outputs_ww3(cfg: dict,
     throttle = str(slurm.get(
         "plot_outputs_ww3_array_throttle", 20))
 
-    # Write manifest: one file path per line
+    # Write manifest
     manifest = logdir / "plot_outputs_ww3.manifest"
     manifest.write_text("\n".join(all_files) + "\n")
 
@@ -62,7 +95,8 @@ def submit_plot_outputs_ww3(cfg: dict,
         "PARTITION":  slurm.get(
             "plot_outputs_ww3_partition",
             slurm.get("partition", "hercules-2")),
-        "QOS":        slurm.get("plot_outputs_ww3_qos", "windfall"),
+        "QOS":        slurm.get("plot_outputs_ww3_qos",
+                                "windfall"),
         "MAILUSER":   slurm.get("mail_user",
                                 "felicio.cassalho@noaa.gov"),
         "WORKDIR":    str(mdir),
@@ -87,7 +121,8 @@ def submit_plot_outputs_ww3(cfg: dict,
             "MEM":      slurm.get(
                 "plot_outputs_ww3_gif_mem", "32G"),
             "WALLTIME": slurm.get(
-                "plot_outputs_ww3_gif_walltime", "00:30:00"),
+                "plot_outputs_ww3_gif_walltime",
+                "00:30:00"),
         })
         out2 = submitter.render_and_submit(
             "plot_outputs_ww3_gif.sbatch", stage2,
@@ -107,7 +142,8 @@ def submit_plot_outputs_ww3(cfg: dict,
         "MANIFEST":       str(manifest),
     })
     print(f"  Submitting plot_outputs_ww3 array: "
-          f"{ntasks} file(s)  throttle={throttle}")
+          f"{ntasks} file(s) at every {every_hours}h "
+          f"cadence  throttle={throttle}")
     out1 = submitter.render_and_submit(
         "plot_outputs_ww3_frames.sbatch", stage1,
         logdir / "plot_outputs_ww3_frames.sbatch")
@@ -120,7 +156,8 @@ def submit_plot_outputs_ww3(cfg: dict,
         "MEM":      slurm.get(
             "plot_outputs_ww3_gif_mem", "32G"),
         "WALLTIME": slurm.get(
-            "plot_outputs_ww3_gif_walltime", "00:30:00"),
+            "plot_outputs_ww3_gif_walltime",
+            "00:30:00"),
     })
     print(f"  Submitting plot_outputs_ww3 GIF assembly "
           f"(afterok:{jid1})")

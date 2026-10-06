@@ -25,7 +25,7 @@ Variables plotted (configured via plot_outputs_ww3_vars in postprocess.yaml):
   WLV   Water level (m)
 
 Two-stage SLURM design:
-  Stage 1 (array): one task per *.out_grd.ww3.nc file
+  Stage 1 (array): one task per *.out_grd.ww3.nc file on-cadence
   Stage 2 (serial, afterok): assembles per-variable GIFs
 
 Output: P{ID}/P{ID}_plot_outputs_ww3/
@@ -100,11 +100,11 @@ def _load_ww3_mesh(nc_path: Path):
 
 
 # =============================================================================
-# Timestamp helpers
+# Timestamp / cadence helpers
 # =============================================================================
 
-def _parse_ww3_timestamp(nc_path: Path) -> str:
-    """Parse human-readable timestamp from WW3 filename.
+def _parse_ww3_timestamp_label(nc_path: Path) -> str:
+    """Human-readable timestamp from WW3 filename.
 
     YYYYMMDD.HHMMSS.out_grd.ww3.nc -> 'YYYY-MM-DD HH:MM'
     """
@@ -117,13 +117,14 @@ def _parse_ww3_timestamp(nc_path: Path) -> str:
 
 
 def _parse_ww3_sortkey(nc_path: Path) -> str:
-    """Return a sortable string key from the WW3 filename."""
+    """Sortable string key YYYYMMDDHHMMSS from WW3 filename."""
     stem  = nc_path.name
     parts = stem.split(".")
-    return parts[0] + parts[1]   # YYYYMMDDHHMMSS
+    return parts[0] + parts[1]
 
 
 def _in_date_range(cfg: dict, nc_path: Path) -> bool:
+    """Return True if this file falls within the configured date range."""
     start = cfg.get("plot_outputs_ww3_start")
     end   = cfg.get("plot_outputs_ww3_end")
     if not start and not end:
@@ -134,6 +135,25 @@ def _in_date_range(cfg: dict, nc_path: Path) -> bool:
     if end and key > end.replace("-", "") + "235959":
         return False
     return True
+
+
+def _on_cadence(nc_path: Path, every_hours: int) -> bool:
+    """Return True if this file's timestamp falls on the cadence.
+
+    Checks the HHMMSS part of the filename.
+    e.g. every_hours=6 keeps 000000, 060000, 120000, 180000.
+    every_hours=1 (default) keeps all files.
+    """
+    if every_hours <= 0 or every_hours == 1:
+        return True
+    stem   = nc_path.name
+    parts  = stem.split(".")
+    time_s = parts[1]   # HHMMSS
+    hour   = int(time_s[:2])
+    minute = int(time_s[2:4])
+    second = int(time_s[4:6])
+    return (minute == 0 and second == 0
+            and hour % every_hours == 0)
 
 
 # =============================================================================
@@ -169,6 +189,13 @@ def frames_for_file(cfg: dict, nc_path: Path):
         print(f"  [{nc_path.name}] outside date range, skipping.")
         return
 
+    every_hours = int(cfg.get(
+        "plot_outputs_ww3_every_hours", 1))
+    if not _on_cadence(nc_path, every_hours):
+        print(f"  [{nc_path.name}] skipped "
+              f"(cadence every {every_hours}h).")
+        return
+
     fdir = _frames_dir(cfg)
     fdir.mkdir(parents=True, exist_ok=True)
 
@@ -191,8 +218,8 @@ def frames_for_file(cfg: dict, nc_path: Path):
     var_cfgs = cfg.get("plot_outputs_ww3_vars") or DEFAULT_WW3_VARS
     dpi      = int(cfg.get("plot_outputs_ww3_dpi", 150))
 
-    # Timestamp string for title and filename
-    ts_label = _parse_ww3_timestamp(nc_path)
+    # Timestamp strings
+    ts_label = _parse_ww3_timestamp_label(nc_path)
     ts_file  = _parse_ww3_sortkey(nc_path)   # YYYYMMDDHHMMSS
 
     ds = nc4.Dataset(str(nc_path))
@@ -285,7 +312,6 @@ def assemble(cfg: dict):
         except OSError:
             pass
 
-    # Touch sentinel so Stage 2 is not resubmitted
     (gdir / ".ww3_frames_done").touch()
     (gdir / "plot_outputs_ww3.done").touch()
     print(f"  plot_outputs_ww3 assembly complete: "

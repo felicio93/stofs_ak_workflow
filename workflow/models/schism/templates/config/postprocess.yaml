@@ -137,7 +137,7 @@ plot_outputs_ww3_end:   null
 
 plot_outputs_ww3_fps: 4
 plot_outputs_ww3_dpi: 150
-
+plot_outputs_ww3_every_hours: 6
 
 # Date range for the GIF (null = whole run). Format YYYY-MM-DD.
 plot_outputs_start: null

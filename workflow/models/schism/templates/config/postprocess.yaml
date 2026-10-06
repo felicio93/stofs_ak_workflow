@@ -124,6 +124,21 @@ plot_outputs_vars:
   - {file_prefix: turbulentKineticEner, var_name: turbulentKineticEner, label: "TKE (m²/s²)",            cmap: viridis, vmin: 0,       vmax: 0.01,   is_3d: true, layer: surface}
   - {file_prefix: mixingLength,         var_name: mixingLength,        label: "Mixing Length (m)",        cmap: viridis, vmin: 0,       vmax: 0.5,    is_3d: true, layer: surface}
 
+# =============================================================================
+# plot_outputs_ww3 — WW3 field GIFs (UFS-SCHISM+WW3 only)
+# =============================================================================
+# Variables to plot from *.out_grd.ww3.nc. Defaults to HS, T01, THM, WLV,
+# UAX, UAY if not set. Set to null to use defaults.
+plot_outputs_ww3_vars: null
+
+# Date range (null = whole run). Format YYYY-MM-DD.
+plot_outputs_ww3_start: null
+plot_outputs_ww3_end:   null
+
+plot_outputs_ww3_fps: 4
+plot_outputs_ww3_dpi: 150
+
+
 # Date range for the GIF (null = whole run). Format YYYY-MM-DD.
 plot_outputs_start: null
 plot_outputs_end:   null

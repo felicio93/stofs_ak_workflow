@@ -86,6 +86,7 @@ download_altimetry: false   # DTN: download CCI or CoastWatch satellite altimetr
 download_argo:   false   # DTN: download Argo float profiles (IFREMER GDAC via OCSTrack)
                          # -> M{ID}/obs/argo/{region}/processed/ (domain-cropped)
 plot_outputs:    false   # Full-run field GIFs -> P{ID} (SLURM: parallel frames + GIF)
+plot_outputs_ww3: false  # UFS-SCHISM+WW3 only: WW3 field GIFs from *.out_grd.ww3.nc
 compare_sst:     false   # Model vs satellite SST GIF -> P{ID} (needs download_sst first)
 station_skill:   false   # Interactive: CO-OPS/NDBC obs vs model staout_* time-series
                          # plots + skill_metrics.csv -> P{ID} (needs download_coops/ndbc first)

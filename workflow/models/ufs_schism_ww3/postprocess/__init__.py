@@ -2,27 +2,12 @@
 models/ufs_schism_ww3/postprocess
 ==================================
 Phase 5 — UFS-SCHISM+WW3 post-processing.
-
-Inherits all standard UFS-SCHISM postprocessing steps (which in turn
-inherit all SCHISM steps) and adds WW3-specific validation:
-
-  wave_skill          : WW3 station output vs NDBC wave observations
-                        reads ww3.{YYYYMM}_tab.nc (converted from
-                        out_pnt.ww3 by ww3_ounp via auto_hotstart.py)
-  download_altimetry  : satellite altimetry Hs download (DTN)
-  collocate_altimetry : WW3 Hs vs satellite altimetry collocation
-                        uses *.out_grd.ww3.nc field output files
-  plot_altimetry      : altimetry diagnostic plots
-
-Note: wave_skill requires download_ndbc to have run first.
-      collocate_altimetry requires download_altimetry first.
 """
 
 import os
 import socket
 from pathlib import Path
 
-# ---- THE FIX: import the SCHISM postprocess dispatcher ----
 from workflow.models.schism.postprocess import (
     postprocess_phase as _schism_postprocess_phase,
 )
@@ -33,7 +18,6 @@ from workflow.models.ufs_schism_ww3.postprocess.collocate_altimetry import (
 
 
 def _is_dtn() -> bool:
-    """Return True if the current host is a DTN or ALLOW_NON_DTN=1."""
     hostname = socket.gethostname().lower()
     return ("dtn" in hostname
             or os.environ.get("ALLOW_NON_DTN") == "1")
@@ -50,11 +34,6 @@ def _dtn_skip(step: str):
 
 def postprocess_phase(cfg: dict, config_dir,
                       only: str = None):
-    """Dispatch Phase 5 for UFS-SCHISM+WW3.
-
-    Runs all standard SCHISM Phase 5 steps first, then adds
-    WW3-specific steps.
-    """
     config_dir = Path(config_dir)
     on_dtn     = _is_dtn()
 
@@ -64,16 +43,22 @@ def postprocess_phase(cfg: dict, config_dir,
         return bool(cfg.get(step, False))
 
     # Run all inherited SCHISM Phase 5 steps
-    # (download_sst, compare_sst, download_coops, download_ndbc,
-    #  station_skill, download_argo, collocate_argo, plot_argo,
-    #  plot_outputs)
     _schism_postprocess_phase(cfg, config_dir, only=only)
 
     # ----------------------------------------------------------------
-    # wave_skill — WW3 station output vs NDBC wave observations
-    # Uses ww3.{YYYYMM}_tab.nc files written by ww3_ounp during run.
-    # Variable mapping: hs->WVHT, tr->APD(TM01), th1m->MWD
-    # Requires: download_ndbc first.
+    # plot_outputs_ww3 — WW3 field GIFs from *.out_grd.ww3.nc
+    # ----------------------------------------------------------------
+    if enabled("plot_outputs_ww3"):
+        print("[STEP] plot_outputs_ww3")
+        from workflow.models.ufs_schism_ww3.postprocess.submit_plot_outputs_ww3 import (
+            submit_plot_outputs_ww3,
+        )
+        submit_plot_outputs_ww3(cfg, config_dir)
+    else:
+        print("[SKIP] plot_outputs_ww3")
+
+    # ----------------------------------------------------------------
+    # wave_skill
     # ----------------------------------------------------------------
     if enabled("wave_skill"):
         print("[STEP] wave_skill")
@@ -101,9 +86,6 @@ def postprocess_phase(cfg: dict, config_dir,
 
     # ----------------------------------------------------------------
     # collocate_altimetry
-    # Uses *.out_grd.ww3.nc field output files for Hs collocation.
-    # Reuses the SCHISM+WWM collocate_altimetry module since the
-    # WW3 field NetCDF format is compatible (unstructured, HS variable).
     # ----------------------------------------------------------------
     if enabled("collocate_altimetry"):
         print("[STEP] collocate_altimetry")
@@ -132,10 +114,6 @@ def postprocess_phase(cfg: dict, config_dir,
             print(
                 "[NOTE] plot_altimetry: "
                 "collocate_altimetry.done not found. "
-                "Run collocate_altimetry first, then:\n"
-                "         stofs-ak --run "
-                "--phase postprocess "
-                "--only plot_altimetry "
-                "--config <cfg>")
+                "Run collocate_altimetry first.")
     else:
         print("[SKIP] plot_altimetry")

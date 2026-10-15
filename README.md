@@ -1,10 +1,10 @@
 # STOFS-AK Modeling Workflow
 
-Automated **pre-processing**, **run management**, and **post-processing**
-workflow for the SCHISM ocean circulation model (and future coupled /
-UFS-Coastal variants), targeting the Alaska/Bering Sea domain (STOFS-AK). It
-runs on NOAA RDHPC Hercules and handles data downloading on the head/DTN node
-and preprocessing/execution on compute nodes via SLURM.
+Automated **pre-processing**, **run management** and **post-processing**
+workflow for the SCHISM ocean circulation model and its coupled variants
+(SCHISM+WWM and UFS-Coastal DATM+SCHISM(+WW3)), targeting the Alaska /
+Bering Sea domain (STOFS-AK). It runs on NOAA RDHPC Hercules: data downloads
+run on the DTN, preprocessing/execution on compute nodes via SLURM.
 
 **Author:** Felicio Cassalho
 
@@ -13,632 +13,555 @@ and preprocessing/execution on compute nodes via SLURM.
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Package Architecture](#package-architecture)
-3. [Repository Structure](#repository-structure)
-4. [Project Directory Structure](#project-directory-structure)
-5. [Prerequisites](#prerequisites)
-6. [Installation](#installation)
-7. [One-Time Setup](#one-time-setup)
-8. [Starting a New Project](#starting-a-new-project)
-9. [Configuration Reference](#configuration-reference)
-10. [Running the Workflow](#running-the-workflow)
-11. [Adding a New Model](#adding-a-new-model)
-12. [Step-by-Step Development Status](#step-by-step-development-status)
-13. [Monitoring, Logs, and Rerunning](#monitoring-logs-and-rerunning)
-14. [Troubleshooting](#troubleshooting)
+2. [Supported models](#supported-models)
+3. [Package architecture](#package-architecture)
+4. [Repository structure](#repository-structure)
+5. [Project directory structure](#project-directory-structure)
+6. [Prerequisites and installation](#prerequisites-and-installation)
+7. [Starting a new project](#starting-a-new-project)
+8. [Configuration reference](#configuration-reference)
+9. [Steps by phase](#steps-by-phase)
+10. [Running the workflow](#running-the-workflow)
+11. [Run management in detail (Phase 4)](#run-management-in-detail-phase-4)
+12. [Post-processing (Phase 5)](#post-processing-phase-5)
+13. [Sentinels, resuming and `--refresh`](#sentinels-resuming-and---refresh)
+14. [Conventions](#conventions)
+15. [Adding a new model](#adding-a-new-model)
+16. [Known limitations](#known-limitations)
+17. [Troubleshooting](#troubleshooting)
+
+See also `tutorials/hercules_walkthrough.md` (copy-paste walkthrough for a
+real Hercules project) and `docs/AUDIT.md` (code review record).
 
 ---
 
 ## Overview
 
-The workflow is organized into **three top-level phases**, each dispatched by a
-model **driver** selected from `project.yaml` (`model_type`):
+The workflow has three top-level phases, dispatched by a model **driver**
+selected from `project.yaml` (`model_type`):
 
-| Phase | CLI | Status | Description |
-|-------|-----|--------|-------------|
-| **Preprocess** | `stofs-ak --run` (default) | ✅ Implemented for SCHISM | Download forcing, generate all model inputs |
-| **Run** | `stofs-ak --run --phase run` | ✅ Implemented for SCHISM | Set up run dirs, launch monthly runs, chain hotstarts automatically |
-| **Postprocess** | `stofs-ak --run --phase postprocess` | ✅ Field GIFs + SST comparison | Field output GIFs, model-vs-satellite SST; station/skill validation planned |
+| Phase | CLI | What it does |
+|-------|-----|--------------|
+| **Preprocess** | `stofs-ak --run` (default) | Download forcing, generate every model input |
+| **Run** | `stofs-ak --run --phase run` | Populate run directories, launch group runs, chain restarts automatically |
+| **Postprocess** | `stofs-ak --run --phase postprocess` | Field GIFs, SST/Argo/altimetry comparison, station skill |
 
-Within the preprocessing phase, steps run in different execution contexts:
+`--phase all` runs the three in sequence.
 
-| Context | Where it runs | Internet | Examples |
-|---------|--------------|----------|----------|
-| Downloads | Head node / DTN | Yes | `download_hycom`, `download_era5`, `download_glofas` |
-| Processing | Any node | No | `aggregate_hycom`, `gen_bctides`, `gen_source` |
-| SLURM jobs | Login node → compute | No | `inspect_mesh`, `plot_hycom`, `gen_sflux`, `gen_3Dth`, ... |
+Preprocessing steps run in different execution contexts:
 
-The orchestrator (`orchestrator.py`, exposed as the `stofs-ak` command) reads
-your configuration, builds the project directory tree, and dispatches the
-selected phase to the driver.
+| Context | Where | Internet | Examples |
+|---------|-------|----------|----------|
+| Downloads | DTN | yes | `download_hycom`, `download_era5`, `download_glofas`, `download_sst`, `download_coops`, `download_ndbc`, `download_argo`, `download_altimetry` |
+| Interactive | any node | no | `aggregate_hycom`, `gen_estuary`, `gen_bctides`, `gen_source`, `gen_param`, `gen_datm_in`, ... |
+| SLURM | login node, runs on compute | no | `inspect_mesh`, `gen_sflux`, `gen_hotstart`, `gen_3Dth`, `gen_nudge`, `gen_datm`, `gen_esmf_mesh`, plot steps |
 
 ---
 
-## Package Architecture
+## Supported models
 
-The code is organized so that **shared plumbing**, **data downloading**,
-**model-agnostic diagnostics**, and **per-model logic** are cleanly separated.
-Each model configuration is a **driver** (a subclass of `ModelDriver`) that
-owns its preprocessing/run/postprocessing steps.
+| `model_type` | Description | Driver | Status |
+|--------------|-------------|--------|--------|
+| `schism` | SCHISM standalone | `SchismDriver` | implemented |
+| `schism_wwm` | SCHISM + WWM (internally coupled waves) | `SchismWwmDriver(SchismDriver)` | implemented |
+| `ufs_schism` | UFS-Coastal: DATM + CMEPS + SCHISM (old I/O) | `UfsSchismDriver` | implemented |
+| `ufs_schism_ww3` | UFS-Coastal: DATM + CMEPS + SCHISM + WW3 | `UfsSchismWw3Driver(UfsSchismDriver)` | implemented |
+| `schism_mice` | SCHISM + MICE (sea ice) | `SchismMiceDriver(SchismDriver)` | placeholder: all phases raise `NotImplementedError` |
+
+Which steps apply to which model is listed in [Steps by phase](#steps-by-phase).
+
+---
+
+## Package architecture
 
 ```
                        orchestrator.py  (stofs-ak CLI)
-                                │
-                                │  reads project.yaml -> model_type
+                                │   reads project.yaml -> model_type
                                 ▼
                      workflow.models.base.make_driver
                                 │
-             ┌──────────────────┼───────────────────────┐
-             ▼                  ▼                        ▼
-       SchismDriver     SchismWwmDriver / ...      UfsCoastalDriver
-             │           (inherit SchismDriver)     (inherit ModelDriver)
-             │
-   preprocess / run / postprocess
-             │
-   ┌─────────┼───────────────────────────────┐
-   ▼         ▼                                 ▼
-workflow.downloaders   workflow.diagnostics   workflow.models.schism.*
-   (HYCOM/ERA5/GloFAS)  (mesh, HYCOM, sflux)  (preprocess/run/postprocess)
-             │
-        all built on
-             ▼
-        workflow.core   (config, mesh_parser, plot_style, slurm, environment)
+        ┌───────────────────────┼─────────────────────────┐
+        ▼                       ▼                         ▼
+   SchismDriver           UfsSchismDriver           SchismMiceDriver
+        │                       │                    (placeholder)
+ SchismWwmDriver        UfsSchismWw3Driver
+        │                       │
+   preprocess / run / postprocess  (per model)
+        │
+   ┌────┴───────────────────────────────────┐
+   ▼                    ▼                   ▼
+workflow.downloaders  workflow.diagnostics  workflow.models.<model>.*
+ (HYCOM/ERA5/GloFAS)  (mesh, HYCOM, sflux,  (preprocess/run/postprocess
+                       DATM debug plots)     + templates)
+        │
+   all built on workflow.core
+   (config, mesh_parser, station_parser, plot_style, slurm, templating, environment)
 ```
 
-**Key ideas**
+Key ideas:
 
-- **Drivers** encapsulate everything about one model. Adding SCHISM+WWM is a
-  small subclass that inherits all SCHISM steps and overrides only what's
-  wave-specific.
-- **`workflow.core`** holds all shared helpers so nothing is duplicated across
-  steps: config loading, `.gr3` parsing, plotting style, SLURM submission
-  (`SlurmSubmitter`), and environment guards (`check_dtn`, `check_cdsapi`,
-  `env_python`, conda `setup_envs`).
-- **Downloaders** and **diagnostics** are model-agnostic and reused by any
-  driver.
-- **SLURM templates** and **model-specific config** live inside each model
-  package (`workflow/models/schism/templates/`).
+- A **driver** (`ModelDriver` subclass) owns everything about one model.
+  `schism_wwm` and `ufs_schism_ww3` inherit their parent driver and only add
+  or override what is wave-specific.
+- **`workflow.core`** holds the shared plumbing: config loading and group
+  enumeration, `.gr3` and `station.in` parsing, plotting style,
+  `SlurmSubmitter` (render `{{KEY}}` templates + `sbatch`), environment
+  guards (`check_dtn`, `is_dtn`, `check_cdsapi`, `env_python`, `setup_envs`).
+- **Downloaders** and **diagnostics** are model-agnostic.
+- **SLURM templates** and **model YAML templates** live inside each model
+  package (`workflow/models/<model>/templates/`).
 
 ---
 
-## Repository Structure
+## Repository structure
 
 ```
 stofs_ak_workflow/                      <- git repo (clone this to Hercules)
 ├── pyproject.toml                      <- installable package (pip install -e .)
-├── orchestrator.py                     <- CLI entry point (stofs-ak); routes to a driver
+├── orchestrator.py                     <- CLI entry point (stofs-ak)
 ├── README.md
-├── tutorials/
-│   └── hercules_walkthrough.md         <- copy-paste steps for the real Hercules case
-├── utils/
-│   └── glofas2schism_shp2csv.ipynb     <- helper notebook (GloFAS shapefile -> csv)
-├── templates/
-│   └── config_example/                 <- shared config templates (copy to your project)
-│       ├── project.yaml                <- project id, model_type, paths, dates, SLURM
-│       ├── domain.yaml                 <- lon/lat bounds, lon_reference, plot ranges
-│       ├── steps.yaml                  <- per-step enable/disable flags (all phases)
-│       └── envs.yaml                   <- conda env names per step
+├── docs/AUDIT.md                       <- code review record (fixed / documented / reported)
+├── tutorials/hercules_walkthrough.md   <- copy-paste steps for the real Hercules case
+├── utils/                              <- helper notebooks (GloFAS shapefile -> csv, shape -> station.in)
+├── templates/config_example/           <- shared config templates (copy to project)
+│   ├── project.yaml  domain.yaml  steps.yaml  envs.yaml
 └── workflow/
-    ├── __init__.py
-    │
-    ├── core/                           <- shared plumbing (used everywhere)
-    │   ├── config.py                   <- YAML loading + month enumeration + progress/log
-    │   ├── mesh_parser.py              <- .gr3 parser (nodes, elements, boundaries)
-    │   ├── plot_style.py               <- shared plotting frames/GIF helpers
-    │   ├── slurm.py                    <- SlurmSubmitter: render + sbatch templates
-    │   └── environment.py              <- DTN/cdsapi/env checks + conda setup_envs
-    │
-    ├── downloaders/                    <- Phase 1: raw forcing data (model-agnostic)
-    │   ├── hycom.py                    <- daily HYCOM SSH/TS/UV via OPeNDAP
-    │   ├── era5.py                     <- ERA5 monthly raw files (CDS API)
-    │   └── glofas.py                   <- GloFAS annual discharge (EWDS API)
-    │
-    ├── diagnostics/                    <- model-agnostic diagnostic plots
-    │   ├── inspect_mesh.py             <- fix/ input plots + mesh resolution + layers
-    │   ├── submit_inspect_mesh.py      <- SLURM launcher for inspect_mesh
-    │   ├── plot_hycom.py               <- per-month HYCOM debug GIFs (worker)
-    │   ├── submit_plots.py             <- SLURM array launcher for plot_hycom
-    │   └── plot_sflux.py               <- per-month sflux debug GIFs (worker)
-    │
-    ├── tidal/                          <- TPXO9 reader (vendored from pyschism)
-    │   ├── tides.py
-    │   └── tpxo.py
-    │
-    └── models/                         <- per-model driver tree
-        ├── base.py                     <- ModelDriver ABC + make_driver() factory
-        │
-        ├── schism/                     <- SCHISM standalone (implemented)
-        │   ├── driver.py               <- SchismDriver: dispatches all phases
-        │   ├── preprocess/
-        │   │   ├── aggregate_hycom.py  <- daily -> monthly SCHISM stacks
-        │   │   ├── gen_bctides.py      <- TPXO9 -> bctides.in per month
-        │   │   ├── gen_estuary.py      <- estuary.gr3 + gen_*_from_nc.in files
-        │   │   ├── gen_param.py        <- param.nml per month (dates, hotstart chain)
-        │   │   ├── gen_sflux.py        <- ERA5 raw -> sflux files (SLURM worker)
-        │   │   ├── submit_era5.py      <- SLURM launchers for gen_sflux / plot_sflux
-        │   │   ├── gen_source.py       <- GloFAS discharge -> source.nc per month
-        │   │   └── gen_hycom_utils.py  <- SLURM jobs for gen_hotstart/3Dth/nudge
-        │   ├── run/
-        │   │   └── run_manager.py      <- PLACEHOLDER: run submission/monitoring
-        │   ├── postprocess/
-        │   │   └── __init__.py         <- PLACEHOLDER: plots/validation/skill
-        │   └── templates/
-        │       ├── slurm/*.sbatch      <- SCHISM SLURM templates
-        │       └── config/schism.yaml  <- SCHISM-specific config template
-        │
-        ├── schism_wwm/driver.py        <- PLACEHOLDER: SchismWwmDriver(SchismDriver)
-        ├── schism_mice/driver.py       <- PLACEHOLDER: SchismMiceDriver(SchismDriver)
-        └── ufs_coastal/driver.py       <- PLACEHOLDER: UfsCoastalDriver(ModelDriver)
+    ├── core/            config.py, mesh_parser.py, station_parser.py,
+    │                    plot_style.py, slurm.py, templating.py, environment.py
+    ├── downloaders/     hycom.py, era5.py, glofas.py
+    ├── diagnostics/     inspect_mesh.py, plot_hycom.py, plot_sflux.py,
+    │                    plot_datm.py, submit_*.py
+    ├── tidal/           tides.py, tpxo.py (TPXO9 reader, vendored from pyschism)
+    └── models/
+        ├── base.py                     ModelDriver ABC + make_driver()
+        ├── schism/                     driver, preprocess/, run/, postprocess/,
+        │                               templates/{slurm,config,auto_hotstart.py}
+        ├── schism_wwm/                 driver, preprocess/ (gen_wwmbnd, gen_wwminput),
+        │                               run/setup_run.py, postprocess/ (wave_skill,
+        │                               altimetry), templates/
+        ├── ufs_schism/                 driver, preprocess/ (DATM, ESMF mesh, UFS
+        │                               config files), run/, templates/
+        ├── ufs_schism_ww3/             driver, preprocess/ (gen_ww3_shel/ounp),
+        │                               run/setup_run.py, postprocess/ (wave_skill,
+        │                               altimetry, plot_outputs_ww3), templates/
+        └── schism_mice/                placeholder driver
 ```
 
 ---
 
-## Project Directory Structure
+## Project directory structure
 
-For a project with ID `01`, the workflow creates the following tree under
-`project_dir` (from `project.yaml`). This is **generated data**, not part of
-the git repo.
+For project ID `01` the workflow creates this tree under `project_dir`
+(generated data, not part of the git repo):
 
 ```
-<project_dir>/
-└── M01/
-    ├── config/                     <- your edited YAML files (NOT in git)
-    │   ├── project.yaml
-    │   ├── domain.yaml
-    │   ├── steps.yaml
-    │   ├── envs.yaml
-    │   └── schism.yaml             <- model-specific (for model_type: schism)
-    ├── fix/                        <- fixed mesh + static river files
-    │   ├── hgrid.gr3
-    │   ├── vgrid.in
-    │   ├── drag.gr3
-    │   ├── source_glofas.csv       <- GloFAS extraction points (id,lon,lat)
-    │   ├── source_schism.csv       <- SCHISM injection points  (id,lon,lat)
-    │   └── (other fixed SCHISM inputs)
-    ├── bin/                        <- compiled Fortran executables for this project
-    ├── raw/                        <- raw downloaded data (never modified after download)
-    │   ├── hycom/{ssh,ts,uv}/
-    │   ├── era5/{YYYY}/era5_YYYYMM.nc
-    │   └── glofas/{YYYY}/glofas_YYYY.nc
-    ├── I01/                        <- processed inputs (one directory per month)
-    │   ├── I01_202409/
-    │   │   ├── SSH_1.nc  TS_1.nc  UV_1.nc
-    │   │   ├── bctides.in
-    │   │   ├── source.nc
-    │   │   └── sflux/
-    │   └── ...
-    ├── R01/                        <- SCHISM run directories (one per month)  [Phase 4]
-    ├── P01/                        <- postprocessing output (one per month)   [Phase 5]
-    ├── D01/                        <- debug plots (one directory per month)
-    └── logs/                       <- orchestrator + SLURM logs
+<project_dir>/M01/
+├── config/        your edited YAML files (not in git)
+├── fix/           fixed mesh + static inputs (single source of truth; symlinked, not copied)
+├── bin/           compiled executables (+ *.lua modulefiles for UFS)
+├── raw/           raw downloads (hycom/{ssh,ts,uv}, era5/YYYY, glofas/YYYY); a permanent cache
+├── obs/           observations (sst_leo, coops, ndbc, argo, altimetry)
+├── I01/           processed inputs, one directory per group:  I01_YYYYMM/ (or I01_YYYYMMDD/)
+├── R01/           run directories, one per group:             R01_YYYYMM/
+├── D01/           debug plots: D01_YYYYMM/ per group, D01_fix/ (mesh), logs/
+├── P01/           postprocessing output, one topic subdirectory per step:
+│                  P01_plot_outputs/, P01_compare_sst/, P01_station_skill/,
+│                  P01_collocate_argo/, P01_collocate_altimetry/, P01_plot_outputs_ww3/
+└── logs/          orchestrator + SLURM logs
 ```
 
-**Key rules:**
-- `fix/` is the single source of truth for mesh files; monthly input dirs use
-  **symlinks** to it, not copies.
-- `raw/` is a permanent cache. Rerunning a download skips already-present files.
-- `bin/` holds compiled Fortran executables specific to this project.
-- `I{ID}_YYYYMM/` files use the SCHISM stack convention (`SSH_1.nc`, etc.)
-  expected by the `gen_*_from_hycom` tools.
+Group IDs are `YYYYMM` for monthly grouping and `YYYYMMDD` (group start date)
+for `ndays` grouping. Rerunning a download skips files already present.
 
 ---
 
-## Prerequisites
+## Prerequisites and installation
 
-### System tools (available on Hercules, provided by conda envs below)
+Two conda environments provide everything (created by `--setup-envs`; the
+package specs live in `workflow/core/environment.py`):
 
-- **NCO** (`ncks`, `ncpdq`, `ncap2`, `ncrename`, `ncrcat`, `ncatted`, `ncwa`)
-- **CDO** (`cdo`)
-- **Python 3.8+**
-
-### Python packages
-
-Two conda environments provide everything (created via `--setup-envs`):
-- `swf_main` — orchestrator + NCO/CDO + downloads (`cdsapi`, `netcdf4`,
-  `xarray`) + TPXO bctides (`scipy`) + package deps (`pyyaml`, `python-dateutil`)
-- `swf_plot` — plotting (`matplotlib`, `cartopy`, `xarray`, `imageio`,
-  `pandas`, `numpy`) + Argo collocation (`ocstrack`, `gsw`) for the
-  `download_argo` / `collocate_argo` Phase-5 steps
-
----
-
-## Installation
-
-Clone the repo anywhere on Hercules (it does not have to be `$HOME`).
-Throughout this README, `$WF` refers to the path of your clone.
+- `swf_main`: orchestrator, NCO/CDO, downloads (`cdsapi`, `netcdf4`, `xarray`),
+  TPXO (`scipy`), `ocstrack`, `matplotlib`/`pandas`.
+- `swf_plot`: plotting and SLURM worker jobs (`cartopy`, `imageio`,
+  `mpi4py`, `gsw`, `dask`, ...). You never activate it; SLURM jobs call its
+  interpreter by absolute path.
 
 ```bash
 git clone https://github.com/felicio93/stofs_ak_workflow
-export WF=$(pwd)/stofs_ak_workflow    # adjust to your clone location
-```
+export WF=$(pwd)/stofs_ak_workflow
 
-Install the package into your `swf_main` environment (editable, so code edits
-take effect immediately). This exposes the `stofs-ak` console command and
-removes any need for `sys.path` hacks:
-
-```bash
-conda activate swf_main
-pip install -e $WF
-```
-
-After this you can run either `stofs-ak ...` or `python $WF/orchestrator.py ...`
-— they are equivalent. Running the tool never writes into `$WF`; all generated
-data goes under `project_dir`.
-
----
-
-## One-Time Setup
-
-### 1. Create the config directory for your project
-
-```bash
-mkdir -p /work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config
-cp $WF/templates/config_example/*.yaml \
-   /work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config/
-# For SCHISM, also copy the model-specific config template:
-cp $WF/workflow/models/schism/templates/config/schism.yaml \
-   /work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config/
-```
-
-### 2. Bootstrap `swf_main` and install the package
-
-```bash
 conda create -n swf_main -c conda-forge python=3.11 pyyaml python-dateutil \
     nco cdo cdsapi netcdf4 xarray scipy
 conda activate swf_main
-pip install -e $WF
+pip install -e $WF                       # exposes the `stofs-ak` command
+
+stofs-ak --setup-envs --config <cfg>     # on the DTN; creates/verifies swf_plot
 ```
 
-### 3. Create/verify all conda envs referenced by the config
+ERA5/GloFAS need a `~/.cdsapirc` on the DTN with your Copernicus key
+(`url: https://cds.climate.copernicus.eu/api`, `key: <uid>:<api-key>`).
 
-This creates `swf_plot` and verifies both envs. It needs internet → run on the
-DTN.
-
-```bash
-stofs-ak --setup-envs \
-    --config /work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config
-```
-
-Env package specs live in `workflow/core/environment.py`. Re-run any time to
-verify. You never activate `swf_plot` yourself; SLURM jobs call its interpreter
-by full path.
-
-> **ERA5/GloFAS prerequisite:** create a `~/.cdsapirc` on the DTN with your
-> Copernicus key:
-> ```
-> url: https://cds.climate.copernicus.eu/api
-> key: <your-uid>:<your-api-key>
-> ```
-> Register at https://cds.climate.copernicus.eu (GloFAS uses the EWDS endpoint
-> automatically).
+Running the tool never writes into `$WF`; all generated data goes under
+`project_dir`.
 
 ---
 
-## Starting a New Project
-
-### 1. Edit the config files
+## Starting a new project
 
 ```bash
-cd /work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config
-# edit project.yaml (set model_type, project_id, dates, paths, SLURM),
-# domain.yaml, steps.yaml, envs.yaml, schism.yaml
+mkdir -p $CFG                                   # e.g. <project_dir>/M01/config
+cp $WF/templates/config_example/*.yaml $CFG/
+# model-specific yaml (copy the one matching model_type):
+cp $WF/workflow/models/schism/templates/config/schism.yaml               $CFG/   # schism
+cp $WF/workflow/models/schism_wwm/templates/config/schism_wwm.yaml       $CFG/   # schism_wwm
+cp $WF/workflow/models/ufs_schism/templates/config/ufs_schism.yaml       $CFG/   # ufs_schism
+cp $WF/workflow/models/ufs_schism_ww3/templates/config/ufs_schism_ww3.yaml $CFG/ # ufs_schism_ww3
+# optional Phase 5 settings:
+cp $WF/workflow/models/schism/templates/config/postprocess.yaml $CFG/
+
+stofs-ak --init --config $CFG     # safe to re-run; never deletes anything
 ```
 
-### 2. Initialize the directory tree
+Then populate `fix/` and `bin/`.
 
-```bash
-stofs-ak --init \
-    --config /work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config
-```
+**Common `fix/` inputs (all models):** `hgrid.gr3`, `hgrid.ll`, `vgrid.in`,
+`partition.prop`, `tvd.prop`, `albedo.gr3`, `diffmin.gr3`, `diffmax.gr3`,
+`watertype.gr3`, `shapiro.gr3`, `windrot_geo2proj.gr3`, `rough.gr3`,
+`TEM_nudge.gr3`, `SAL_nudge.gr3`, `station.in`, `param.nml`, `run_test`,
+`run_comb`, `source_glofas.csv`, `source_schism.csv`. Missing optional files
+are skipped with a NOTE by `setup_run`.
 
-Safe to re-run — it never deletes existing directories.
+| Model | Extra `fix/` inputs | `bin/` |
+|-------|---------------------|--------|
+| `schism` | none | `gen_*_noscaling.exe`, SCHISM exe, `combine_hotstart7.exe` |
+| `schism_wwm` | `wwminput.nml` template | same, WWM-enabled SCHISM exe (`executables.schism_wwm`) |
+| `ufs_schism` | `datm_in`, `datm.streams`, `fd_ufs.yaml`, `noahmptable.tbl`, `model_configure` | `*.lua` modulefiles, UFS exe (`executables.ufs_schism`), `combine_output11_MPI`, `combine_hotstart7.exe` |
+| `ufs_schism_ww3` | everything above + `ww3_shel.nml`, `ww3_ounp.inp`, `mod_def.ww3`, `namelists.nml`, `ww3_points.list`, `ST4TABUHF2.bin`, `ww3_ESMFmesh.nc`, `mesh.msh` | UFS+WW3 exe (`executables.ufs_schism_ww3`), optionally `ww3_ounp` |
 
-### 3. Populate `fix/` and `bin/`
-
-```bash
-cp /path/to/hgrid.gr3 /path/to/vgrid.in \
-   /work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/fix/
-cp /path/to/compiled/*.exe \
-   /work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/bin/
-```
+The `_noscaling` HYCOM utilities expect **unpacked** float data (the
+downloader unpacks with `ncpdq -U`); do not use the stock SCHISM utilities.
 
 ---
 
-## Configuration Reference
+## Configuration reference
+
+All files in the config directory are merged into one flat dict by
+`workflow.core.config.load_config`:
+
+`project.yaml` + `domain.yaml` + `steps.yaml` + `envs.yaml` +
+`<model_type>.yaml` + optional `postprocess.yaml`.
+
+Later files win; **nested blocks (`slurm:`, `executables:`, `conda_envs:`) are
+replaced, not merged**, and a warning is printed if two files define the same
+block. Only the active model's yaml is loaded: `ufs_schism_ww3.yaml` does
+**not** inherit from `ufs_schism.yaml`, and the SCHISM keys of `schism.yaml`
+are not loaded for derived models. All SCHISM keys have code defaults; copy
+the ones you want to change into your `<model_type>.yaml`.
 
 ### project.yaml
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `project_id` | string | Two-digit ID, e.g. `"01"`. Determines `M01`, `I01`, etc. |
-| `model_type` | string | `schism` (implemented), `schism_wwm`, `schism_mice`, `ufs_coastal` (planned) |
-| `project_dir` | string | Absolute path to the parent project directory on HPC |
-| `start_date` / `end_date` | string | Simulation range, `YYYY-MM-DD` |
-| `grouping` | string | Time grouping: `monthly` (only option currently) |
-| `slurm:` | block | SLURM account/partition/walltime/mem per step |
-| `executables:` | block | Fortran executable names in `M{id}/bin/` |
+| Field | Description |
+|-------|-------------|
+| `project_id` | two-digit string (`"01"`) -> `M01`, `I01`, ... |
+| `model_type` | `schism`, `schism_wwm`, `ufs_schism`, `ufs_schism_ww3` (`schism_mice` = placeholder) |
+| `project_dir` | absolute parent directory on HPC |
+| `start_date` / `end_date` | inclusive, `YYYY-MM-DD` |
+| `grouping` | `monthly` (default), `ndays`, or alias `daily` / `weekly` / `biweekly` |
+| `group_ndays` | required with `grouping: ndays`; ignored (with a warning) when an alias is used |
+| `slurm:` | account, partition, mail_user, per-step walltime/mem (see template) |
+| `executables:` | executable names in `M{id}/bin/` (`gen_hotstart`, `gen_3Dth`, `gen_nudge`, and per model `schism` / `schism_wwm` / `ufs_schism` / `ufs_schism_ww3`, `combine_hotstart`, `combine_output`, `ww3_ounp`) |
+
+With monthly grouping use a `start_date` on the 1st; a warning is printed
+otherwise. SLURM site defaults (`nos-surge`, `hercules-2`, mail user) are
+defined once in `workflow/core/slurm.py` and overridden by `slurm:`.
 
 ### domain.yaml
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `lon_min`/`lon_max`/`lat_min`/`lat_max` | float | Download bounding box (decimal degrees) |
-| `lon_reference` | string | `"360"` (Bering Sea; 180° crosses domain) or `"180"` |
-| `estuary_depth_threshold` | float | Depth (m) below which nodes are marked estuary |
-| `plot_cmap`, `plot_*_range` | — | Debug plotting options |
+`lon_min/lon_max/lat_min/lat_max` (download box), `lon_reference` (`"360"`
+or `"180"`; Bering Sea domains crossing 180 use `"360"`),
+`estuary_depth_threshold`, plot ranges/colormaps.
 
 ### steps.yaml
 
-Boolean flags grouped by phase. Enable one step, test it, disable it, enable
-the next. Phase 0–3 = preprocessing; Phase 4 = run management (`setup_run`,
-`submit_run`); Phase 5 = post-processing (placeholder). See the file's inline
-comments for the full per-step list.
+Boolean flag per step, grouped by phase (see
+[Steps by phase](#steps-by-phase)). Enable one step, test it, then the next.
+`--only <step>` runs one step regardless of the flags and is validated
+against the phase given with `--phase`.
 
 ### envs.yaml
 
-| Field | Description |
-|-------|-------------|
-| `conda_base` | Absolute path to your miniconda installation |
-| `conda_envs.<step>` | Conda env name for that step (`swf_main` or `swf_plot`) |
+`conda_base` and `conda_envs.<step>` -> `swf_main` / `swf_plot`. For
+interactive steps the name is only checked against the active env (warning
+on mismatch); SLURM steps call the env interpreter by full path.
 
-### schism.yaml (model-specific)
+### Model YAMLs
 
-Loaded automatically when present. Contains SCHISM T/S constants, open-boundary
-flags, tidal constituents, nudging factors, hotstart binning parameters, etc.
-Template: `workflow/models/schism/templates/config/schism.yaml`.
+| File | Main keys |
+|------|-----------|
+| `schism.yaml` | `estuary_temp/sal`, `outside_temp/sal`, `open_boundary_flags`, `tobc`, `sobc`, `tidal_constituents`, `tidal_cutoff_depth`, `open_boundaries`, `hycom_dt`, `nudge_stride`, `nbin`, `mne_bin`, `chain_hotstart` |
+| `schism_wwm.yaml` | `wwm_cutoff_freq`, `wwm_outstyle_station`, `wwm_lsp1d`, `wwm_lsp2d`, `wwm_deltc_hotfile`, `wwm_procname` |
+| `ufs_schism.yaml` | DATM (`datm_subdir`, `datm_filename_template`, `dt_atmos`), coupling (`coupling_dt`, `*_model`, `cpl_mode`, `coupling_config`, `case_name`), PET lists (`med/atm/ocn_petlist_bounds`), OMP threads |
+| `ufs_schism_ww3.yaml` | all of the above (self-contained) + `wav_model`, `wav_petlist_bounds`, `wav_omp_num_threads`, `med_pio_*`, `wav_mesh_file`, `wav_pio_*`, `ww3_point_output_dt`, `ww3_fix_files`, `chain_ww3_restart` |
+| `postprocess.yaml` | isobaths, `diag_run_vars`, `plot_outputs_*`, `compare_sst_*`, `station_skill_*`, `coops_*`, `ndbc_*`, `argo_*`/`collocate_argo_*`, altimetry and WW3 plot keys (documented inline) |
 
----
+`chain_hotstart` (default `true`): `true` chains group N -> N+1
+automatically; `false` is for **single-group testing** only (later groups
+have no `hotstart.nc` link and cannot start).
 
-## Running the Workflow
-
-All commands take `--config <dir>`. The **preprocess** phase is the default for
-`--run`; the other phases are selected with `--phase`.
-
-```bash
-# Preprocessing (default phase). Enable steps in steps.yaml first.
-stofs-ak --run --config <config_dir>
-
-# Run a single step regardless of steps.yaml flags
-stofs-ak --run --only download_hycom --config <config_dir>
-
-# Phase 4 — populate run dirs (fast, interactive)
-stofs-ak --run --phase run --only setup_run  --config <config_dir>
-
-# Phase 4 — launch all monthly runs (blocking — use screen/tmux)
-stofs-ak --run --phase run --only submit_run --config <config_dir>
-
-# Phase 5 — post-processing (placeholder)
-stofs-ak --run --phase postprocess --config <config_dir>
-
-# Run all phases in sequence (preprocess -> run -> postprocess)
-stofs-ak --run --phase all --config <config_dir>
-
-# Reset all sentinels so the workflow re-runs from scratch on the next --run
-stofs-ak --refresh --config <config_dir>
-```
-
-### Typical preprocessing sequence
-
-1. **Downloads (DTN):** `download_hycom`, `download_era5`, `download_glofas`.
-   Must run on the DTN (`ssh hercules-dtn...`, `conda activate swf_main`). The
-   scripts refuse to run off a DTN unless `export ALLOW_NON_DTN=1`.
-2. **Aggregate (any node):** `aggregate_hycom` builds monthly `SSH_1/TS_1/UV_1`
-   stacks.
-3. **SLURM steps (login node):** `inspect_mesh`, `plot_hycom`, `gen_sflux`,
-   `plot_sflux`, `gen_hotstart`, `gen_3Dth`, `gen_nudge` — each renders a SLURM
-   script and submits it. Monitor with `squeue -u $USER`; logs in `M{ID}/logs/`.
-4. **Interactive SCHISM inputs:** `gen_estuary` (once), `gen_bctides`,
-   `gen_source`, `gen_param`.
-
-> **Note:** `download_hycom` (DTN, no `sbatch`) and `plot_hycom` (needs
-> `sbatch`) cannot both succeed in one invocation on the same node. Run them
-> separately; the driver warns if both are enabled.
-
-### Typical run-phase sequence (Phase 4)
-
-1. **`setup_run`** (interactive, fast): populates every `R{ID}_YYYYMM/`
-   directory — symlinks from `fix/` and `I{ID}_YYYYMM/`, copies the SCHISM MPI
-   executable, creates `outputs/` with placeholder files, adapts `run_test` and
-   `run_comb` job cards, and renders `auto_hotstart.py` per month. Requires
-   `executables.schism` and `executables.combine_hotstart` in `project.yaml`.
-2. **`submit_run`** (blocking — run inside `screen`/`tmux`): calls
-   `auto_hotstart.py` for month 1, which submits the SCHISM job, monitors
-   `outputs/mirror.out` for progress and hangs, combines the end-of-month
-   hotstart on completion, symlinks it into the next month's run directory, and
-   launches that month automatically. Returns when all months are done.
-
-> **`chain_hotstart`** in `schism.yaml` controls chaining: `true` (default) =
-> auto-launch month N+1; `false` = stop after each month (useful for testing).
-> See `tutorials/hercules_walkthrough.md` for the complete Phase 4 walkthrough.
-
-### Typical postprocess sequence (Phase 5)
-
-Configured in `postprocess.yaml` (variables, layers, cadence, color scales,
-frame retention). All plots overlay the 200 m and 2000 m isobaths.
-
-1. **`diag_run_plots`** (during the run, **enable before `setup_run`**):
-   per-output-stack diagnostic frames (SSH/SST/SSS/U/V by default) written to
-   `D{ID}/D{ID}_YYYYMM/diag/` as each stack is written. `auto_hotstart.py`
-   submits a small SLURM job per completed stack. Static images, no GIF —
-   for watching run health as it progresses.
-2. **`download_sst`** (DTN): download + domain-subset the LEO L3S-DY daily
-   satellite SST into `M{ID}/obs/sst_leo/`.
-3. **`plot_outputs`**: full-run field GIFs (any configured variable/layer,
-   every-X-hours cadence). Two-stage SLURM — parallel per-file frames, then a
-   serial GIF-assembly job (`--dependency=afterok`). Output in `P{ID}/`.
- 4. **`compare_sst`**: model (daily-mean SST) vs satellite two-panel GIF over a
-    date range. Same two-stage SLURM pattern. Needs `download_sst` first.
- 5. **`download_coops`** (DTN): parse `fix/station.in`, download NOAA CO-OPS
-    station observations (water level, water temperature, air pressure, wind)
-    into `M{ID}/obs/coops/` — one CSV per station/product/month (CO-OPS 6-min
-    data is capped at one month per request). Resume-safe.
- 6. **`download_ndbc`** (DTN): parse `fix/station.in`, download NOAA NDBC buoy
-    observations (WTMP, wind, PRES, ...) into `M{ID}/obs/ndbc/` — one CSV per
-    station/year. Past years come from the annual historical file; the current
-    year is assembled from completed-month files + the realtime 45-day file.
- 7. **`station_skill`** (interactive): compare CO-OPS and NDBC observations
-    against the model `outputs/staout_*` at each station, write obs-vs-model
-    time-series plots (bias/RMSE/R² in the legend) and a `skill_metrics.csv`
-    under `P{ID}/P{ID}_station_skill/`. Only the variables named in each
-    station's VARS bracket are assessed. Re-run for any sub-period via
-    `station_skill_start`/`station_skill_end` in `postprocess.yaml` without
-    re-downloading. Needs `download_coops` and/or `download_ndbc` first.
-
- 8. **`download_argo`** (DTN): download Argo float profiles from the IFREMER
-    GDAC (via OCSTrack `get_argo`), cropped to the domain bounding box, into
-    `M{ID}/obs/argo/{region}/processed/`. No credentials required.
- 9. **`collocate_argo`** (interactive): OCSTrack 3-D collocation of SCHISM
-    temperature/salinity profiles against the Argo floats. Loops over the run
-    months (`R{ID}_{YYYYMM}/outputs/{temperature,salinity,zCoordinates}_*.nc`
-    plus the run-dir `hgrid.gr3`), collocates each with
-    `ocstrack.Collocate(var_type='3D_Profile')`, and concatenates the per-month
-    NetCDFs into one file per variable under `P{ID}/P{ID}_collocate_argo/`.
-    Requires SCHISM 3-D T/S/`zCoordinates` output (param.nml `iof_hydro`) and
-    `download_argo` first. Configured via `argo_region`, `collocate_argo_vars`,
-    `collocate_argo_n_nearest`, `collocate_argo_temporal_interp`, and
-    `collocate_argo_start`/`_end` in `postprocess.yaml`.
-
-```bash
-# Diagnostics: enable diag_run_plots in steps.yaml BEFORE setup_run.
-# Then the standard Phase 5 steps:
-stofs-ak --run --phase postprocess --only download_sst   --config <cfg>   # DTN
-stofs-ak --run --phase postprocess --only plot_outputs   --config <cfg>
-stofs-ak --run --phase postprocess --only compare_sst    --config <cfg>
-stofs-ak --run --phase postprocess --only download_coops --config <cfg>   # DTN
-stofs-ak --run --phase postprocess --only download_ndbc  --config <cfg>   # DTN
-stofs-ak --run --phase postprocess --only station_skill  --config <cfg>
-stofs-ak --run --phase postprocess --only download_argo  --config <cfg>   # DTN
-stofs-ak --run --phase postprocess --only collocate_argo --config <cfg>
-```
-
-> **station.in convention.** `download_coops`, `download_ndbc`, and
-> `station_skill` read the per-station comment in `fix/station.in`. A station
-> is used only when its comment is exactly `![VARS],<id>,<SOURCE>,<name>` —
-> e.g. `1 199.496 55.332 0.0 ![WL,T],9459450,CO-OPS,Sand Point` or
-> `10 182.532 57.034 0.0 ![T],46035,NDBC,Central Bering Sea`. Lines without a
-> bracket, or missing the id/source/name triplet, are ignored. VARS tokens:
-> `WL`/`elev` (water level, CO-OPS only), `T` (water temperature),
-> `air_pressure`/`PATM`, `wind`. `SOURCE` is `CO-OPS` or `NDBC`. The station's
-> model value comes from the `staout_*` column matching its line position in
-> `station.in` (SCHISM order: staout_1=elev, 2=air pressure, 3=windx, 4=windy,
-> 5=T). NDBC maps WTMP→T, PRES→air_pressure, WSPD/WDIR→wind (u/v).
+`chain_ww3_restart` (UFS+WW3, default `true`): copy the WW3 restart to the
+next group; `false` cold-starts WW3 every group (DATM and mediator restarts
+are still chained). Configs copied from an older template that contain
+`chain_ww3_restart: false` keep cold-starting WW3.
 
 ---
 
-## Adding a New Model
+## Steps by phase
 
-1. Create `workflow/models/<name>/driver.py` with a driver class. For
-   SCHISM-based couplings, inherit from `SchismDriver` and override only the
-   steps that differ; for UFS-Coastal, inherit from `ModelDriver`.
-2. Register the class in the registry inside
-   `workflow/models/base.py::make_driver`, and add `<name>` to
-   `KNOWN_MODEL_TYPES` in `core/config.py`.
-3. If the model needs extra config keys, add a `<name>.yaml` template under
-   `workflow/models/<name>/templates/config/`. It is loaded automatically by
-   `core.config.load_config` when `model_type: <name>` and the file is present
-   in the project's `config/` dir (only the active model's YAML is loaded).
-4. Put any SLURM templates under `workflow/models/<name>/templates/slurm/` and
-   drive them with a `core.slurm.SlurmSubmitter`.
-5. Set `model_type: <name>` in `project.yaml`.
+Legend: **S** = schism, **W** = schism_wwm, **U** = ufs_schism, **R** =
+ufs_schism_ww3 (WW3). Steps not valid for a model print `[N/A]`.
+
+### Phase 0-3: preprocess (`stofs-ak --run`)
+
+| Step | Context | Models | Description |
+|------|---------|--------|-------------|
+| `inspect_mesh` | SLURM | all | plots of `fix/` inputs, resolution, layers -> `D{ID}/D{ID}_fix/` (JPEG) |
+| `download_hycom` | DTN | all | daily SSH/TS/UV via OPeNDAP; corrupt days (<=3 in a row) are interpolated |
+| `download_era5` | DTN | all | monthly ERA5 (CDS API) |
+| `download_glofas` | DTN | all | annual GloFAS discharge (EWDS) |
+| `aggregate_hycom` | any | all | daily -> `SSH_1/TS_1/UV_1` stacks per group; missing days inside a group are interpolated (<=3 in a row), otherwise that stack fails |
+| `plot_hycom`, `plot_sflux` | SLURM array | all | debug GIFs |
+| `gen_sflux` | SLURM array | all | ERA5 -> sflux files per group |
+| `gen_estuary` | interactive | all | `estuary.gr3` + `gen_*_from_nc.in` (once) |
+| `gen_bctides` | interactive | all | `bctides.in` from TPXO9 |
+| `gen_source` | interactive | all | `source.nc` from GloFAS |
+| `gen_param` | interactive | all | `param.nml` per group (dates, `rnday`, `nhot_write`, `ihot`) |
+| `gen_hotstart` | SLURM | all | `hotstart.nc` (first group only) |
+| `gen_3Dth`, `gen_nudge` | SLURM array | all | `*.th.nc`, `TEM/SAL_nu.nc` |
+| `gen_wwmbnd` | interactive | W | `fix/wwmbnd.gr3` (once) |
+| `gen_wwminput` | interactive | W | `wwminput.nml` per group (`BEGTC/ENDTC` from `param.nml`) |
+| `gen_datm`, `plot_datm` | SLURM | U, R | sflux -> CDEPS DATM forcing; debug GIFs |
+| `gen_esmf_mesh` | SLURM | U, R | ESMF mesh of the DATM grid |
+| `gen_datm_in`, `gen_datm_streams`, `gen_model_configure`, `gen_ufs_configure` | interactive | U, R | UFS config files per group |
+| `copy_fd_ufs`, `copy_noahmptable`, `copy_modulefiles` | interactive | U, R | copy static UFS files into each `I{ID}_*` |
+| `gen_ww3_shel`, `gen_ww3_ounp` | interactive | R | `ww3_shel.nml`, `ww3_ounp.inp` per group |
+
+For UFS models a SLURM barrier waits for `gen_datm` + `gen_esmf_mesh` before
+the interactive config steps that read their output (only when no `--only`).
+
+### Phase 4: run (`--phase run`)
+
+`setup_run` (interactive) and `submit_run` (blocking, use `screen`/`tmux`).
+
+### Phase 5: postprocess (`--phase postprocess`)
+
+| Step | Context | Models |
+|------|---------|--------|
+| `diag_run_plots` (enable **before** `setup_run`) | during run | S only (not W, not UFS) |
+| `download_sst`, `compare_sst` | DTN / SLURM | all |
+| `plot_outputs` | SLURM (frames + GIF) | all |
+| `download_coops`, `download_ndbc`, `station_skill` | DTN / interactive | all |
+| `download_argo`, `collocate_argo`, `plot_argo` | DTN / SLURM / interactive | all |
+| `wave_skill` | interactive | W, R |
+| `download_altimetry`, `collocate_altimetry`, `plot_altimetry` | DTN / SLURM / interactive | W, R |
+| `plot_outputs_ww3` | SLURM | R |
 
 ---
 
-## Step-by-Step Development Status
+## Running the workflow
 
-| Step | Phase | Status |
-|------|-------|--------|
-| `--init` directory creation | — | ✅ Done |
-| `--setup-envs` | — | ✅ Done |
-| `--refresh` sentinel reset | — | ✅ Done |
-| `inspect_mesh` | 0 | ✅ Done |
-| `download_hycom` / `download_era5` / `download_glofas` | 1 | ✅ Done |
-| `aggregate_hycom` | 2 | ✅ Done |
-| `plot_hycom` / `plot_sflux` | 2 | ✅ Done |
-| `gen_sflux` | 2 | ✅ Done |
-| `gen_estuary` / `gen_bctides` / `gen_source` / `gen_param` | 3 | ✅ Done |
-| `gen_hotstart` / `gen_3Dth` / `gen_nudge` | 3 | ✅ Done |
-| `setup_run` (populate R dirs, job cards, auto_hotstart.py) | 4 | ✅ Done |
-| `submit_run` (blocking month-by-month run + hotstart chaining) | 4 | ✅ Done |
-| `diag_run_plots` (per-stack diagnostic frames during run) | 5 | ✅ Done |
-| `download_sst` (LEO L3S-DY satellite SST download + subset) | 5 | ✅ Done |
-| `plot_outputs` (full-run field GIFs) | 5 | ✅ Done |
-| `compare_sst` (model vs satellite SST GIF) | 5 | ✅ Done |
-| `download_coops` (CO-OPS station obs download) | 5 | ✅ Done |
-| `download_ndbc` (NDBC buoy obs download) | 5 | ✅ Done |
-| `station_skill` (CO-OPS/NDBC obs vs model plots + skill CSV) | 5 | ✅ Done |
-| `download_argo` (Argo float profile download from IFREMER GDAC) | 5 | ✅ Done |
-| `collocate_argo` (OCSTrack SCHISM T/S vs Argo 3-D collocation) | 5 | ✅ Done |
-| SCHISM+WWM / SCHISM+MICE / UFS-Coastal drivers | — | 🚧 Placeholder |
+```bash
+stofs-ak --run --config $CFG                                  # preprocess (default)
+stofs-ak --run --only download_hycom --config $CFG            # one step, ignores flags
+stofs-ak --run --phase run         --only setup_run  --config $CFG
+stofs-ak --run --phase run         --only submit_run --config $CFG   # blocking: screen/tmux
+stofs-ak --run --phase postprocess --config $CFG
+stofs-ak --run --phase all --config $CFG                      # preprocess -> run -> postprocess
+stofs-ak --refresh --config $CFG                              # reset sentinels (see below)
+```
+
+Notes:
+
+- Download steps refuse to run off a DTN (`export ALLOW_NON_DTN=1` to
+  override); with `--phase all` on a login node they print `[N/A]` and
+  continue.
+- If a download finishes with failures, the preprocess phase stops with an
+  error instead of continuing into aggregation. Re-run it (valid files are
+  skipped).
+- `download_hycom` (DTN, no `sbatch`) and `plot_hycom` (needs `sbatch`) cannot
+  both succeed in one invocation on the same node.
+- `--phase all` waits for the SLURM jobs of the preprocess phase and stops
+  before the run phase if any of them did not COMPLETE (checked with
+  `sacct`).
+- Steps of another phase that are enabled in `steps.yaml` produce a warning;
+  `--only` with a name that does not belong to the phase is an error.
+- Save output with `... 2>&1 | tee <project_dir>/M01/logs/<name>_$(date +%Y%m%d_%H%M%S).log`.
 
 ---
 
-## Monitoring, Logs, and Rerunning
+## Run management in detail (Phase 4)
 
-Save orchestrator output under the project's `M{ID}/logs/`:
+**`setup_run`** (interactive, fast) populates each `R{ID}_{group}/`:
+symlinks from `fix/` and `I{ID}_{group}/`, copies the executable, creates
+`outputs/` with placeholder files (`staout_1..20`, `flux.out`), adapts the
+`run_test` / `run_comb` job cards (unique job names, `combine_hotstart -i
+<nhot_write>`) and renders `auto_hotstart.py`. UFS models additionally link
+`forcing/`, `modulefiles/`, create `RESTART/` and render
+`run_combine_output.sbatch`; WW3 adds the WW3 fixed files, namelists and
+`convert_ww3_sta.sbatch`. Requires `executables.<model>` and
+`executables.combine_hotstart`; UFS models also need `combine_output11_MPI` in
+`bin/` (name overridable with `executables.combine_output`). `setup_run.done`
+makes it skip a group: **after changing `chain_hotstart`, `diag_run_plots`,
+the executable or a run card, delete `R{ID}_*/setup_run.done` and re-run.**
 
-```bash
-stofs-ak --run --config /path/to/M01/config \
-    2>&1 | tee <project_dir>/M01/logs/preprocess_$(date +%Y%m%d_%H%M%S).log
-```
+**`submit_run`** (blocking) launches the first pending group's
+`auto_hotstart.py`, which:
 
-**Rerunning failed steps:** most steps are resume-safe via `*.done` sentinel
-files and skip already-completed months. Just re-run the same command; check
-logs for `ERROR:` lines. Set a step's flag to `false` once verified.
+1. cleans stale `schout_*`, `combine_*.done`, `mirror.out`, `fatal.error`;
+2. submits `run_test` and polls `squeue` (60 s x5, 5 min, 20 min, 30 min,
+   then every 60 min); a failed `squeue` is retried and never read as
+   "job finished";
+3. detects a hang (no `TIME STEP` change between polls) and cancels;
+4. after the job leaves the queue: a SCHISM/MPI error signature
+   (`fatal.error`, `err2.out`, `ABORT`) aborts with the details; any other
+   failure is resubmitted up to 5 times;
+5. on completion combines hotstarts (`run_comb`), cleans partition files,
+   UFS: combines all output stacks (`combine_output11_MPI`), WW3: converts
+   point output (`ww3_ounp`);
+6. chains to the next group (`chain_hotstart`): symlinks the combined
+   `hotstart.nc`; WWM: hotfile; UFS: DATM + mediator restart + rpointer
+   files; WW3: restart (`chain_ww3_restart`); then launches the next group.
 
-**Re-running from scratch:** to reset all sentinels and re-run the entire
-workflow (raw data and NetCDF outputs are preserved):
+If `submit_run` is interrupted, re-run it: complete groups (`run.done`) are
+skipped and a finished-but-not-chained group is picked up.
 
-```bash
-stofs-ak --refresh --config <config_dir>
-stofs-ak --run --phase all --config <config_dir>
-```
+---
 
-`--refresh` prints every sentinel it deletes, then exits. It clears sentinels
-in `I{ID}`, `R{ID}`, and `D{ID}` for all months, the top-level
-`inspect_mesh.done`, and the postprocessing sentinels in `P{ID}` (including
-`plot_outputs.done`, `.frames_done`, `compare_sst.done`, `station_skill.done`,
-and `collocate_argo.done`).
-Raw downloaded files and generated NetCDF inputs are **not** deleted — steps
-with output-presence checks (e.g. `aggregate_hycom`, `gen_sflux`) will skip
-regenerating files that already exist.
+## Post-processing (Phase 5)
+
+Configured in `postprocess.yaml`. All field plots overlay the 200 m and
+2000 m isobaths.
+
+1. **`diag_run_plots`**: per-stack frames during the run (standalone
+   SCHISM only), enable before `setup_run`. SCHISM+WWM and UFS models do not
+   support in-run diagnostics (the flag is ignored with an `[N/A]` line).
+2. **`download_sst` -> `compare_sst`**: LEO L3S-DY satellite SST vs model
+   daily mean (two-stage SLURM: frames then GIF).
+3. **`plot_outputs`**: full-run field GIFs (variable, layer, cadence from
+   `postprocess.yaml`). `layer` is `surface` (last level), `bottom` (first
+   wet level) or an integer index.
+4. **`download_coops` / `download_ndbc` -> `station_skill`**: station time
+   series and `skill_metrics.csv` under `P{ID}/P{ID}_station_skill/`.
+5. **`download_argo` -> `collocate_argo` -> `plot_argo`**: OCSTrack 3-D
+   collocation of T/S profiles.
+6. **`wave_skill`** (W, R): NDBC Hs / period / direction vs WWM or WW3 stations
+   (direction metrics are circular).
+7. **`download_altimetry` -> `collocate_altimetry` -> `plot_altimetry`** (W, R).
+8. **`plot_outputs_ww3`** (R): WW3 field GIFs.
+
+### `station.in` convention
+
+`download_coops`, `download_ndbc` and `station_skill` read the comment of
+each `station.in` line. A station is used only when it is exactly
+`![VARS],<id>,<SOURCE>,<name>`, e.g.
+`1 199.496 55.332 0.0 ![WL,T],9459450,CO-OPS,Sand Point` or
+`10 182.532 57.034 0.0 ![T],46035,NDBC,Central Bering Sea`. Lines without a
+bracket or without the id/source/name triplet are ignored.
+
+VARS tokens: `WL`/`ELEV` (water level, CO-OPS), `T`/`TEMP` (water
+temperature), `S`/`SAL`/`SALINITY` (salinity, CO-OPS), `air_pressure`/`PATM`,
+`wind`; wave tokens `HS`, `TM01`/`TM02`, `DM` for `wave_skill`. `SOURCE` is
+`CO-OPS` or `NDBC`. The model value comes from the `staout_*` column equal to
+the station's line index in `station.in` (SCHISM order: 1 elev, 2 air
+pressure, 3 windx, 4 windy, 5 T, 6 S). Surface variables use the `z=0`
+entry; T/S use the shallowest non-zero depth entry (fallback `z=0`). NDBC has
+no salinity.
+
+---
+
+## Sentinels, resuming and `--refresh`
+
+Most steps are resume-safe through `*.done` files and output-presence checks.
+Re-run the same command; check logs for `ERROR:`.
+
+| Location | Sentinels |
+|----------|-----------|
+| `I{ID}_{g}/` | `gen_hotstart.done`, `gen_3Dth.done`, `gen_nudge.done`, `bctides.done`, `sflux/gen_sflux.done`, `gen_wwminput.done`, `gen_ww3_shel.done`, `gen_ww3_ounp.done`, `{datm_subdir}/gen_datm.done`, `{datm_subdir}/gen_esmf_mesh.done`, `gen_datm_in.done`, `gen_datm_streams.done`, `gen_model_configure.done`, `gen_ufs_configure.done`, `copy_*.done` |
+| `R{ID}_{g}/` | `setup_run.done`, `run.done`, `outputs/combine_output.done`, `convert_ww3_sta.done` |
+| `D{ID}_{g}/` | `plot_hycom.done`, `plot_sflux.done`, `plot_datm.done`, `diag/diag_*.done` |
+| `P{ID}/P{ID}_*/` | `plot_outputs.done`, `compare_sst.done`, `station_skill.done`, `wave_skill.done`, `collocate_argo.done`, `plot_argo.done`, `collocate_altimetry.done`, `plot_outputs_ww3.done`, `.frames_done` |
+
+`stofs-ak --refresh` deletes the sentinels of the first three directory
+types (except `combine_output.done`, `convert_ww3_sta.done` and the
+`diag/` markers, which are intentionally kept because their inputs are
+removed after the run) plus the `P{ID}` topic sentinels and the top-level
+`inspect_mesh.done`. Raw data and generated NetCDF are never deleted.
+
+HYCOM data quality: after each month the downloader scans for spatially
+constant fields; up to 3 consecutive corrupt days are replaced by linear
+interpolation (original kept as `*.nc.bad`, file marked
+`repaired_by_workflow`), more stops the workflow. A stale-data check guards
+against wrong-date HYCOM sources.
+
+---
+
+## Conventions
+
+- **Group** = one run unit (`monthly` or `ndays`). Code uses `group_id`;
+  legacy names remain in CLI flags (`--month`, accepted alongside `--group`)
+  and in template keys (`{{MONTH}}`, `IS_LAST_MONTH`).
+- **Template rendering**: `{{KEY}}` placeholders in `.sbatch` and
+  `auto_hotstart.py`; leftover placeholders warn (sbatch) or abort
+  (`auto_hotstart.py`).
+- **Console output**: `print` with `[STEP]`, `[SKIP]`, `[N/A]`, `[NOTE]`
+  tags; step results are summarised, command traces go to `M{ID}/logs/`.
+- **Failures**: library code prints `ERROR:` and exits non-zero; resumable
+  steps never delete valid outputs.
+- **Defaults**: SLURM account/partition/mail user come from
+  `workflow.core.slurm.DEFAULT_*`, overridden by `project.yaml: slurm:`.
+- **Type hints**: `Optional[str]`, `Path` for paths.
+
+---
+
+## Adding a new model
+
+1. Create `workflow/models/<name>/driver.py`. For SCHISM-based couplings
+   inherit `SchismDriver` (see `SchismWwmDriver`); for UFS-based ones inherit
+   `UfsSchismDriver` (see `UfsSchismWw3Driver`); override only what differs.
+2. Register it in `workflow/models/base.py::make_driver` and add the name to
+   `KNOWN_MODEL_TYPES` in `workflow/core/config.py` (both lists must match).
+3. Add `workflow/models/<name>/templates/config/<name>.yaml` (self-contained:
+   only the active model's yaml is loaded) and list the template directories
+   in `pyproject.toml` package-data.
+4. Put SLURM templates under `templates/slurm/` and drive them with a
+   `core.slurm.SlurmSubmitter`.
+5. Add the new step names to `PREPROCESS_STEPS` / `POSTPROCESS_STEPS` in
+   `orchestrator.py` and their sentinels to `_SENTINELS` /
+   `reset_sentinels` if they should be reset by `--refresh`.
+
+---
+
+## Known limitations
+
+See `docs/AUDIT.md` section 3 for details. In short: completion/hang
+detection in `auto_hotstart.py` is heuristic; monthly grouping spans whole
+calendar months; ERA5/GloFAS have no extra pad day for the last group; a
+corrupt-day run crossing a month boundary is not caught by the >3-day rule;
+`setup_run` is duplicated between `schism`/`schism_wwm` and
+`ufs_schism`/`ufs_schism_ww3`; the vendored TPXO code is unchanged.
 
 ---
 
 ## Troubleshooting
 
-### `stofs-ak: command not found`
-Install the package into the active env: `pip install -e $WF` (with
-`swf_main` activated). Or invoke via `python $WF/orchestrator.py ...`.
-
-### `ncks` / `cdo` command not found
-Activate `swf_main` (which provides NCO/CDO), or `module load nco cdo`.
-
-### `import yaml` fails
-`conda install -c conda-forge pyyaml python-dateutil` (or `pip install -e $WF`).
-
-### Download refuses to run ("not a DTN")
-Run on the DTN: `ssh hercules-dtn.hpc.msstate.edu && conda activate swf_main`.
-On other systems: `export ALLOW_NON_DTN=1`.
-
-### `sbatch not found`
-Submit SLURM steps from a login node, not the DTN.
-
-### HYCOM corrupted daily files (constant-field detection)
-
-After downloading each month, the workflow scans every daily file for
-spatially-constant fields (std < 1e-6 over valid points at any depth level).
-This detects failed HYCOM forecast cycles where a level is filled with a
-uniform value. Behaviour:
-
-- **1–3 consecutive bad days**: the corrupt file is renamed to
-  `ts_YYYYMMDD.nc.bad` and replaced with a linearly interpolated file built
-  from the nearest good neighbors. A `repaired_by_workflow` global attribute
-  is added to the repaired file. A `WARNING:` line is printed to screen and
-  the debug log.
-- **More than 3 consecutive bad days**: the workflow stops with an `ERROR:`
-  message listing the bad days and instructions to investigate the source.
-
-### HYCOM download returns stale/wrong dates
-The workflow auto-selects the correct HYCOM source per date and runs a
-stale-data sanity check. If a month reports a STALE-DATA WARNING, re-download
-that month. See `workflow/downloaders/hycom.py` for the epoch table.
+| Symptom | Fix |
+|---------|-----|
+| `stofs-ak: command not found` | `pip install -e $WF` in `swf_main`, or `python $WF/orchestrator.py ...` |
+| `ncks` / `cdo` not found | activate `swf_main` or `module load nco cdo` |
+| `import yaml` fails | `conda install -c conda-forge pyyaml python-dateutil` |
+| Download "not a DTN" | run on the DTN, or `export ALLOW_NON_DTN=1` |
+| `sbatch not found` | submit SLURM steps from a login node, not the DTN |
+| `--only X` rejected | `X` belongs to another `--phase`; the message names it |
+| Change to `chain_hotstart` / executable ignored | delete `R{ID}_*/setup_run.done` and re-run `setup_run` |
+| `unreplaced placeholder` warning/error | a template key is missing from the Python substitutions; the message names the key |
+| Download phase stops with failures | re-run the download; valid files are skipped |
+| HYCOM stale-data warning | re-download that month |

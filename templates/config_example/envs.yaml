@@ -44,3 +44,4 @@ conda_envs:
   download_argo:  swf_plot   # Phase 5 Argo float download (DTN; needs ocstrack)
   collocate_argo: swf_plot   # Phase 5 SCHISM T/S vs Argo collocation (ocstrack)
   plot_argo:      swf_plot   # Phase 5 Argo diagnostic plots (location map, histograms, profiles)
+  collocate_altimetry: swf_plot   # Phase 5 SCHISM+WWM/WW3 Hs vs satellite altimetry (SLURM)

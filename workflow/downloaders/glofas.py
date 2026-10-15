@@ -1,6 +1,6 @@
 """
 downloaders/glofas.py
-==================
+=====================
 Phase 1c (DTN, internet required) — Download GloFAS v4.0 reanalysis river
 discharge data from the Copernicus Emergency Management Service Early Warning
 Data Store (EWDS) and save one raw NetCDF file per year:
@@ -150,7 +150,7 @@ def run_download_glofas(cfg: dict):
     print(f"{'='*60}\n")
 
     client = cdsapi.Client(url=EWDS_URL)
-    prog   = ProgressTracker(total=len(years), label="GloFAS download")
+    prog   = ProgressTracker(total=len(years))
     failed = []
 
     for year in years:
@@ -192,3 +192,4 @@ def run_download_glofas(cfg: dict):
             print(f"    {y}")
         print("  Re-run to retry (existing valid files are skipped).")
     print(f"{'='*60}\n")
+    return not failed

@@ -1,6 +1,6 @@
 """
 models/schism_wwm/postprocess
-==============================
+=============================
 Phase 5 — SCHISM+WWM post-processing.
 
 Inherits all standard SCHISM postprocessing steps and adds
@@ -9,13 +9,17 @@ collocate_altimetry, plot_altimetry).
 """
 
 from pathlib import Path
+
+from workflow.core.environment import is_dtn as _is_dtn
+from workflow.core.environment import dtn_skip as _dtn_skip
 from workflow.models.schism.postprocess import (
     postprocess_phase as _schism_postprocess_phase,
 )
+from typing import Optional
 
 
 def postprocess_phase(cfg: dict, config_dir,
-                      only: str = None):
+                      only: Optional[str] = None):
     """Dispatch Phase 5 for SCHISM+WWM.
 
     Runs all standard SCHISM Phase 5 steps first, then adds
@@ -48,21 +52,8 @@ def postprocess_phase(cfg: dict, config_dir,
     # download_altimetry (DTN)
     # ----------------------------------------------------------------
     if enabled("download_altimetry"):
-        import os
-        import socket
-        on_dtn = (
-            "dtn" in socket.gethostname().lower()
-            or os.environ.get(
-                "ALLOW_NON_DTN") == "1")
-        if not on_dtn:
-            print(
-                "[N/A]  download_altimetry  "
-                "(DTN required — run separately "
-                "on the DTN with:\n"
-                "         stofs-ak --run "
-                "--phase postprocess "
-                "--only download_altimetry "
-                "--config <cfg>)")
+        if not _is_dtn():
+            _dtn_skip("download_altimetry")
         else:
             print("[STEP] download_altimetry")
             from workflow.models.schism_wwm.postprocess.downloaders.altimetry import (

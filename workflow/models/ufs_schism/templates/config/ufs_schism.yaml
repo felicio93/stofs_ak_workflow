@@ -6,12 +6,6 @@
 datm_subdir: forcing
 datm_filename_template: "datm_{YYYYMM}.nc"
 
-# DATM time axis: seconds since first day of month 00Z.
-datm_time_units_template: "seconds since {YYYY}-{MM}-01 00:00:00"
-
-# Fill value used for DATM vars.
-datm_fill_value: -9999.0
-
 # Atmospheric model time step (seconds).
 dt_atmos: 720
 
@@ -59,9 +53,7 @@ atm_model: "datm"
 ocn_model: "schism"
 cpl_mode: "coastal"
 coupling_config: "none"
-run_type: "startup"
 case_name: "ufs.cpld"
-restart_n: 9999
 med_petlist_bounds: "0 159"
 atm_petlist_bounds: "0 159"
 ocn_petlist_bounds: "160 3353"

@@ -8,7 +8,6 @@ Group IDs are either YYYYMM (monthly) or YYYYMMDD (ndays).
 
 import argparse
 import gc
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -291,7 +290,7 @@ if __name__ == "__main__":
         description="Plot HYCOM debug GIFs for one group")
     parser.add_argument("--config", required=True)
     parser.add_argument(
-        "--month", required=True,
+        "--group", "--month", dest="month", required=True,
         help="Group ID (YYYYMM for monthly or YYYYMMDD for ndays)")
     args = parser.parse_args()
     cfg = load_config(Path(args.config))

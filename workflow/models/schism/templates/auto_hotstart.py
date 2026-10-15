@@ -45,6 +45,14 @@ NHOT_WRITE     = {{NHOT_WRITE}}
 MONTH          = r"{{MONTH}}"
 RUN_JOBNAME    = r"{{RUN_JOBNAME}}"
 
+# --- Restart chaining (UFS-based models) ---
+# CHAIN_UFS_RESTARTS : copy DATM + mediator (CMEPS) restart files and write
+#                      rpointer files for the next group (UFS models only).
+# CHAIN_WW3_RESTART  : copy the WW3 restart file for the next group
+#                      (UFS-SCHISM+WW3 only; controlled by chain_ww3_restart).
+CHAIN_UFS_RESTARTS = {{CHAIN_UFS_RESTARTS}}
+CHAIN_WW3_RESTART  = {{CHAIN_WW3_RESTART}}
+
 # --- New I/O diagnostic plots (SCHISM standalone) ---
 DIAG_ENABLED        = {{DIAG_ENABLED}}
 DIAG_SBATCH         = r"{{DIAG_SBATCH}}"
@@ -68,10 +76,20 @@ _MAX_RESUBMITS  = 5
 _GRACE_CHECKS   = 10
 _GRACE_SLEEP    = 30
 
-QUEUE_CMD = (
-    f"squeue -u "
-    f"{os.environ.get('USER', os.environ.get('LOGNAME', ''))}"
-)
+_SQUEUE_RETRIES     = 5
+_SQUEUE_RETRY_SLEEP = 20
+# Returned by squeue_line_for() when squeue itself failed: the job state is
+# UNKNOWN and must never be interpreted as "not in the queue".
+_QUEUE_UNKNOWN      = "<squeue unavailable>"
+
+
+def _queue_user():
+    import getpass
+    return (os.environ.get("USER") or os.environ.get("LOGNAME")
+            or getpass.getuser())
+
+
+QUEUE_CMD = f"squeue -u {_queue_user()}"
 
 
 def _poll_sleep(poll_iter: int):
@@ -92,12 +110,24 @@ def sh(cmd):
 
 
 def squeue_line_for(jobname):
-    _, out = sh(QUEUE_CMD)
+    """Return the squeue line for `jobname`, None if the job is not in the
+    queue, or _QUEUE_UNKNOWN if squeue could not be queried (non-zero exit
+    after several retries). Callers must not treat _QUEUE_UNKNOWN as
+    "finished": it is truthy and not None, so `while squeue_line_for(...)
+    is not None` loops keep waiting.
+    """
     pat = re.compile(rf"\b{re.escape(jobname)}\b")
-    for line in out.splitlines():
-        if pat.search(line):
-            return line.strip()
-    return None
+    for attempt in range(_SQUEUE_RETRIES):
+        rc, out = sh(QUEUE_CMD)
+        if rc == 0:
+            for line in out.splitlines():
+                if pat.search(line):
+                    return line.strip()
+            return None
+        log(f"WARNING: '{QUEUE_CMD}' failed (rc={rc}); "
+            f"retry {attempt + 1}/{_SQUEUE_RETRIES} ...")
+        time.sleep(_SQUEUE_RETRY_SLEEP)
+    return _QUEUE_UNKNOWN
 
 
 def _clean_outputs():
@@ -118,6 +148,12 @@ def _clean_outputs():
     if mirror.exists():
         mirror.unlink(missing_ok=True)
         deleted.append("mirror.out")
+    # A stale fatal.error from an earlier failed attempt would otherwise
+    # make diagnose_failure() classify a later transient failure as fatal.
+    fatal = outdir / "fatal.error"
+    if fatal.exists():
+        fatal.unlink(missing_ok=True)
+        deleted.append("fatal.error")
     if deleted:
         log(f"Cleaned {len(deleted)} stale file(s) from outputs/ before submission.")
     else:
@@ -215,9 +251,8 @@ def diagnose_failure(job_id: str) -> str:
         for line in myout.read_text(errors="ignore").splitlines():
             if "ABORT" in line:
                 return f"ABORT in myout: {line.strip()}"
-    code = job_exit_code(job_id)
-    if code > 0:
-        return f"Job {job_id} exited with non-zero code {code}."
+    # No SCHISM/MPI error signature found. A bare non-zero exit code is NOT
+    # a diagnosis: the caller handles it (resubmit up to _MAX_RESUBMITS).
     return ""
 
 
@@ -469,24 +504,30 @@ def _chain_ww3_restart():
     """
     if NEXT_RUNDIR is None:
         return
+    if not (CHAIN_UFS_RESTARTS or CHAIN_WW3_RESTART):
+        return
 
     import shutil
     next_rdir = Path(NEXT_RUNDIR)
 
-    # ---- WW3 restart ----
-    ww3_files = sorted(glob.glob(
-        str(Path(RUNDIR) / "ufs.cpld.ww3.r.*.nc")))
-    if ww3_files:
-        src = Path(ww3_files[-1])
-        dst = next_rdir / src.name
-        if dst.exists() or dst.is_symlink():
-            dst.unlink()
-        shutil.copy2(str(src), str(dst))
-        log(f"Copied WW3 restart: {src.name} -> "
-            f"{next_rdir.name}/")
-    else:
-        log(f"WARNING: no ufs.cpld.ww3.r.*.nc found in "
-            f"{RUNDIR} — next group WW3 will cold-start.")
+    # ---- WW3 restart (chain_ww3_restart) ----
+    if CHAIN_WW3_RESTART:
+        ww3_files = sorted(glob.glob(
+            str(Path(RUNDIR) / "ufs.cpld.ww3.r.*.nc")))
+        if ww3_files:
+            src = Path(ww3_files[-1])
+            dst = next_rdir / src.name
+            if dst.exists() or dst.is_symlink():
+                dst.unlink()
+            shutil.copy2(str(src), str(dst))
+            log(f"Copied WW3 restart: {src.name} -> "
+                f"{next_rdir.name}/")
+        else:
+            log(f"WARNING: no ufs.cpld.ww3.r.*.nc found in "
+                f"{RUNDIR} — next group WW3 will cold-start.")
+
+    if not CHAIN_UFS_RESTARTS:
+        return
 
     # ---- DATM restart + rpointer.atm ----
     datm_files = sorted(glob.glob(
@@ -573,7 +614,7 @@ def combine_and_chain():
         log(f"Symlinked SCHISM hotstart: {next_hot} -> {combined}")
 
         # ----------------------------------------------------------------
-        # Chain WW3 + DATM + mediator restarts (UFS-SCHISM+WW3)
+        # Chain WW3 + DATM + mediator restarts (UFS-based models)
         # ----------------------------------------------------------------
         _chain_ww3_restart()
 
@@ -649,6 +690,10 @@ def main():
             f"(poll #{poll_iter})\n"
             f"{'%'*72}")
         status = squeue_line_for(RUN_JOBNAME)
+        if status == _QUEUE_UNKNOWN:
+            log(f"{RUN_JOBNAME}: queue state unknown (squeue failed); "
+                f"NOT resubmitting. Will check again next poll.")
+            continue
         _, full = sh(QUEUE_CMD)
         print(full)
 

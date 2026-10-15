@@ -14,6 +14,11 @@ from pathlib import Path
 from workflow.core.config import list_groups, model_dir
 from workflow.core.environment import env_python
 from workflow.core.slurm import SlurmSubmitter, write_manifest
+from workflow.core.slurm import (
+    DEFAULT_ACCOUNT,
+    DEFAULT_PARTITION,
+    DEFAULT_MAIL_USER,
+)
 
 TEMPLATES_DIR = (
     Path(__file__).resolve().parent.parent
@@ -57,14 +62,14 @@ def submit_plotting_jobs(cfg: dict, config_dir: Path) -> str:
     subs = {
         "WORKDIR":      str(mdir),
         "JOBNAME":      f"plot_M{pid}",
-        "ACCOUNT":      slurm.get("account",    "nos-surge"),
-        "PARTITION":    slurm.get("partition",  "hercules-2"),
+        "ACCOUNT":      slurm.get("account",    DEFAULT_ACCOUNT),
+        "PARTITION":    slurm.get("partition",  DEFAULT_PARTITION),
         "NGROUPS":      str(ngroups),
         "MEM_PER_TASK": slurm.get("plot_mem",   "16G"),
         "WALLTIME":     slurm.get("plot_walltime", "00:30:00"),
         "LOGDIR":       str(logdir),
         "MAILUSER":     slurm.get("mail_user",
-                                  "felicio.cassalho@noaa.gov"),
+                                  DEFAULT_MAIL_USER),
         "MANIFEST":     str(manifest),
         "PY":           py,
         "PLOT_SCRIPT":  "-m workflow.diagnostics.plot_hycom",

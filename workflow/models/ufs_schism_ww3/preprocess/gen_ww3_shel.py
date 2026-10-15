@@ -1,6 +1,6 @@
 """
 models/ufs_schism_ww3/preprocess/gen_ww3_shel.py
-=================================================
+================================================
 Phase 3 (interactive) — Generate ww3_shel.nml for each group run
 directory from fix/ww3_shel.nml template.
 
@@ -23,7 +23,6 @@ Sentinel: I{ID}_{group_id}/gen_ww3_shel.done
 import re
 import sys
 from datetime import timedelta
-from pathlib import Path
 
 from workflow.core.config import (
     model_dir,
@@ -227,7 +226,7 @@ def run_gen_ww3_shel(cfg: dict):
     print(f"{'='*60}\n")
 
     prog = ProgressTracker(
-        total=len(groups), label="gen_ww3_shel")
+        total=len(groups))
 
     for group_id in groups:
         ok = gen_ww3_shel_group(cfg, group_id)

@@ -1,6 +1,6 @@
 """
 models/schism/postprocess/argo_plots.py
-========================================
+=======================================
 Phase 5 step "plot_argo" (interactive; runs in the swf_plot env).
 
 Produces four diagnostic plots from the collocated Argo float NetCDF files
@@ -60,8 +60,6 @@ Plot 2 — Skill histograms
   collocate_argo_plot_temp_rmse_xlim     null
   collocate_argo_plot_psal_bias_xlim     null
   collocate_argo_plot_psal_rmse_xlim     null
-  collocate_argo_plot_temp_hist_color    royalblue
-  collocate_argo_plot_psal_hist_color    teal
 
 Plot 3 — Profile matrix
   collocate_argo_plot_temp_xlim          null  (null = auto 1st–99th pct of obs)
@@ -130,8 +128,6 @@ VAR_META = {
         "unit":      "°C",
         "mod_color_key": "collocate_argo_plot_temp_color",
         "mod_color_default": "royalblue",
-        "hist_color_key": "collocate_argo_plot_temp_hist_color",
-        "hist_color_default": "royalblue",
         "xlim_key":       "collocate_argo_plot_temp_xlim",
         "bias_xlim_key":  "collocate_argo_plot_temp_bias_xlim",
         "rmse_xlim_key":  "collocate_argo_plot_temp_rmse_xlim",
@@ -144,8 +140,6 @@ VAR_META = {
         "unit":      "PSU",
         "mod_color_key": "collocate_argo_plot_psal_color",
         "mod_color_default": "teal",
-        "hist_color_key": "collocate_argo_plot_psal_hist_color",
-        "hist_color_default": "teal",
         "xlim_key":       "collocate_argo_plot_psal_xlim",
         "bias_xlim_key":  "collocate_argo_plot_psal_bias_xlim",
         "rmse_xlim_key":  "collocate_argo_plot_psal_rmse_xlim",
@@ -361,7 +355,6 @@ def plot_argo_histograms(cfg, ds, var: str, out_dir: Path, max_depth: float, dpi
     rmse_xlim = _xlim(cfg, meta["rmse_xlim_key"])
 
     hist_bins = int(cfg.get("collocate_argo_plot_hist_bins", 40))
-    col_bias  = cfg.get(meta["hist_color_key"], meta["hist_color_default"])
 
     # auto-compute missing limits from data
     if bias_xlim is None:
@@ -376,16 +369,12 @@ def plot_argo_histograms(cfg, ds, var: str, out_dir: Path, max_depth: float, dpi
 
     panels = [
         (ax_r2,   r2_arr,   "R² (Pearson)",
-         "royalblue", r2_xlim),
+         "royalblue",   r2_xlim),
         (ax_bias, bias_arr, f"Mean Bias ({meta['unit']})",
-         "crimson",   bias_xlim),
+         "crimson",     bias_xlim),
         (ax_rmse, rmse_arr, f"RMSE ({meta['unit']})",
-         col_bias,    rmse_xlim),
+         "forestgreen", rmse_xlim),
     ]
-    # Override per-variable histogram colours
-    panels[0] = (ax_r2, r2_arr, "R² (Pearson)", "royalblue", r2_xlim)
-    panels[1] = (ax_bias, bias_arr, f"Mean Bias ({meta['unit']})", "crimson", bias_xlim)
-    panels[2] = (ax_rmse, rmse_arr, f"RMSE ({meta['unit']})", "forestgreen", rmse_xlim)
 
     for (ax, data, xlabel, color, xlim), letter in zip(panels, "abc"):
         ax.hist(data, bins=hist_bins, range=xlim,

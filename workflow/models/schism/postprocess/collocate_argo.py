@@ -23,14 +23,12 @@ Output format is detected automatically per run directory.
 
 import argparse
 import os
-import sys
 from datetime import date, timedelta
 from pathlib import Path
 
 from workflow.core.config import (
     load_config,
     list_groups,
-    list_months,
     group_date_range,
     model_dir,
 )
@@ -512,7 +510,12 @@ def _collocate_one_month(cfg, ym, var,
     m_start      = gstart.isoformat()
     m_end        = (gend + timedelta(days=1)).isoformat()
 
-    clip = _clip(win_start, win_end, m_start, m_end)
+    # win_end is the LAST calendar day of the window (inclusive); the
+    # clip bounds are [start, end) timestamps, so extend by one day
+    # (same convention as the daily/array path).
+    win_end_excl = (date.fromisoformat(win_end)
+                    + timedelta(days=1)).isoformat()
+    clip = _clip(win_start, win_end_excl, m_start, m_end)
     if clip is None:
         return None
     c_start, c_end = clip

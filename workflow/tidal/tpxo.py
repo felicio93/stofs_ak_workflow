@@ -10,7 +10,6 @@ import pathlib
 from netCDF4 import Dataset
 import numpy as np
 from scipy.interpolate import griddata
-from scipy.interpolate.fitpack2 import RectBivariateSpline
 
 
 # Minimal base class (replaces pyschism.forcing.bctides.base.TidalDataProvider)
@@ -73,11 +72,6 @@ class TPXO(TidalDataProvider):
     def constituents(self):
         return ['M2', 'S2', 'N2', 'K2', 'K1', 'O1', 'P1',
                 'Q1', 'Mm', 'Mf', 'M4', 'MN4', 'MS4', '2N2', 'S1']
-        if not hasattr(self, '_constituents'):
-            self._constituents = [
-                c.capitalize() for c in self.h['con'][:].astype(
-                    '|S1').tobytes().decode('utf-8').split()]
-        return self._constituents
 
     @property
     def lon_z(self) -> np.ndarray:

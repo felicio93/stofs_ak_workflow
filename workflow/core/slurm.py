@@ -23,6 +23,15 @@ import subprocess
 import sys
 from pathlib import Path
 
+from workflow.core.templating import unreplaced
+
+# Site defaults for SLURM job scripts. Every submitter reads
+# slurm.account / slurm.partition / slurm.mail_user from project.yaml and
+# falls back to these.
+DEFAULT_ACCOUNT   = "nos-surge"
+DEFAULT_PARTITION = "hercules-2"
+DEFAULT_MAIL_USER = "felicio.cassalho@noaa.gov"
+
 
 class SlurmSubmitter:
     """Render `{{KEY}}` templates and submit them with sbatch.
@@ -54,6 +63,11 @@ class SlurmSubmitter:
         text = path.read_text()
         for key, val in subs.items():
             text = text.replace("{{" + key + "}}", str(val))
+        left = unreplaced(text)
+        if left:
+            print(f"  WARNING: {template_name}: unreplaced placeholder(s) "
+                  f"{', '.join(left)} -- the submitted script will contain "
+                  f"them literally.")
         return text
 
     def write_rendered(self, template_name: str, subs: dict,
@@ -122,24 +136,33 @@ def write_manifest(months, manifest_path: Path) -> Path:
 
 def wait_for_slurm_jobs(job_ids: list, poll_seconds: int = 30,
                         label: str = "preprocess SLURM jobs"):
-    """Block until all given SLURM job IDs have left the queue.
+    """Block until all given SLURM job IDs have left the queue, then verify
+    that none of them failed.
 
-    Polls `squeue` every `poll_seconds` seconds and returns when none of the
-    job IDs appear in the queue. Empty / None IDs in the list are ignored.
-    Used by `--phase all` to ensure Phase 3 async SLURM jobs (gen_hotstart,
-    gen_3Dth, gen_nudge, gen_sflux, etc.) have completed before Phase 4
-    (setup_run) starts checking for their output files.
+    Polls `squeue` every `poll_seconds` seconds. A failed `squeue` call is
+    NOT interpreted as "jobs finished": it is reported and retried. When
+    the jobs have left the queue their final state is checked with
+    `sacct`; if any job (or array task) is not COMPLETED the function
+    prints the offending job states and exits with status 1 so that
+    `--phase all` does not continue into the run phase with missing
+    inputs. If `sacct` is unavailable a warning is printed and the old
+    behaviour (assume success) applies.
+
+    Empty / None IDs in the list are ignored. Used by `--phase all` to
+    ensure Phase 3 async SLURM jobs (gen_hotstart, gen_3Dth, gen_nudge,
+    gen_sflux, etc.) have completed before Phase 4 (setup_run) starts
+    checking for their output files.
     """
+    import getpass
     import os
     import time
-    import subprocess
 
     active = [str(j) for j in job_ids if j]
     if not active:
         return
 
-    user = os.environ.get("USER", os.environ.get("LOGNAME", ""))
-    queue_cmd = f"squeue -u {user} -h -o '%i'"
+    user = (os.environ.get("USER") or os.environ.get("LOGNAME")
+            or getpass.getuser())
 
     # Normalise submitted IDs to their base job ID (parse_jobid already strips
     # any array suffix, but be defensive in case a raw array ID is passed).
@@ -150,19 +173,52 @@ def wait_for_slurm_jobs(job_ids: list, poll_seconds: int = 30,
     print(f"  Job IDs: {', '.join(active)}")
 
     while True:
-        result = subprocess.run(queue_cmd, shell=True,
-                                capture_output=True, text=True)
+        result = subprocess.run(
+            ["squeue", "-u", user, "-h", "-o", "%i"],
+            capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"  WARNING: squeue failed (rc={result.returncode}): "
+                  f"{result.stderr.strip()}  -- state unknown, "
+                  f"checking again in {poll_seconds}s ...")
+            time.sleep(poll_seconds)
+            continue
         # squeue lists ARRAY TASKS as '<jobid>_<taskid>' (e.g. 9575586_2) while
         # sbatch returns only the base '<jobid>' (9575586). Compare on the base
         # ID so an array job is still considered "running" while any of its
-        # tasks remain queued/running. Matching the raw tokens would miss array
-        # tasks and return immediately, letting setup_run race ahead of the
-        # array outputs.
+        # tasks remain queued/running.
         queued_base = {tok.split("_")[0] for tok in result.stdout.split()}
         still_running = [j for j in active_base if j in queued_base]
         if not still_running:
-            print(f"  All {label} have completed. Proceeding to run phase.")
             break
         print(f"  Still pending/running: {', '.join(still_running)}. "
               f"Checking again in {poll_seconds}s ...")
         time.sleep(poll_seconds)
+
+    # Left the queue: verify final states.
+    sacct = subprocess.run(
+        ["sacct", "-n", "-X", "-P", "-o", "JobID,JobName,State",
+         "-j", ",".join(active_base)],
+        capture_output=True, text=True)
+    if sacct.returncode != 0 or not sacct.stdout.strip():
+        print(f"  WARNING: could not verify final job states with sacct; "
+              f"assuming {label} completed.")
+        print(f"  All {label} have left the queue. Proceeding.")
+        return
+
+    bad = []
+    for line in sacct.stdout.splitlines():
+        parts = line.strip().split("|")
+        if len(parts) < 3:
+            continue
+        jid, name, state = parts[0], parts[1], parts[2]
+        if not state.upper().startswith("COMPLETED"):
+            bad.append((jid, name, state))
+    if bad:
+        print(f"\n  ERROR: {len(bad)} of the {label} did not complete "
+              f"successfully:")
+        for jid, name, state in bad:
+            print(f"    {jid}  {name}  {state}")
+        print("  Fix the problem (see logs in M{ID}/logs/) and re-run. "
+              "Not starting the run phase.")
+        sys.exit(1)
+    print(f"  All {label} have completed. Proceeding to run phase.")

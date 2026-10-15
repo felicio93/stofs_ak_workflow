@@ -9,7 +9,7 @@ Group IDs are either YYYYMM (monthly) or YYYYMMDD (ndays).
 import argparse
 import gc
 import sys
-from datetime import date, timedelta
+from datetime import datetime, time as dtime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -125,8 +125,14 @@ def plot_sflux_month(cfg: dict, ym: str):
                     break
                 ntime = ds.variables["time"].shape[0]
                 for t_idx in range(0, ntime, 6):
+                    # Record 24 is 00Z of the NEXT day: it is the first
+                    # frame of the next stack, so only keep it for the
+                    # final day of the group.
+                    if t_idx >= 24 and day_offset < ndays - 1:
+                        continue
                     dt_str = (
-                        day_date + timedelta(hours=t_idx)
+                        datetime.combine(day_date, dtime(0))
+                        + timedelta(hours=t_idx)
                     ).strftime("%Y-%m-%d %HZ")
                     vals = ds.variables[varname][
                         t_idx, :, :].astype("float32")
@@ -177,7 +183,7 @@ if __name__ == "__main__":
         description="Plot sflux debug GIFs for one group")
     parser.add_argument("--config", required=True)
     parser.add_argument(
-        "--month", required=True,
+        "--group", "--month", dest="month", required=True,
         help="Group ID (YYYYMM for monthly or YYYYMMDD for ndays)")
     args = parser.parse_args()
     cfg = load_config(Path(args.config))

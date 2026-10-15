@@ -17,10 +17,12 @@ Resilience against all-flags-on steps.yaml
   crashing, allowing --phase all to continue on a login node.
 """
 
-from pathlib import Path
+
+import sys
 
 from workflow.models.base import ModelDriver
 from workflow.core.environment import DtnRequiredError
+from typing import Optional
 
 # Steps that belong to UFS-SCHISM only.
 # Silently skipped when model_type is schism or schism_wwm.
@@ -46,17 +48,21 @@ def _na(step: str, reason: str):
 
 class SchismDriver(ModelDriver):
     name = "SCHISM"
+    # True in drivers that implement the SCHISM+WWM-only steps
+    # (gen_wwmbnd / gen_wwminput); others report them as [N/A].
+    supports_wwm_steps = False
 
     # -------------------------------------------------------------------------
     # Phase 0-3 — Pre-processing
     # -------------------------------------------------------------------------
-    def preprocess(self, only: str = None):
+    def preprocess(self, only: Optional[str] = None):
         cfg, config_dir = self.cfg, self.config_dir
         en = lambda step: self.enabled(step, only)
 
         self._preprocess_compat_warning(only)
 
         _slurm_jobs = []
+        _download_failed = []
 
         # ---- Phase 0: mesh diagnostics ----
         if en("inspect_mesh"):
@@ -80,7 +86,8 @@ class SchismDriver(ModelDriver):
                 from workflow.downloaders.hycom import (
                     run_download,
                 )
-                run_download(cfg)
+                if run_download(cfg) is False:
+                    _download_failed.append("download_hycom")
             except DtnRequiredError as exc:
                 _na("download_hycom",
                     f"DTN required — run separately on the "
@@ -94,7 +101,8 @@ class SchismDriver(ModelDriver):
                 from workflow.downloaders.era5 import (
                     run_download_era5,
                 )
-                run_download_era5(cfg)
+                if run_download_era5(cfg) is False:
+                    _download_failed.append("download_era5")
             except DtnRequiredError as exc:
                 _na("download_era5",
                     f"DTN required — run separately on the "
@@ -108,7 +116,8 @@ class SchismDriver(ModelDriver):
                 from workflow.downloaders.glofas import (
                     run_download_glofas,
                 )
-                run_download_glofas(cfg)
+                if run_download_glofas(cfg) is False:
+                    _download_failed.append("download_glofas")
             except DtnRequiredError as exc:
                 _na("download_glofas",
                     f"DTN required — run separately on the "
@@ -116,19 +125,32 @@ class SchismDriver(ModelDriver):
         else:
             print("[SKIP] download_glofas")
 
+        if _download_failed:
+            print(f"\n{'='*60}")
+            print(f"  ERROR: download step(s) finished with failures: "
+                  f"{', '.join(_download_failed)}")
+            print("  Not continuing to dependent steps. Re-run the "
+                  "download (valid files are skipped) until it "
+                  "completes cleanly.")
+            print(f"{'='*60}\n")
+            sys.exit(1)
+
+        model_type = str(cfg.get("model_type", "schism")).lower()
+
         # ---- UFS-only steps: skip silently ----
         for step in sorted(_UFS_ONLY_STEPS):
             if en(step):
                 _na(step,
-                    "UFS-SCHISM only, skipped for "
-                    "model_type=schism")
+                    f"UFS-SCHISM only, skipped for "
+                    f"model_type={model_type}")
 
-        # ---- WWM-only steps: skip silently ----
-        for step in sorted(_WWM_ONLY_STEPS):
-            if en(step):
-                _na(step,
-                    "SCHISM+WWM only, skipped for "
-                    "model_type=schism")
+        # ---- WWM-only steps: skip silently (unless supported) ----
+        if not self.supports_wwm_steps:
+            for step in sorted(_WWM_ONLY_STEPS):
+                if en(step):
+                    _na(step,
+                        f"SCHISM+WWM only, skipped for "
+                        f"model_type={model_type}")
 
         # ---- Phase 2: processing ----
         if en("aggregate_hycom"):
@@ -252,7 +274,7 @@ class SchismDriver(ModelDriver):
     # -------------------------------------------------------------------------
     # Phase 4 — Run management
     # -------------------------------------------------------------------------
-    def run(self, only: str = None):
+    def run(self, only: Optional[str] = None):
         from workflow.models.schism.run.run_manager import (
             run_phase,
         )
@@ -261,7 +283,7 @@ class SchismDriver(ModelDriver):
     # -------------------------------------------------------------------------
     # Phase 5 — Post-processing
     # -------------------------------------------------------------------------
-    def postprocess(self, only: str = None):
+    def postprocess(self, only: Optional[str] = None):
         from workflow.models.schism.postprocess import (
             postprocess_phase,
         )

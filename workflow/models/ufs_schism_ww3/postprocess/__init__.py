@@ -1,13 +1,13 @@
 """
 models/ufs_schism_ww3/postprocess
-==================================
+=================================
 Phase 5 — UFS-SCHISM+WW3 post-processing.
 """
 
-import os
-import socket
 from pathlib import Path
 
+from workflow.core.environment import is_dtn as _is_dtn
+from workflow.core.environment import dtn_skip as _dtn_skip
 from workflow.models.schism.postprocess import (
     postprocess_phase as _schism_postprocess_phase,
 )
@@ -15,25 +15,11 @@ from workflow.models.schism.postprocess import (
 from workflow.models.ufs_schism_ww3.postprocess.collocate_altimetry import (
     run_collocate_altimetry,
 )
-
-
-def _is_dtn() -> bool:
-    hostname = socket.gethostname().lower()
-    return ("dtn" in hostname
-            or os.environ.get("ALLOW_NON_DTN") == "1")
-
-
-def _dtn_skip(step: str):
-    print(
-        f"[N/A]  {step}  "
-        f"(DTN required — run separately on the DTN with:\n"
-        f"         stofs-ak --run --phase postprocess "
-        f"--only {step} --config <cfg>)"
-    )
+from typing import Optional
 
 
 def postprocess_phase(cfg: dict, config_dir,
-                      only: str = None):
+                      only: Optional[str] = None):
     config_dir = Path(config_dir)
     on_dtn     = _is_dtn()
 

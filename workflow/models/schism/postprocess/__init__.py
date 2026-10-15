@@ -9,30 +9,15 @@ no longer need an ImportError guard — they work from the same
 swf_main session as all other steps.
 """
 
-import os
-import socket
 from pathlib import Path
 
-
-def _is_dtn() -> bool:
-    """Return True if the current host is a DTN or ALLOW_NON_DTN=1."""
-    hostname = socket.gethostname().lower()
-    return ("dtn" in hostname
-            or os.environ.get("ALLOW_NON_DTN") == "1")
-
-
-def _dtn_skip(step: str):
-    """Print a [N/A] message for a DTN-only step on a non-DTN node."""
-    print(
-        f"[N/A]  {step}  "
-        f"(DTN required — run separately on the DTN with:\n"
-        f"         stofs-ak --run --phase postprocess "
-        f"--only {step} --config <cfg>)"
-    )
+from workflow.core.environment import is_dtn as _is_dtn
+from workflow.core.environment import dtn_skip as _dtn_skip
+from typing import Optional
 
 
 def postprocess_phase(cfg: dict, config_dir,
-                      only: str = None):
+                      only: Optional[str] = None):
     """Dispatch Phase 5 post-processing steps.
 
     DTN-only steps skip gracefully when not on a DTN.

@@ -9,10 +9,13 @@ project_id: "01"
 
 # Which model configuration to run. Selects the driver under
 # workflow/models/<model_type>/. Supported:
-#   schism       SCHISM standalone (implemented)
-#   schism_wwm   SCHISM + WWM, internally coupled (implemented)
-#   schism_mice  SCHISM + MICE, internally coupled (planned)
-#   ufs_schism   UFS-Coastal based variants (implemented)
+#   schism          SCHISM standalone
+#   schism_wwm      SCHISM + WWM, internally coupled
+#   ufs_schism      UFS-Coastal: DATM + CMEPS + SCHISM (old I/O)
+#   ufs_schism_ww3  UFS-Coastal: DATM + CMEPS + SCHISM + WW3
+#   schism_mice     SCHISM + MICE (placeholder, not implemented)
+# The matching <model_type>.yaml (e.g. ufs_schism_ww3.yaml) must be copied
+# next to this file; templates live in workflow/models/<model>/templates/config/.
 model_type: schism
 
 # Absolute path to the project directory on the HPC filesystem.
@@ -127,13 +130,10 @@ slurm:
   plot_outputs_gif_mem: "32G"
   compare_sst_walltime: "01:00:00"
   compare_sst_mem: "24G"
-  compare_sst_max_ntasks:
   compare_sst_gif_walltime: "00:30:00"
   compare_sst_gif_mem: "16G"
   diag_run_walltime: "00:10:00"
   diag_run_mem: "16G"
-  combine_diag_nranks:     80
-  combine_diag_walltime:   "01:00:00"
 
 # =============================================================================
 # SCHISM executable names (must be present in M{id}/bin/).
@@ -147,8 +147,10 @@ executables:
   # schism:           pschism_HERCULES_NO_PARMETIS_PREC_EVAP_BLD_STANDALONE_SH_MEM_COMM_TVD-VL
   # SCHISM+WWM:
   # schism_wwm:       pschism_HERCULES_WWM_NO_PARMETIS_PREC_EVAP_BLD_STANDALONE_SH_MEM_COMM_TVD-VL
-  # UFS-SCHISM:
+  # UFS-SCHISM (DATM + SCHISM):
   # ufs_schism:       fv3_datm2sch.exe
-  # ww3_ounp:         ww3_ounp
+  # UFS-SCHISM+WW3 (DATM + SCHISM + WW3):
+  # ufs_schism_ww3:   fv3_datm2sch2ww3.exe
+  # ww3_ounp:         ww3_ounp        # optional: WW3 point output conversion
   combine_output:   combine_output11_MPI
   combine_hotstart: combine_hotstart7.exe

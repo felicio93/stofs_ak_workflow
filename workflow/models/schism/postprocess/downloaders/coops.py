@@ -46,6 +46,9 @@ VAR_TOKEN_TO_PRODUCT = {
     "ELEV":          "water_level",
     "T":             "water_temperature",
     "TEMP":          "water_temperature",
+    "S":             "salinity",
+    "SAL":           "salinity",
+    "SALINITY":      "salinity",
     "AIR_PRESSURE":  "air_pressure",
     "AIRPRESSURE":   "air_pressure",
     "PATM":          "air_pressure",
@@ -56,13 +59,14 @@ VAR_TOKEN_TO_PRODUCT = {
 }
 
 SUPPORTED_PRODUCTS = {
-    "water_level", "water_temperature",
+    "water_level", "water_temperature", "salinity",
     "air_pressure", "wind",
 }
 
 PRODUCT_FIELDS = {
     "water_level":       ["t", "v"],
     "water_temperature": ["t", "v"],
+    "salinity":          ["t", "s", "g"],
     "air_pressure":      ["t", "v"],
     "wind":              ["t", "s", "d", "g"],
 }

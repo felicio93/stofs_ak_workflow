@@ -1,6 +1,6 @@
 """
 models/schism/preprocess/gen_source.py
-=============
+======================================
 Phase 3 (interactive) — Generate SCHISM source.nc river forcing files from
 GloFAS reanalysis data.
 
@@ -371,7 +371,7 @@ def run_gen_source(cfg: dict):
     groups   = list_groups(cfg)
     grouping = cfg.get("grouping", "monthly")
 
-    prog   = ProgressTracker(total=len(groups), label="gen_source")
+    prog   = ProgressTracker(total=len(groups))
     failed = []
 
     print(f"\n{'='*60}")

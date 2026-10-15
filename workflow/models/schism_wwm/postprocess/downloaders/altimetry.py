@@ -1,6 +1,6 @@
 """
 models/schism_wwm/postprocess/downloaders/altimetry.py
-=======================================================
+======================================================
 Phase 5 step "download_altimetry" (DTN, internet required).
 
 Downloads satellite altimetry data for collocation against SCHISM+WWM
@@ -50,10 +50,8 @@ CoastWatch altimeter list (all selected by default):
 import argparse
 import os
 import sys
-from datetime import date, timedelta
 from pathlib import Path
 
-import numpy as np
 
 from workflow.core.config import load_config, model_dir
 from workflow.core.environment import check_dtn, check_active_env

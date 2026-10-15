@@ -23,22 +23,24 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from workflow.core.templating import unreplaced
 from workflow.core.config import (
     list_groups,
     model_dir,
     group_date_range,
     get_group_ndays,
 )
-from workflow.core.environment import env_python
+from workflow.core.slurm import (
+    DEFAULT_ACCOUNT,
+    DEFAULT_PARTITION,
+    DEFAULT_MAIL_USER,
+)
 
 TEMPLATE_DIR = (
     Path(__file__).resolve().parent.parent.parent
     / "schism" / "templates"
 )
 AUTO_HOTSTART_TEMPLATE = TEMPLATE_DIR / "auto_hotstart.py"
-DIAG_SBATCH_TEMPLATE   = (
-    TEMPLATE_DIR / "slurm" / "diag_run.sbatch"
-)
 
 UFS_SLURM_DIR = (
     Path(__file__).resolve().parent.parent
@@ -209,50 +211,14 @@ def _render_auto_hotstart(run_dir: Path, subs: dict):
     text = AUTO_HOTSTART_TEMPLATE.read_text()
     for key, val in subs.items():
         text = text.replace("{{" + key + "}}", str(val))
+    left = unreplaced(text)
+    if left:
+        print(f"  ERROR: auto_hotstart.py template has unreplaced "
+              f"placeholder(s): {', '.join(left)}")
+        sys.exit(1)
     out = run_dir / "auto_hotstart.py"
     out.write_text(text)
     out.chmod(out.stat().st_mode | stat.S_IXUSR)
-
-
-def _render_diag_sbatch(cfg: dict, mdir: Path, rdir: Path,
-                        config_dir: Path) -> Path:
-    slurm    = cfg.get("slurm", {})
-    var_cfgs = cfg.get("diag_run_vars", [])
-    varnames = [
-        v["var_name"] if isinstance(v, dict) else v
-        for v in var_cfgs
-    ]
-    manifest_path = rdir / "diag_vars.manifest"
-    manifest_path.write_text("\n".join(varnames) + "\n")
-    nvar = max(len(varnames), 1)
-    subs = {
-        "WORKDIR":            str(rdir),
-        "JOBNAME":            f"diag_{rdir.name}",
-        "ACCOUNT":            slurm.get("account",
-                                        "nos-surge"),
-        "PARTITION":          slurm.get("partition",
-                                        "hercules-2"),
-        "NDIAG_VARS":         str(nvar),
-        "MEM":                slurm.get("diag_run_mem",
-                                        "16G"),
-        "WALLTIME":           slurm.get("diag_run_walltime",
-                                        "00:10:00"),
-        "LOGDIR":             str(mdir / "logs"),
-        "MAILUSER":           slurm.get(
-            "mail_user", "felicio.cassalho@noaa.gov"),
-        "PY":                 env_python(
-            cfg, "diag_run_plots", default="swf_plot"),
-        "SCRIPT":             (
-            "-m workflow.models.schism.postprocess.diag_run"),
-        "CONFIG_DIR":         str(config_dir),
-        "DIAG_VARS_MANIFEST": str(manifest_path),
-    }
-    text = DIAG_SBATCH_TEMPLATE.read_text()
-    for k, v in subs.items():
-        text = text.replace("{{" + k + "}}", str(v))
-    out = rdir / "diag_run.sbatch"
-    out.write_text(text)
-    return out
 
 
 def _render_combine_output_sbatch(cfg: dict, mdir: Path,
@@ -268,9 +234,9 @@ def _render_combine_output_sbatch(cfg: dict, mdir: Path,
     subs = {
         "COMBINE_JOBNAME":  jobname,
         "ACCOUNT":          slurm.get("account",
-                                      "nos-surge"),
+                                      DEFAULT_ACCOUNT),
         "PARTITION":        slurm.get("partition",
-                                      "hercules-2"),
+                                      DEFAULT_PARTITION),
         "COMBINE_NODES":    str(combine_nodes),
         "COMBINE_NRANKS":   str(combine_nranks),
         "COMBINE_WALLTIME": slurm.get(
@@ -278,7 +244,7 @@ def _render_combine_output_sbatch(cfg: dict, mdir: Path,
         "LOGDIR":           str(mdir / "logs"),
         "RUNDIR":           str(rdir),
         "MAILUSER":         slurm.get(
-            "mail_user", "felicio.cassalho@noaa.gov"),
+            "mail_user", DEFAULT_MAIL_USER),
     }
     text = COMBINE_OUTPUT_SBATCH_TEMPLATE.read_text()
     for k, v in subs.items():
@@ -495,22 +461,10 @@ def _setup_group(cfg: dict, mdir: Path, group_id: str,
     combine_output_sbatch = _render_combine_output_sbatch(
         cfg, mdir, rdir, group_index)
 
-    # --- diagnostic hook ---
-    diag_enabled       = bool(cfg.get(
-        "diag_run_plots", False))
-    diag_sbatch        = ""
-    diag_vars_manifest = ""
-    diag_nvar          = 0
-    if diag_enabled:
-        diag_sbatch = str(
-            _render_diag_sbatch(
-                cfg, mdir, rdir, config_dir))
-        diag_vars_manifest = str(
-            rdir / "diag_vars.manifest")
-        diag_nvar = max(
-            len(cfg.get("diag_run_vars", [])), 1)
-
     # --- render auto_hotstart.py ---
+    # In-run diagnostic plots are not supported for UFS (old I/O) runs:
+    # the DIAG_* keys are rendered disabled because the shared
+    # auto_hotstart.py template requires them.
     slurm          = cfg.get("slurm", {})
     combine_nranks = int(slurm.get(
         "combine_output_nranks", 80))
@@ -529,11 +483,13 @@ def _setup_group(cfg: dict, mdir: Path, group_id: str,
         "IS_LAST_MONTH":          bool(is_last),
         "NHOT_WRITE":             nhot_write,
         "MONTH":                  group_id,
+        "CHAIN_UFS_RESTARTS":     True,
+        "CHAIN_WW3_RESTART":      False,
         "RUN_JOBNAME":            run_jobname,
-        "DIAG_ENABLED":           diag_enabled,
-        "DIAG_SBATCH":            diag_sbatch,
-        "DIAG_VARS_MANIFEST":     diag_vars_manifest,
-        "DIAG_NVAR":              diag_nvar,
+        "DIAG_ENABLED":           False,
+        "DIAG_SBATCH":            "",
+        "DIAG_VARS_MANIFEST":     "",
+        "DIAG_NVAR":              0,
         "COMBINE_OUTPUT_ENABLED": True,
         "COMBINE_OUTPUT_EXE":     str(
             outdir / combine_output_exe),

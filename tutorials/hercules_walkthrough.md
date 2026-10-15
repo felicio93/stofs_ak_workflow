@@ -6,7 +6,7 @@ below are hardcoded to my case:
 - Repo clone:   `/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/stofs_ak_workflow`
 - Project dir:  `/work2/noaa/nos-surge/felicioc/STOFS_3D_AK`
 - Model:        `M01`  (so `M01/`, `I01/`, `R01/`, `P01/`, `D01/`)
-- model_type:   `schism`
+- model_type:   `schism` (SCHISM+WWM, UFS-SCHISM and UFS-SCHISM+WW3 differences are in sections 11-14)
 - conda base:   `/work2/noaa/nos-surge/felicioc/envs/miniconda3`
 - Envs:         `swf_main` (download + aggregate + SCHISM preproc), `swf_plot` (plotting + mesh diagnostics)
 - Dates:        `2024-09-07` → `2026-06-30` (monthly; Sep 7 = first full ESPC-D-V02 day)
@@ -47,7 +47,9 @@ export CFG=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config
 mkdir -p $CFG
 # shared config templates:
 cp $WF/templates/config_example/*.yaml $CFG/
-# model-specific config (SCHISM):
+# model-specific config (SCHISM). For other models copy the matching yaml
+# instead (see section 11-13):
+#   schism_wwm.yaml, ufs_schism.yaml, ufs_schism_ww3.yaml
 cp $WF/workflow/models/schism/templates/config/schism.yaml $CFG/
 ```
 
@@ -172,11 +174,11 @@ Monitor and verify:
 squeue -u $USER
 cat $SWF_PROJ/M01/logs/inspect_mesh.out
 ls -lh $SWF_PROJ/M01/D01/D01_fix/
-# expect: bathymetry.tiff  albedo.tiff  diffmin.tiff  diffmax.tiff
-#         watertype.tiff   shapiro.tiff  windrot_geo2proj.tiff
-#         bottom_friction.tiff  TEM_nudge.tiff  SAL_nudge.tiff
-#         mesh_resolution.tiff  vertical_layers.tiff
-#         (estuary.tiff once gen_estuary has run)
+# expect: bathymetry.jpg  albedo.jpg  diffmin.jpg  diffmax.jpg
+#         watertype.jpg   shapiro.jpg  windrot_geo2proj.jpg
+#         bottom_friction.jpg  TEM_nudge.jpg  SAL_nudge.jpg
+#         mesh_resolution.jpg  vertical_layers.jpg
+#         (estuary.jpg once gen_estuary has run)
 ```
 
 If OOM: increase `inspect_mem` in `$CFG/project.yaml` (default 16G).
@@ -531,7 +533,7 @@ grep "combine_hotstart7" $SWF_PROJ/M01/R01/R01_202512/run_comb
 
 # outputs/ placeholders
 ls $SWF_PROJ/M01/R01/R01_202512/outputs/
-# expect: staout_1 .. staout_9  flux.out  combine_hotstart7.exe
+# expect: staout_1 .. staout_20  flux.out  combine_hotstart7.exe
 
 # Month 2 should NOT have hotstart.nc yet (chained at run time):
 ls -la $SWF_PROJ/M01/R01/R01_202601/hotstart.nc  # should say "No such file"
@@ -545,8 +547,12 @@ Re-run a month: `rm $SWF_PROJ/M01/R01/R01_YYYYMM/setup_run.done`
 
 Calls `auto_hotstart.py` for the first pending month. That script:
 1. Submits `run_test` via sbatch (the SCHISM MPI job)
-2. Polls squeue every 120 s; checks `outputs/mirror.out` for TIME STEP
-   advancement; cancels and resubmits if a hang is detected
+2. Polls squeue (60 s for the first 5 polls, then 5 / 20 / 30 min, then every
+   60 min); checks `outputs/mirror.out` for TIME STEP advancement and cancels a
+   hung job. A failed `squeue` call is retried and never treated as "job
+   finished". After the job leaves the queue, a SCHISM/MPI error signature
+   (`fatal.error`, `err2.out`, `ABORT`) stops the chain with the details; any
+   other failure (node failure, OOM, ...) is resubmitted up to 5 times
 3. When the run finishes ("Run completed successfully" in `mirror.out`):
    - Submits `run_comb` to run `combine_hotstart7.exe -i <nhot_write>` inside `outputs/`
    - Waits for the combine job to finish
@@ -623,8 +629,13 @@ isobaths.
 
 ### Step 10a — diag_run_plots (per-stack diagnostics DURING the run)
 
+> Only available for `model_type: schism`. SCHISM+WWM and the UFS-based
+> models do not support in-run diagnostics; the flag is ignored with an
+> `[N/A]` line.
+
 Enable **before** `setup_run` so the hook is baked into each run directory's
-`auto_hotstart.py`. As each SCHISM output stack (`out2d_N.nc` + its 3D
+`auto_hotstart.py`. (After changing it later, delete
+`R01/R01_*/setup_run.done` and re-run `setup_run`.) As each SCHISM output stack (`out2d_N.nc` + its 3D
 siblings) finishes, `auto_hotstart.py` submits a small SLURM job that writes
 one diagnostic image per timestep per variable to
 `D01/D01_YYYYMM/diag/`. No GIFs — this is for watching run health live.
@@ -748,11 +759,178 @@ ls $SWF_PROJ/M01/P01/P01_station_skill/
 cat $SWF_PROJ/M01/P01/P01_station_skill/skill_metrics.csv
 ```
 
+Variables are chosen from each station's `![VARS]` bracket: `WL`/`ELEV`,
+`T`, `S` (salinity; CO-OPS stations with a salinity sensor only), `air_pressure`
+and `wind`. The model column is selected by the station's line index in
+`station.in`, so stations listed at several depths are handled correctly.
+
 > **Re-running for a sub-period.** Set `station_skill_start` /
 > `station_skill_end` in `postprocess.yaml` (format YYYY-MM-DD; null = whole
 > run) and re-run `station_skill`. No re-download is needed — it just re-slices
 > the already-downloaded observations and model output. `station_skill_resample`
 > (default `1H`) sets the cadence for the skill metrics.
+
+---
+
+## 11. Phase 5 extras — Argo, waves and altimetry
+
+These steps are configured in `postprocess.yaml` (keys documented inline).
+
+```bash
+# Argo float profiles vs model T/S (all models)
+stofs-ak --run --phase postprocess --only download_argo  --config $CFG   # DTN
+stofs-ak --run --phase postprocess --only collocate_argo --config $CFG   # SLURM array + merge (+ plots if plot_argo: true)
+stofs-ak --run --phase postprocess --only plot_argo      --config $CFG   # location map, skill histograms, profile matrix
+
+# Waves (SCHISM+WWM and UFS-SCHISM+WW3 only)
+stofs-ak --run --phase postprocess --only download_ndbc        --config $CFG   # DTN (needs [HS,TM01,DM] tokens in station.in)
+stofs-ak --run --phase postprocess --only wave_skill           --config $CFG   # NDBC Hs/period/direction vs model stations
+stofs-ak --run --phase postprocess --only download_altimetry   --config $CFG   # DTN (CCI needs CCI_FTP_USER / CCI_FTP_PASS)
+stofs-ak --run --phase postprocess --only collocate_altimetry  --config $CFG   # SLURM array + merge
+stofs-ak --run --phase postprocess --only plot_altimetry       --config $CFG
+```
+
+Wave direction (`DM`) metrics use circular statistics (wrapped differences,
+circular mean).
+
+---
+
+## 12. SCHISM + WWM (`model_type: schism_wwm`)
+
+Differences from standalone SCHISM:
+
+```bash
+cp $WF/workflow/models/schism_wwm/templates/config/schism_wwm.yaml $CFG/   # replaces schism.yaml
+```
+
+- Put your WWM template at `$SWF_PROJ/M01/fix/wwminput.nml`.
+- `schism_wwm.yaml` holds only the WWM keys. SCHISM keys (`estuary_temp`,
+  `tidal_constituents`, ...) have code defaults; copy any you want to change
+  from `schism.yaml` into `schism_wwm.yaml`.
+- In `project.yaml`: `model_type: schism_wwm` and
+  `executables.schism_wwm: <WWM-enabled SCHISM executable>`.
+- Extra preprocessing steps (after `gen_param`):
+
+```bash
+# steps.yaml: gen_wwmbnd: true  (once)  then  gen_wwminput: true
+stofs-ak --run --only gen_wwmbnd   --config $CFG   # fix/wwmbnd.gr3 from hgrid.gr3
+stofs-ak --run --only gen_wwminput --config $CFG   # I01_<g>/wwminput.nml per group
+```
+
+`BEGTC` / `ENDTC` in each `wwminput.nml` come from that group's
+`param.nml` (`start_*` and `start + rnday`), so WWM always covers the same
+window as SCHISM. The `&STATION` block is generated from `fix/station.in`
+(surface entries), not copied from the template.
+
+- `setup_run` / `submit_run` are used as in section 9; the WWM hotfile
+  (`hotfile_out_WWM.nc`) is chained to the next group.
+- `diag_run_plots` is not supported for `schism_wwm` (ignored with `[N/A]`).
+
+---
+
+## 13. UFS-SCHISM (`model_type: ufs_schism`)
+
+DATM forcing + CMEPS mediator + SCHISM (old I/O: `schout_*.nc`).
+
+```bash
+cp $WF/workflow/models/ufs_schism/templates/config/ufs_schism.yaml $CFG/
+```
+
+- `fix/` additionally needs `datm_in`, `datm.streams`, `fd_ufs.yaml`,
+  `noahmptable.tbl`, `model_configure`; `bin/` needs the UFS executable
+  (`executables.ufs_schism`), `combine_output11_MPI`, `combine_hotstart7.exe`
+  and the `*.lua` modulefiles.
+- Preprocessing order after the SCHISM steps of section 6-8
+  (`aggregate_hycom`, `gen_sflux`, `gen_estuary`, `gen_bctides`, `gen_source`,
+  `gen_param`, `gen_hotstart`, `gen_3Dth`, `gen_nudge`):
+
+```bash
+stofs-ak --run --only gen_datm            --config $CFG   # SLURM: sflux -> forcing/datm_<g>.nc
+stofs-ak --run --only gen_esmf_mesh       --config $CFG   # SLURM: ESMF mesh of the DATM grid
+stofs-ak --run --only plot_datm           --config $CFG   # optional debug GIFs
+# interactive (need the DATM output above):
+for s in gen_datm_in gen_datm_streams copy_fd_ufs copy_noahmptable \
+         gen_model_configure copy_modulefiles gen_ufs_configure; do
+  stofs-ak --run --only $s --config $CFG
+done
+```
+
+  When several of these are enabled in one `stofs-ak --run`, the driver waits
+  for `gen_datm` + `gen_esmf_mesh` before running the interactive ones.
+- `setup_run` additionally links `forcing/` and `modulefiles/`, creates
+  `RESTART/`, and renders `run_combine_output.sbatch`. Check:
+
+```bash
+ls $SWF_PROJ/M01/R01/R01_202512/
+# expect also: forcing/  modulefiles/  RESTART/  run_combine_output.sbatch
+#              datm_in  datm.streams  fd_ufs.yaml  model_configure  ufs.configure
+```
+
+- During `submit_run`, at the end of each group `auto_hotstart.py` runs
+  `combine_output11_MPI` over all output stacks (`run_combine_output.sbatch`),
+  combines the hotstart, and chains SCHISM hotstart + DATM restart
+  (`ufs.cpld.datm.r.*.nc`, `rpointer.atm`) + mediator restart
+  (`RESTART/ufs.cpld.cpl.r.*.nc`, `rpointer.cpl`) into the next group.
+- Output is old I/O, so postprocessing (`plot_outputs`, `compare_sst`,
+  `collocate_argo`) reads the combined `schout_*.nc` files automatically.
+- **No in-run diagnostics**: `diag_run_plots` is not supported (partition
+  files are only combined at the end of each group).
+- `chain_hotstart: false` is for single-group tests only: groups after the
+  first have no `hotstart.nc` link and cannot start.
+
+---
+
+## 14. UFS-SCHISM + WW3 (`model_type: ufs_schism_ww3`)
+
+Same as section 13 plus WW3:
+
+```bash
+cp $WF/workflow/models/ufs_schism_ww3/templates/config/ufs_schism_ww3.yaml $CFG/   # self-contained
+```
+
+- `ufs_schism_ww3.yaml` is **self-contained** (it does not inherit from
+  `ufs_schism.yaml`). Update `*_petlist_bounds` to match your `fix/run_test`
+  allocation before `setup_run`.
+- `project.yaml`: `executables.ufs_schism_ww3`, optionally `executables.ww3_ounp`.
+- `fix/` additionally: `ww3_shel.nml`, `ww3_ounp.inp`, plus the files listed
+  in `ww3_fix_files` (`mod_def.ww3`, `namelists.nml`, `ww3_points.list`,
+  `ST4TABUHF2.bin`, `ww3_ESMFmesh.nc`, `mesh.msh`).
+- Extra preprocessing steps (after `gen_param`):
+
+```bash
+stofs-ak --run --only gen_ww3_shel --config $CFG   # ww3_shel.nml per group (dates, cadences, restart)
+stofs-ak --run --only gen_ww3_ounp --config $CFG   # ww3_ounp.inp per group
+```
+
+- `chain_ww3_restart` (default `true`): copy the WW3 restart
+  (`ufs.cpld.ww3.r.*.nc`) into the next group. `false` cold-starts WW3 each
+  group; DATM and mediator restarts are still chained. If your config was
+  copied from an older template with `chain_ww3_restart: false`, WW3 keeps
+  cold-starting until you set it to `true`.
+- After each group `auto_hotstart.py` also converts the WW3 point output
+  (`ww3_ounp`) to `ww3.<date>_tab.nc` for `wave_skill`.
+- Postprocess extras: `plot_outputs_ww3` (field GIFs from
+  `*.out_grd.ww3.nc`), `wave_skill`, `download_altimetry`,
+  `collocate_altimetry`, `plot_altimetry` (section 11).
+
+---
+
+## 15. Sub-monthly grouping (`ndays`)
+
+```yaml
+# project.yaml
+grouping: weekly        # aliases: daily (1), weekly (7), biweekly (14)
+# or
+grouping: ndays
+group_ndays: 10
+```
+
+Group IDs become `YYYYMMDD` (the group start date): `I01_20250901/`,
+`R01_20250901/`, ... The last group is shorter if `end_date` does not fall on
+a boundary. Each forcing stack gets 3 extra read-ahead days. Everything else
+(hotstart chaining, postprocessing windows) works unchanged. With monthly
+grouping keep `start_date` on the 1st of a month; a warning is printed
+otherwise.
 
 ---
 
@@ -853,6 +1031,11 @@ stofs-ak --run --phase all --config $CFG
 | `download_coops` | 5 | DTN | swf_main | yes |
 | `download_ndbc` | 5 | DTN | swf_main | yes |
 | `station_skill` | 5 | login/any | swf_plot | no |
+| `download_argo` | 5 | DTN | swf_main | yes |
+| `collocate_argo` / `plot_argo` | 5 | compute (SLURM) | swf_plot (auto) | no |
+| `wave_skill` (WWM / WW3) | 5 | login/any | swf_main | no |
+| `download_altimetry` (WWM / WW3) | 5 | DTN | swf_main | yes |
+| `collocate_altimetry` (WWM / WW3) | 5 | compute (SLURM) | swf_plot (auto) | no |
 
 ---
 
@@ -864,7 +1047,7 @@ stofs-ak --run --phase all --config $CFG
 | `download_hycom` | Skips valid daily files; stops on stale month |
 | `download_era5` | Skips existing monthly files; stops on stale month |
 | `download_glofas` | Skips existing annual files; stops on stale year |
-| `aggregate_hycom` | Skips months where `SSH_1/TS_1/UV_1.nc` exist |
+| `aggregate_hycom` | Skips months where `SSH_1/TS_1/UV_1.nc` exist. Missing days inside a month are interpolated (<= 3 in a row); a longer gap fails that stack |
 | `gen_sflux` | Skips months where `sflux/gen_sflux.done` exists |
 | `plot_hycom` | Skips months where `D01_YYYYMM/plot_hycom.done` exists |
 | `plot_sflux` | Skips months where `D01_YYYYMM/plot_sflux.done` exists |
@@ -883,6 +1066,10 @@ stofs-ak --run --phase all --config $CFG
 | `download_coops` | Skips months where `obs/coops/{id}_{product}_{YYYYMM}.csv` exists |
 | `download_ndbc` | Skips past-year files (immutable); always refreshes the current year |
 | `station_skill` | Skips if `P01_station_skill/station_skill.done` exists. Re-run by deleting that file (or `--refresh`); re-slices obs+model to station_skill_start/end, overwrites plots + skill_metrics.csv |
+| `wave_skill` | Skips if `P01_station_skill/wave_skill.done` exists (delete it or `--refresh` to re-run) |
+| `collocate_argo` | Skips if `P01_collocate_argo/collocate_argo.done` exists; `plot_argo.done` guards the plots |
+| `collocate_altimetry` | Skips if `P01_collocate_altimetry/collocate_altimetry.done` exists |
+| `gen_wwminput` / `gen_ww3_shel` / `gen_ww3_ounp` | Skip groups where the matching `*.done` exists in `I01_<group>/` |
 
 ---
 

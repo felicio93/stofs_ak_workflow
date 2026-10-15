@@ -16,13 +16,17 @@ Stage 2 — GIF assembly (single serial job, --dependency=afterok):
     (fps, date range, etc.) without re-rendering frames.
 """
 
-import math
 from datetime import date, timedelta
 from pathlib import Path
 
 from workflow.core.config import model_dir
 from workflow.core.environment import env_python
 from workflow.core.slurm import SlurmSubmitter
+from workflow.core.slurm import (
+    DEFAULT_ACCOUNT,
+    DEFAULT_PARTITION,
+    DEFAULT_MAIL_USER,
+)
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates" / "slurm"
 
@@ -68,9 +72,9 @@ def submit_compare_sst(cfg: dict, config_dir: Path) -> str:
               "Submitting GIF assembly only.")
         gif_dir.mkdir(parents=True, exist_ok=True)
         common = {
-            "ACCOUNT":    slurm.get("account",   "nos-surge"),
-            "PARTITION":  slurm.get("partition", "hercules-2"),
-            "MAILUSER":   slurm.get("mail_user", "felicio.cassalho@noaa.gov"),
+            "ACCOUNT":    slurm.get("account",   DEFAULT_ACCOUNT),
+            "PARTITION":  slurm.get("partition", DEFAULT_PARTITION),
+            "MAILUSER":   slurm.get("mail_user", DEFAULT_MAIL_USER),
             "WORKDIR":    str(mdir),
             "LOGDIR":     str(logdir),
             "PY":         env_python(cfg, "compare_sst", default="swf_plot"),
@@ -100,9 +104,9 @@ def submit_compare_sst(cfg: dict, config_dir: Path) -> str:
     throttle = str(slurm.get("compare_sst_array_throttle", 50))
 
     common = {
-        "ACCOUNT":    slurm.get("account",   "nos-surge"),
-        "PARTITION":  slurm.get("partition", "hercules-2"),
-        "MAILUSER":   slurm.get("mail_user", "felicio.cassalho@noaa.gov"),
+        "ACCOUNT":    slurm.get("account",   DEFAULT_ACCOUNT),
+        "PARTITION":  slurm.get("partition", DEFAULT_PARTITION),
+        "MAILUSER":   slurm.get("mail_user", DEFAULT_MAIL_USER),
         "WORKDIR":    str(mdir),
         "LOGDIR":     str(logdir),
         "PY":         env_python(cfg, "compare_sst", default="swf_plot"),

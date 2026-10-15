@@ -1,6 +1,6 @@
 """
 downloaders/era5.py
-================
+===================
 Phase 1b (DTN, internet required) — Download ERA5 monthly raw files from the
 Copernicus Climate Data Store (CDS) using the cdsapi library.
 
@@ -47,7 +47,6 @@ from zipfile import ZipFile, BadZipFile
 import numpy as np
 
 from workflow.core.config import (
-    load_config,
     list_groups,
     group_date_range,
     model_dir,
@@ -86,7 +85,6 @@ def _calendar_months_for_groups(cfg: dict) -> list:
 
     Returns a sorted list of unique 'YYYYMM' strings.
     """
-    from datetime import timedelta
     from dateutil.relativedelta import relativedelta
 
     groups = list_groups(cfg)
@@ -158,21 +156,31 @@ def _unzip_and_merge(zip_path: Path, out_nc: Path):
             raise RuntimeError("ZIP contained no .nc files")
 
         datasets = [xr.open_dataset(f) for f in nc_files]
-        merged   = xr.merge(datasets, compat="override")
+        # Write to a .part file and move it into place only when complete:
+        # a truncated final file would otherwise be skipped as
+        # "already downloaded" on every later run.
+        part = out_nc.with_name(out_nc.name + ".part")
+        try:
+            merged = xr.merge(datasets, compat="override")
 
-        rename_map = {
-            "avg_tprate": "mtpr",
-            "avg_sdlwrf": "msdwlwrf",
-            "avg_sdswrf": "msdwswrf",
-        }
-        actual_renames = {k: v for k, v in rename_map.items()
-                          if k in merged.data_vars}
-        if actual_renames:
-            merged = merged.rename(actual_renames)
+            rename_map = {
+                "avg_tprate": "mtpr",
+                "avg_sdlwrf": "msdwlwrf",
+                "avg_sdswrf": "msdwswrf",
+            }
+            actual_renames = {k: v for k, v in rename_map.items()
+                              if k in merged.data_vars}
+            if actual_renames:
+                merged = merged.rename(actual_renames)
 
-        merged.to_netcdf(str(out_nc))
-        for ds in datasets:
-            ds.close()
+            merged.to_netcdf(str(part))
+        except Exception:
+            part.unlink(missing_ok=True)
+            raise
+        finally:
+            for ds in datasets:
+                ds.close()
+        part.replace(out_nc)
 
     print(f"  Merged {len(nc_files)} variable file(s) -> {out_nc.name}")
 
@@ -274,7 +282,7 @@ def run_download_era5(cfg: dict):
 
     client = cdsapi.Client()
     prog   = ProgressTracker(
-        total=len(months), label="ERA5 download")
+        total=len(months))
     failed = []
 
     for ym in months:
@@ -321,3 +329,4 @@ def run_download_era5(cfg: dict):
         print("  Re-run to retry (existing valid files are "
               "skipped).")
     print(f"{'='*60}\n")
+    return not failed

@@ -47,9 +47,9 @@ gen_hotstart: false   # Step F: create hotstart.nc (once, first month only, SLUR
 gen_3Dth:     false   # Step G: create *[23D].th.nc files (SLURM array, one job per month)
 gen_nudge:    false   # Step H: create TEM/SAL_nu.nc files (SLURM array, one job per month)
 
-# SCHISM Modules
-gen_wwminput: false   # Step WWM: generate wwminput.nml from template + param.nml + station.in
-                      # (SCHISM+WWM only)
+# SCHISM Modules (SCHISM+WWM only)
+gen_wwmbnd:   false   # Step WWM-A: generate fix/wwmbnd.gr3 from hgrid.gr3 (once)
+gen_wwminput: false   # Step WWM-B: generate wwminput.nml from template + param.nml + station.in
 
 # WW3 Modules (UFS-SCHISM+WW3 only)
 gen_ww3_shel: false   # Step WW3-A: generate ww3_shel.nml per group from fix/ww3_shel.nml
@@ -75,6 +75,7 @@ submit_run: false   # Run auto_hotstart.py month-by-month, chaining hotstarts.
 diag_run_plots:  false   # Per-output-stack diagnostic frames -> D{ID} DURING the
                          # run (dispatched by auto_hotstart.py). Enable BEFORE
                          # setup_run so it is baked into the run directories.
+                         # model_type: schism ONLY (ignored for schism_wwm and UFS).
 download_sst:    false   # DTN: download LEO L3S-DY satellite SST + subset -> M{ID}/obs/
 download_coops:  false   # DTN: download NOAA CO-OPS station obs (WL, water temp, air
                          # pressure, wind) -> M{ID}/obs/coops/ (based on fix/station.in)

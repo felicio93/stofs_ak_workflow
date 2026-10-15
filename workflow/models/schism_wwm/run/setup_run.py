@@ -20,13 +20,13 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from workflow.core.templating import unreplaced
 from workflow.core.config import (
     list_groups,
     model_dir,
     group_date_range,
     get_group_ndays,
 )
-from workflow.core.environment import env_python
 
 SCHISM_TEMPLATE_DIR = (
     Path(__file__).resolve().parent.parent.parent
@@ -149,6 +149,11 @@ def _render_auto_hotstart(run_dir, subs):
     text = AUTO_HOTSTART_TEMPLATE.read_text()
     for key, val in subs.items():
         text = text.replace("{{" + key + "}}", str(val))
+    left = unreplaced(text)
+    if left:
+        print(f"  ERROR: auto_hotstart.py template has unreplaced "
+              f"placeholder(s): {', '.join(left)}")
+        sys.exit(1)
     out = run_dir / "auto_hotstart.py"
     out.write_text(text)
     out.chmod(out.stat().st_mode | stat.S_IXUSR)
@@ -328,14 +333,13 @@ def _setup_group(cfg, mdir, group_id, group_index,
         "IS_LAST_MONTH":          bool(is_last),
         "NHOT_WRITE":             nhot_write,
         "MONTH":                  group_id,
+        "CHAIN_UFS_RESTARTS":     False,
+        "CHAIN_WW3_RESTART":      False,
         "RUN_JOBNAME":            run_jobname,
         "DIAG_ENABLED":           False,
         "DIAG_SBATCH":            "",
         "DIAG_VARS_MANIFEST":     "",
         "DIAG_NVAR":              0,
-        "COMBINE_DIAG_ENABLED":   False,
-        "COMBINE_DIAG_SBATCH":    "",
-        "COMBINE_DIAG_NRANKS":    0,
         "COMBINE_OUTPUT_ENABLED": False,
         "COMBINE_OUTPUT_EXE":     "",
         "COMBINE_OUTPUT_NRANKS":  0,

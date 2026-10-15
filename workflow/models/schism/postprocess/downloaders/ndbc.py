@@ -58,8 +58,18 @@ MONTHLY    = ("https://www.ndbc.noaa.gov/view_text_file.php?"
 MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
-# Sentinel missing-value tokens used across stdmet columns.
-MISSING_VALUES = [99.0, 999.0, 9999.0, 99.00, 999.00, 9999.00]
+# Missing-value sentinel per stdmet column (NDBC data description). The
+# sentinel differs by column, so it must be applied per column: e.g. 999 is
+# the missing code for WDIR/MWD/ATMP/WTMP/DEWP but a VALID pressure in hPa,
+# and 99 is missing for WSPD/GST/WVHT/DPD/APD but a valid direction in deg.
+MISSING_VALUE_BY_COL = {
+    "WDIR": 999.0, "MWD": 999.0,
+    "WSPD": 99.0,  "GST": 99.0,
+    "WVHT": 99.0,  "DPD": 99.0,  "APD": 99.0,
+    "PRES": 9999.0, "BAR": 9999.0,
+    "ATMP": 999.0, "WTMP": 999.0, "DEWP": 999.0,
+    "VIS": 99.0,   "TIDE": 99.0,
+}
 
 
 def _fetch(url: str, gz: bool):
@@ -139,9 +149,9 @@ def _parse_stdmet_text(text: str):
     for c in [yy, mm, dd, hh] + ([mn] if mn else []):
         df[c] = pd.to_numeric(df[c], errors="coerce")
 
-    # Normalise 2-digit years.
+    # Normalise 2-digit years: 00-49 -> 2000-2049, 50-99 -> 1950-1999.
     df[yy] = df[yy].apply(
-        lambda x: x + 1900 if x < 50 else (x + 2000 if x < 100 else x)
+        lambda x: x + 2000 if x < 50 else (x + 1900 if x < 100 else x)
     )
 
     parts = {"year": df[yy], "month": df[mm], "day": df[dd], "hour": df[hh]}
@@ -158,7 +168,9 @@ def _parse_stdmet_text(text: str):
                         "PRES", "BAR", "ATMP", "WTMP", "DEWP", "VIS", "TIDE"]
             if c in df.columns]
     out = df[keep].apply(pd.to_numeric, errors="coerce")
-    out = out.replace(MISSING_VALUES, np.nan)
+    for col, missing in MISSING_VALUE_BY_COL.items():
+        if col in out.columns:
+            out[col] = out[col].where(out[col] != missing, np.nan)
     # Some historical files label pressure 'BAR' instead of 'PRES'.
     if "BAR" in out.columns and "PRES" not in out.columns:
         out = out.rename(columns={"BAR": "PRES"})

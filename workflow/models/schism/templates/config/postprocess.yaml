@@ -263,8 +263,6 @@ collocate_argo_plot_temp_bias_xlim: null
 collocate_argo_plot_temp_rmse_xlim: null
 collocate_argo_plot_psal_bias_xlim: null
 collocate_argo_plot_psal_rmse_xlim: null
-collocate_argo_plot_temp_hist_color: royalblue
-collocate_argo_plot_psal_hist_color: teal
 
 # --- Plot 3: Profile matrix ---
 collocate_argo_plot_temp_xlim: null

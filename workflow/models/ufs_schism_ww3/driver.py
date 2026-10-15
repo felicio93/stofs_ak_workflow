@@ -1,6 +1,6 @@
 """
 models/ufs_schism_ww3/driver.py
-================================
+===============================
 UfsSchismWw3Driver — UFS-SCHISM+WW3 externally coupled model.
 
 Inherits all UFS-SCHISM preprocessing, run, and postprocessing steps
@@ -23,9 +23,9 @@ Same pattern as SchismWwmDriver inheriting SchismDriver.
 Works for all grouping modes (monthly, ndays/weekly/daily).
 """
 
-import time
 
 from workflow.models.ufs_schism.driver import UfsSchismDriver
+from typing import Optional
 
 
 class UfsSchismWw3Driver(UfsSchismDriver):
@@ -37,9 +37,7 @@ class UfsSchismWw3Driver(UfsSchismDriver):
     # The UFS barrier (wait for gen_datm + gen_esmf_mesh before interactive
     # config steps) is inherited unchanged from UfsSchismDriver.
     # -------------------------------------------------------------------------
-    def preprocess(self, only: str = None):
-        from workflow.core.config import list_groups
-        from workflow.core.slurm import wait_for_slurm_jobs
+    def preprocess(self, only: Optional[str] = None):
 
         # Run all inherited UFS-SCHISM preprocessing steps.
         # This includes Phase 0 (inspect_mesh), Phase 1 (downloads),
@@ -79,7 +77,8 @@ class UfsSchismWw3Driver(UfsSchismDriver):
     # Uses UFS-SCHISM+WW3 setup_run (WW3 fixed files + ww3_shel.nml/ounp.inp)
     # and the inherited submit_run (auto_hotstart.py is model-agnostic).
     # -------------------------------------------------------------------------
-    def run(self, only: str = None):
+    def run(self, only: Optional[str] = None):
+        self._warn_no_run_diagnostics()
         if self.enabled("setup_run", only):
             print("[STEP] setup_run")
             from workflow.models.ufs_schism_ww3.run.setup_run import (
@@ -103,7 +102,7 @@ class UfsSchismWw3Driver(UfsSchismDriver):
     # Uses UFS-SCHISM+WW3 postprocess dispatcher which inherits all SCHISM
     # Phase 5 steps and adds wave_skill + altimetry collocation.
     # -------------------------------------------------------------------------
-    def postprocess(self, only: str = None):
+    def postprocess(self, only: Optional[str] = None):
         from workflow.models.ufs_schism_ww3.postprocess import (
             postprocess_phase,
         )

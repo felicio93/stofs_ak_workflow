@@ -31,6 +31,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from workflow.core.templating import unreplaced
 from workflow.core.config import (
     list_groups,
     model_dir,
@@ -38,6 +39,11 @@ from workflow.core.config import (
     get_group_ndays,
 )
 from workflow.core.environment import env_python
+from workflow.core.slurm import (
+    DEFAULT_ACCOUNT,
+    DEFAULT_PARTITION,
+    DEFAULT_MAIL_USER,
+)
 
 TEMPLATE_DIR = (
     Path(__file__).resolve().parent.parent / "templates"
@@ -193,6 +199,11 @@ def _render_auto_hotstart(run_dir: Path, subs: dict):
     text = AUTO_HOTSTART_TEMPLATE.read_text()
     for key, val in subs.items():
         text = text.replace("{{" + key + "}}", str(val))
+    left = unreplaced(text)
+    if left:
+        print(f"  ERROR: auto_hotstart.py template has unreplaced "
+              f"placeholder(s): {', '.join(left)}")
+        sys.exit(1)
     out = run_dir / "auto_hotstart.py"
     out.write_text(text)
     out.chmod(out.stat().st_mode | stat.S_IXUSR)
@@ -212,14 +223,14 @@ def _render_diag_sbatch(cfg: dict, mdir: Path, rdir: Path,
     subs = {
         "WORKDIR":            str(rdir),
         "JOBNAME":            f"diag_{rdir.name}",
-        "ACCOUNT":            slurm.get("account",          "nos-surge"),
-        "PARTITION":          slurm.get("partition",         "hercules-2"),
+        "ACCOUNT":            slurm.get("account",          DEFAULT_ACCOUNT),
+        "PARTITION":          slurm.get("partition",         DEFAULT_PARTITION),
         "NDIAG_VARS":         str(nvar),
         "MEM":                slurm.get("diag_run_mem",      "16G"),
         "WALLTIME":           slurm.get("diag_run_walltime", "00:10:00"),
         "LOGDIR":             str(mdir / "logs"),
         "MAILUSER":           slurm.get("mail_user",
-                                        "felicio.cassalho@noaa.gov"),
+                                        DEFAULT_MAIL_USER),
         "PY":                 env_python(cfg, "diag_run_plots",
                                          default="swf_plot"),
         "SCRIPT":             (
@@ -411,6 +422,8 @@ def _setup_group(cfg: dict, mdir: Path, group_id: str,
         "IS_LAST_MONTH":          bool(is_last),
         "NHOT_WRITE":             nhot_write,
         "MONTH":                  group_id,
+        "CHAIN_UFS_RESTARTS":     False,
+        "CHAIN_WW3_RESTART":      False,
         "RUN_JOBNAME":            run_jobname,
         # New I/O diagnostics (SCHISM standalone)
         "DIAG_ENABLED":           diag_enabled,
@@ -418,9 +431,6 @@ def _setup_group(cfg: dict, mdir: Path, group_id: str,
         "DIAG_VARS_MANIFEST":     diag_vars_manifest,
         "DIAG_NVAR":              diag_nvar,
         # Old I/O per-stack combine + diagnostics — disabled for SCHISM
-        "COMBINE_DIAG_ENABLED":   False,
-        "COMBINE_DIAG_SBATCH":    "",
-        "COMBINE_DIAG_NRANKS":    0,
         # End-of-month output combination — disabled for SCHISM
         "COMBINE_OUTPUT_ENABLED": False,
         "COMBINE_OUTPUT_EXE":     "",

@@ -1,6 +1,6 @@
 """
 models/schism/preprocess/gen_estuary.py
-==============
+=======================================
 Step A (interactive, run once before any SCHISM Fortran steps).
 
 Does two things:
@@ -56,11 +56,6 @@ REMINDERS = """
   ║     length. Do NOT copy them from bin/ manually.         ║
   ╚══════════════════════════════════════════════════════════╝
 """
-
-
-def _already_done(paths):
-    """Return True if all paths exist and are non-empty."""
-    return all(p.exists() and p.stat().st_size > 0 for p in paths)
 
 
 def generate_estuary_gr3(hgrid_path: Path, out_path: Path,

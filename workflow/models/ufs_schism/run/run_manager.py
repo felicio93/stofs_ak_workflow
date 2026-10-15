@@ -13,8 +13,10 @@ Called by UfsSchismDriver.run(). Dispatches the enabled Phase 4 steps:
 Works for all grouping modes (monthly, ndays/weekly/daily).
 """
 
+from typing import Optional
 
-def run_phase(cfg: dict, config_dir, only: str = None):
+
+def run_phase(cfg: dict, config_dir, only: Optional[str] = None):
     def enabled(step: str) -> bool:
         if only is not None:
             return step == only

@@ -8,8 +8,6 @@
 # -----------------------------------------------------------------------------
 datm_subdir: forcing
 datm_filename_template: "datm_{YYYYMM}.nc"
-datm_time_units_template: "seconds since {YYYY}-{MM}-01 00:00:00"
-datm_fill_value: -9999.0
 dt_atmos: 720
 
 # -----------------------------------------------------------------------------
@@ -36,9 +34,7 @@ ocn_model: "schism"
 wav_model: "ww3"
 cpl_mode: "coastal"
 coupling_config: "none"
-run_type: "startup"
 case_name: "ufs.cpld"
-restart_n: 9999
 med_petlist_bounds: "0 159"
 atm_petlist_bounds: "0 159"
 ocn_petlist_bounds: "160 3353"
@@ -104,9 +100,12 @@ ww3_fix_files:
   - mesh.msh
 
 # -----------------------------------------------------------------------------
-# WW3 restart chaining between groups.
-# false: cold start for every group (safe default until restart is verified).
-# true:  symlink restart.ww3 from previous group outputs into next group
-#        run directory (enable once end-of-group restart is confirmed).
+# WW3 restart chaining between groups (read by setup_run, applied by
+# auto_hotstart.py when chain_hotstart is true).
+# true:  copy ufs.cpld.ww3.r.<date>.nc from each finished group into the
+#        next group's run directory (production default).
+# false: do NOT copy the WW3 restart; WW3 cold-starts in every group.
+#        DATM and mediator restarts are still chained.
+# If this key is missing it defaults to true.
 # -----------------------------------------------------------------------------
-chain_ww3_restart: false
+chain_ww3_restart: true

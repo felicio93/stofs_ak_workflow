@@ -1,8 +1,8 @@
 """
 diagnostics/inspect_mesh.py
-===============
+===========================
 Step 0 worker — SLURM job that reads all fix/ input files and generates
-diagnostic TIFF plots saved to M{ID}/D{ID}/D{ID}_fix/.
+diagnostic JPEG plots saved to M{ID}/D{ID}/D{ID}_fix/.
 
 One plot per file:
   hgrid.gr3         -> bathymetry
@@ -21,7 +21,7 @@ One plot per file:
                        equivalent circle, not radius)
   vertical_layers   -> computed from vgrid.in (nvrt - kbp + 1 per node)
 
-Outputs are 300 DPI TIFF files. A sentinel file (inspect_mesh.done) is
+Outputs are JPEG files. A sentinel file (inspect_mesh.done) is
 written after all plots complete.
 
 Usage (called by SLURM via workflow.diagnostics.submit_inspect_mesh):
@@ -128,7 +128,7 @@ def compute_resolution_m(lon, lat, triangles):
     equals the element area. Uses the spherical excess / Heron formula
     for accuracy over the large Alaska domain.
     """
-    from numpy import deg2rad, sin, cos, arctan2, sqrt, pi
+    from numpy import deg2rad, sin, cos, arctan2, sqrt
 
     R_earth = 6371000.0   # metres
 
@@ -231,7 +231,7 @@ def inspect_mesh(cfg: dict):
     # --- Bathymetry ---
     make_plot(
         triang, depth, "Bathymetry (m)",
-        out / "bathymetry.tiff",
+        out / "bathymetry.jpg",
         lon_min, lon_max, lat_min, lat_max,
         cmap="viridis", cbar_label="Depth (m)",
         cbar_extend_minmax=True, boundaries=boundaries)
@@ -273,7 +273,7 @@ def inspect_mesh(cfg: dict):
         vals = read_gr3_values(fpath, np_nodes)
         stem = fname.replace(".gr3", "")
         make_plot(
-            triang, vals, title, out / f"{stem}.tiff",
+            triang, vals, title, out / f"{stem}.jpg",
             lon_min, lon_max, lat_min, lat_max,
             cmap=cmap, vmin=vmin, vmax=vmax,
             cbar_ticks=ticks, boundaries=boundaries)
@@ -285,7 +285,7 @@ def inspect_mesh(cfg: dict):
         vals = read_gr3_values(estuary, np_nodes)
         make_plot(
             triang, vals, "Estuary Mask",
-            out / "estuary.tiff",
+            out / "estuary.jpg",
             lon_min, lon_max, lat_min, lat_max,
             cmap="YlOrRd", vmin=0, vmax=1,
             boundaries=boundaries)
@@ -302,7 +302,7 @@ def inspect_mesh(cfg: dict):
         make_plot(
             triang, tvd_tri,
             "TVD Property (1=TVD, 0=no TVD)",
-            out / "tvd.tiff",
+            out / "tvd.jpg",
             lon_min, lon_max, lat_min, lat_max,
             cmap="cividis", vmin=0, vmax=1,
             is_elem=True, boundaries=boundaries)
@@ -322,7 +322,7 @@ def inspect_mesh(cfg: dict):
         make_plot(
             triang, vals,
             f"Bottom Friction ({friction_found})",
-            out / "bottom_friction.tiff",
+            out / "bottom_friction.jpg",
             lon_min, lon_max, lat_min, lat_max,
             cmap="turbo", boundaries=boundaries)
     else:
@@ -338,7 +338,7 @@ def inspect_mesh(cfg: dict):
     make_frame_tripcolor(
         triang, resolution,
         "Mesh Resolution  D = 2√(Area/π)  (m)",
-        out / "mesh_resolution.tiff",
+        out / "mesh_resolution.jpg",
         cbar_label="Resolution (m)",
         cmap="turbo_r",
         is_elem=True, vmax=res_vmax,
@@ -355,7 +355,7 @@ def inspect_mesh(cfg: dict):
         make_plot(
             triang, nlayers.astype(float),
             f"Number of Vertical Layers  (nvrt={nvrt})",
-            out / "vertical_layers.tiff",
+            out / "vertical_layers.jpg",
             lon_min, lon_max, lat_min, lat_max,
             cmap="viridis",
             cbar_label="Number of active layers",

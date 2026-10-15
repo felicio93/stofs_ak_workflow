@@ -1,6 +1,6 @@
 """
 downloaders/hycom.py
-=================
+====================
 Downloads daily HYCOM data (SSH, TS, UV) via OPeNDAP/THREDDS into the
 project's raw/hycom/{ssh,ts,uv}/ directories.
 
@@ -25,13 +25,11 @@ Includes per-month data quality checks:
 """
 
 import argparse
-import os
 import shutil
-import socket
 import subprocess
 import sys
 from calendar import monthrange
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import numpy as np
@@ -435,6 +433,80 @@ def check_constant_field(nc_file: Path, product: str) -> list:
     return issues
 
 
+def fill_missing_days(vdir: Path, product: str, missing: list,
+                      max_gap: int = _MAX_CONSECUTIVE_BAD,
+                      search_days: int = 7):
+    """Fill MISSING daily files by linear interpolation in time.
+
+    vdir     : raw/hycom/{ssh,ts,uv} directory.
+    product  : 'ssh', 'ts' or 'uv' (file prefix).
+    missing  : list of datetime.date with no daily file.
+
+    A run of consecutive missing days is filled only if it is at most
+    `max_gap` days long (same rule as the corrupt-day repair) and a good
+    neighbour file exists within `search_days` on BOTH sides. Filled files
+    carry the `repaired_by_workflow` attribute and the correct time value.
+
+    Returns (filled, unfilled): two sorted lists of dates.
+    """
+    miss = sorted(set(missing))
+    miss_set = set(miss)
+
+    runs = []
+    for d in miss:
+        if runs and (d - runs[-1][-1]).days == 1:
+            runs[-1].append(d)
+        else:
+            runs.append([d])
+
+    def good(d):
+        f = vdir / f"{product}_{d.strftime('%Y%m%d')}.nc"
+        if d in miss_set or not f.exists() or f.stat().st_size == 0:
+            return None
+        return None if check_constant_field(f, product) else f
+
+    filled, unfilled = [], []
+    for run in runs:
+        if len(run) > max_gap:
+            unfilled += run
+            continue
+        prev = nxt = None
+        for k in range(1, search_days + 1):
+            d = run[0] - timedelta(days=k)
+            f = good(d)
+            if f is not None:
+                prev = (d, f)
+                break
+        for k in range(1, search_days + 1):
+            d = run[-1] + timedelta(days=k)
+            f = good(d)
+            if f is not None:
+                nxt = (d, f)
+                break
+        if prev is None or nxt is None:
+            unfilled += run
+            continue
+        for d in run:
+            out = vdir / f"{product}_{d.strftime('%Y%m%d')}.nc"
+            tmp = out.with_name(out.name + ".tmp")
+            try:
+                _interp_nc(prev[1], nxt[1], d, prev[0], nxt[0],
+                           product, tmp)
+                tmp.replace(out)
+                filled.append(d)
+                w = (d - prev[0]).days / max((nxt[0] - prev[0]).days, 1)
+                print(f"  WARNING: [{product.upper()} {d:%Y%m%d}] "
+                      f"missing day filled by interpolation between "
+                      f"{prev[1].name} (weight {1 - w:.3f}) and "
+                      f"{nxt[1].name} (weight {w:.3f}).")
+            except Exception as exc:
+                tmp.unlink(missing_ok=True)
+                print(f"  ERROR: [{product.upper()} {d:%Y%m%d}] "
+                      f"interpolation failed: {exc}")
+                unfilled.append(d)
+    return sorted(filled), sorted(unfilled)
+
+
 def _interp_nc(prev_file: Path, next_file: Path,
                bad_date: date, prev_date: date, next_date: date,
                product: str, out_file: Path):
@@ -460,7 +532,13 @@ def _interp_nc(prev_file: Path, next_file: Path,
             interp = np.where(np.isnan(interp), fv, interp)
             ds_out.variables[varname][:] = interp.astype(
                 ds_prev.variables[varname].dtype)
-        timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        # The file was copied from prev_file, so its time value is the
+        # previous day's: set it to the day being filled/repaired
+        # (hours since 2000-01-01, same convention as the daily files).
+        if "time" in ds_out.variables:
+            ds_out.variables["time"][:] = float(
+                hours_since_2000(bad_date.isoformat()))
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         ds_out.repaired_by_workflow = (
             f"interpolated from {prev_file.name} (weight {1-alpha:.3f}) "
             f"and {next_file.name} (weight {alpha:.3f}) "
@@ -647,7 +725,7 @@ def run_download(cfg: dict):
 
     products     = [("ssh", ssh_dir), ("ts", ts_dir), ("uv", uv_dir)]
     total_days   = (download_end - start).days + 1
-    prog         = ProgressTracker(total=total_days, label="HYCOM download")
+    prog         = ProgressTracker(total=total_days)
     failed_days  = []
 
     def month_key(d):
@@ -737,10 +815,12 @@ def run_download(cfg: dict):
         for d, var in failed_days:
             print(f"    {d}  {var}")
         print("  Re-run to retry (existing valid files are skipped).")
-    print(f"  All months passed the stale-data check.")
+    print(f"  Stale-data check passed for every month that was "
+          f"processed.")
     print(f"  Full command trace: {_DEBUG.path}")
     print(f"{'='*60}\n")
     _DEBUG.close()
+    return not failed_days
 
 
 if __name__ == "__main__":

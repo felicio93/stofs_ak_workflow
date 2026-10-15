@@ -38,7 +38,6 @@ import time
 from pathlib import Path
 from datetime import date
 
-from dateutil.relativedelta import relativedelta
 
 from workflow.core.config import (
     load_config,
@@ -48,6 +47,7 @@ from workflow.core.config import (
     model_dir,
 )
 from workflow.models.base import make_driver
+from typing import Optional
 
 # =============================================================================
 # Config validation
@@ -74,8 +74,8 @@ def validate_config(cfg: dict):
             sys.exit(1)
 
     try:
-        start = date.fromisoformat(cfg["start_date"])
-        end   = date.fromisoformat(cfg["end_date"])
+        start = date.fromisoformat(str(cfg["start_date"]))
+        end   = date.fromisoformat(str(cfg["end_date"]))
     except (KeyError, ValueError) as exc:
         print(f"ERROR: invalid start_date/end_date in project.yaml: {exc}")
         sys.exit(1)
@@ -84,6 +84,13 @@ def validate_config(cfg: dict):
         print(f"ERROR: start_date ({start}) must be before or equal to "
               f"end_date ({end})")
         sys.exit(1)
+
+    if grouping == "monthly" and start.day != 1:
+        print(f"WARNING: grouping is 'monthly' but start_date {start} is "
+              f"not the 1st of a month. Monthly groups span whole calendar "
+              f"months, so the first group may not line up with the "
+              f"forcing/stacks built from start_date. Consider "
+              f"start_date on day 1, or grouping: ndays.")
 
     lon_ref = str(cfg.get("lon_reference", ""))
     if lon_ref not in ("180", "360"):
@@ -111,14 +118,50 @@ def validate_config(cfg: dict):
         sys.exit(1)
 
 
-# Phase 4 steps — if enabled under --phase preprocess, warn the user.
+# Step names per phase. Used to warn when steps of another phase are enabled
+# and to validate --only.
+PREPROCESS_STEPS = {
+    "inspect_mesh",
+    "download_hycom", "download_era5", "download_glofas",
+    "aggregate_hycom", "plot_hycom", "plot_sflux",
+    "gen_datm", "plot_datm", "gen_esmf_mesh", "gen_datm_in",
+    "gen_datm_streams", "copy_fd_ufs", "copy_noahmptable",
+    "gen_model_configure", "copy_modulefiles", "gen_ufs_configure",
+    "gen_estuary", "gen_bctides", "gen_source", "gen_param",
+    "gen_sflux", "gen_hotstart", "gen_3Dth", "gen_nudge",
+    "gen_wwmbnd", "gen_wwminput", "gen_ww3_shel", "gen_ww3_ounp",
+}
 RUN_PHASE_STEPS   = {"setup_run", "submit_run"}
 POSTPROCESS_STEPS = {
-    "plot_outputs", "station_skill",
+    "plot_outputs", "plot_outputs_ww3", "station_skill", "wave_skill",
     "download_coops", "download_ndbc", "compare_sst",
     "download_sst", "diag_run_plots",
     "download_argo", "collocate_argo", "plot_argo",
+    "download_altimetry", "collocate_altimetry", "plot_altimetry",
 }
+_STEPS_BY_PHASE = {
+    "preprocess":  PREPROCESS_STEPS,
+    "run":         RUN_PHASE_STEPS,
+    "postprocess": POSTPROCESS_STEPS,
+    "all":         PREPROCESS_STEPS | RUN_PHASE_STEPS | POSTPROCESS_STEPS,
+}
+
+
+def validate_only(phase: str, only: str):
+    """Exit with a clear message when --only is not a step of `phase`."""
+    if only is None or only in _STEPS_BY_PHASE[phase]:
+        return
+    owner = [ph for ph in ("preprocess", "run", "postprocess")
+             if only in _STEPS_BY_PHASE[ph]]
+    print(f"ERROR: '{only}' is not a step of --phase {phase}.")
+    if owner:
+        print(f"  It belongs to --phase {owner[0]}:  "
+              f"stofs-ak --run --phase {owner[0]} --only {only} "
+              f"--config <cfg>")
+    else:
+        print(f"  Valid steps for --phase {phase}: "
+              f"{', '.join(sorted(_STEPS_BY_PHASE[phase]))}")
+    sys.exit(2)
 
 
 def _phase_mismatch_warnings(cfg: dict, phase: str, only: str):
@@ -146,16 +189,7 @@ def _phase_mismatch_warnings(cfg: dict, phase: str, only: str):
             print(f"  {'!'*58}\n")
 
     elif phase == "run":
-        pre_on = [s for s in cfg
-                  if s not in RUN_PHASE_STEPS | POSTPROCESS_STEPS
-                  and s not in ("project_id", "project_dir", "start_date",
-                                "end_date", "grouping", "group_ndays",
-                                "slurm", "executables", "model_type",
-                                "conda_base", "conda_envs",
-                                "lon_min", "lon_max", "lat_min", "lat_max",
-                                "lon_reference", "estuary_depth_threshold",
-                                "chain_hotstart")
-                  and cfg.get(s) is True]
+        pre_on = [s for s in PREPROCESS_STEPS if cfg.get(s) is True]
         if pre_on:
             print(f"\n  {'!'*58}")
             print("  NOTE: some preprocessing steps are enabled in steps.yaml")
@@ -246,7 +280,7 @@ def init_project(cfg: dict):
 # =============================================================================
 
 def run_workflow(cfg: dict, config_dir: Path, phase: str = "preprocess",
-                 only: str = None):
+                 only: Optional[str] = None):
     """Build the model driver from cfg['model_type'] and run one or all phases.
 
     phase is one of:
@@ -318,7 +352,12 @@ _SENTINELS = {
         "gen_nudge.done",
         "bctides.done",
         "sflux/gen_sflux.done",
-        # UFS-SCHISM specific:
+        # SCHISM+WWM / UFS-SCHISM+WW3 specific:
+        "gen_wwminput.done",
+        "gen_ww3_shel.done",
+        "gen_ww3_ounp.done",
+        # UFS-SCHISM specific (forcing/ -> cfg datm_subdir, see
+        # reset_sentinels):
         "forcing/gen_datm.done",
         "forcing/gen_esmf_mesh.done",
         "gen_datm_in.done",
@@ -339,8 +378,6 @@ _SENTINELS = {
         "plot_hycom.done",
         "plot_sflux.done",
         "plot_datm.done",
-        "plot_outputs.done",
-        "compare_sst.done",
     ],
 }
 
@@ -376,9 +413,12 @@ def reset_sentinels(cfg: dict):
             "rdir": mdir / f"R{pid}" / f"R{pid}_{gid}",
             "ddir": mdir / f"D{pid}" / f"D{pid}_{gid}",
         }
+        datm_subdir = str(cfg.get("datm_subdir", "forcing"))
         for key, names in _SENTINELS.items():
             base = dirs[key]
             for name in names:
+                if name.startswith("forcing/"):
+                    name = datm_subdir + name[len("forcing"):]
                 _remove(base / name)
 
     # --- Top-level sentinels ---
@@ -391,7 +431,10 @@ def reset_sentinels(cfg: dict):
     for subdir, sentinels in [
         (f"P{pid}_plot_outputs",   ["plot_outputs.done",   ".frames_done"]),
         (f"P{pid}_compare_sst",    ["compare_sst.done",    ".frames_done"]),
-        (f"P{pid}_station_skill",  ["station_skill.done"]),
+        (f"P{pid}_station_skill",  ["station_skill.done",
+                                    "wave_skill.done"]),
+        (f"P{pid}_plot_outputs_ww3", ["plot_outputs_ww3.done",
+                                      ".ww3_frames_done"]),
         (f"P{pid}_collocate_argo", ["collocate_argo.done", ".daily_done",
                                     "plot_argo.done"]),
         (f"P{pid}_collocate_altimetry", ["collocate_altimetry.done",
@@ -484,6 +527,8 @@ def main():
 
     cfg = load_config(config_dir)
     validate_config(cfg)
+    if args.run:
+        validate_only(args.phase, args.only)
 
     if args.init:
         init_project(cfg)

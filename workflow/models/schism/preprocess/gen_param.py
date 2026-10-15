@@ -1,6 +1,6 @@
 """
 models/schism/preprocess/gen_param.py
-============
+=====================================
 Phase 3 (interactive) — Copy fix/param.nml into each I{ID}_{group_id}/
 directory with the date and timing parameters updated for that specific group.
 
@@ -199,7 +199,7 @@ def run_gen_param(cfg: dict):
     # ------------------------------------------------------------------
     groups   = list_groups(cfg)
     grouping = cfg.get("grouping", "monthly")
-    prog     = ProgressTracker(total=len(groups), label="gen_param")
+    prog     = ProgressTracker(total=len(groups))
     failed   = []
 
     print(f"\n{'='*60}")

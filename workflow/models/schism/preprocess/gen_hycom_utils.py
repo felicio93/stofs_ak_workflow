@@ -35,9 +35,13 @@ from workflow.core.config import (
     model_dir,
     stack_ceiling,
     group_date_range,
-    get_group_ndays,
 )
 from workflow.core.slurm import SlurmSubmitter, write_manifest
+from workflow.core.slurm import (
+    DEFAULT_ACCOUNT,
+    DEFAULT_PARTITION,
+    DEFAULT_MAIL_USER,
+)
 
 TEMPLATES_DIR = (
     Path(__file__).resolve().parent.parent / "templates" / "slurm"
@@ -115,14 +119,14 @@ def _common_subs(cfg: dict, mdir: Path) -> dict:
     slurm = cfg.get("slurm", {})
     pid   = cfg["project_id"]
     return {
-        "ACCOUNT":           slurm.get("account",           "nos-surge"),
-        "PARTITION":         slurm.get("partition",         "hercules-2"),
+        "ACCOUNT":           slurm.get("account",           DEFAULT_ACCOUNT),
+        "PARTITION":         slurm.get("partition",         DEFAULT_PARTITION),
         "MEM":               slurm.get("schism_mem",        "8G"),
         "WALLTIME":          slurm.get("schism_walltime",   "02:00:00"),
         "HOTSTART_MEM":      slurm.get("hotstart_mem",      "64G"),
         "HOTSTART_WALLTIME": slurm.get("hotstart_walltime", "04:00:00"),
         "MAILUSER":          slurm.get("mail_user",
-                             "felicio.cassalho@noaa.gov"),
+                             DEFAULT_MAIL_USER),
         "FIXDIR":            str(mdir / "fix"),
         "BINDIR":            str(mdir / "bin"),
         "PID":               pid,

@@ -27,6 +27,11 @@ from workflow.core.config import list_months, model_dir
 from workflow.core.environment import env_python
 from workflow.core.slurm import SlurmSubmitter
 from workflow.models.schism.postprocess import plot_common as pc
+from workflow.core.slurm import (
+    DEFAULT_ACCOUNT,
+    DEFAULT_PARTITION,
+    DEFAULT_MAIL_USER,
+)
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates" / "slurm"
 
@@ -73,11 +78,11 @@ def submit_plot_outputs(cfg: dict, config_dir: Path) -> str:
               "Submitting GIF assembly only.")
         gif_dir.mkdir(parents=True, exist_ok=True)
         common = {
-            "ACCOUNT":    slurm.get("account",   "nos-surge"),
+            "ACCOUNT":    slurm.get("account",   DEFAULT_ACCOUNT),
             "PARTITION":  slurm.get("plot_outputs_partition",
-                                    slurm.get("partition", "hercules-2")),
+                                    slurm.get("partition", DEFAULT_PARTITION)),
             "QOS":        slurm.get("plot_outputs_qos", "windfall"),
-            "MAILUSER":   slurm.get("mail_user", "felicio.cassalho@noaa.gov"),
+            "MAILUSER":   slurm.get("mail_user", DEFAULT_MAIL_USER),
             "WORKDIR":    str(mdir),
             "LOGDIR":     str(logdir),
             "PY":         env_python(cfg, "plot_outputs", default="swf_plot"),
@@ -127,11 +132,11 @@ def submit_plot_outputs(cfg: dict, config_dir: Path) -> str:
     nnodes = math.ceil(ntasks / ranks_per_node)
 
     common = {
-        "ACCOUNT":    slurm.get("account",   "nos-surge"),
+        "ACCOUNT":    slurm.get("account",   DEFAULT_ACCOUNT),
         "PARTITION":  slurm.get("plot_outputs_partition",
-                                slurm.get("partition", "hercules-2")),
+                                slurm.get("partition", DEFAULT_PARTITION)),
         "QOS":        slurm.get("plot_outputs_qos", "windfall"),
-        "MAILUSER":   slurm.get("mail_user", "felicio.cassalho@noaa.gov"),
+        "MAILUSER":   slurm.get("mail_user", DEFAULT_MAIL_USER),
         "WORKDIR":    str(mdir),
         "LOGDIR":     str(logdir),
         "PY":         env_python(cfg, "plot_outputs", default="swf_plot"),

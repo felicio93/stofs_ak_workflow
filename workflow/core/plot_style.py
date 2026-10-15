@@ -1,6 +1,6 @@
 """
 core/plot_style.py
-=============
+==================
 Shared plotting style and helper for all workflow plot scripts.
 
 Style conventions:

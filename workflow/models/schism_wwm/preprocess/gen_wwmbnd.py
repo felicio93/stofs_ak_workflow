@@ -31,7 +31,6 @@ Usage (called interactively by SchismWwmDriver.preprocess):
 """
 
 import sys
-from pathlib import Path
 
 from workflow.core.config import model_dir
 

@@ -1,6 +1,6 @@
 """
 models/schism/postprocess/submit_collocate_argo.py
-===================================================
+==================================================
 Three-stage SLURM launcher for the parallel Argo collocation + plotting pipeline.
 
 Stage 1 — SLURM array, one task per day (throttled):
@@ -23,7 +23,6 @@ Stage 3 — serial plot_argo (--dependency=afterok on Stage 2):
 Re-run logic:
     * collocate_argo.done exists + plot_argo.done exists → skip entirely.
     * collocate_argo.done exists + plot_argo.done missing → submit Stage 3 only.
-    * .daily_done exists + collocate_argo.done missing → submit Stage 2 + 3.
     * Otherwise → submit full pipeline (Stage 1 + 2 + 3).
 """
 
@@ -33,6 +32,11 @@ from pathlib import Path
 from workflow.core.config import model_dir
 from workflow.core.environment import env_python
 from workflow.core.slurm import SlurmSubmitter
+from workflow.core.slurm import (
+    DEFAULT_ACCOUNT,
+    DEFAULT_PARTITION,
+    DEFAULT_MAIL_USER,
+)
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates" / "slurm"
 
@@ -90,7 +94,6 @@ def submit_collocate_argo(cfg: dict, config_dir: Path) -> str:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     done_all    = out_dir / "collocate_argo.done"
-    done_daily  = out_dir / ".daily_done"
     done_plot   = out_dir / "plot_argo.done"
 
     # Determine whether Stage 3 should be included.
@@ -98,9 +101,9 @@ def submit_collocate_argo(cfg: dict, config_dir: Path) -> str:
 
     slurm = cfg.get("slurm", {})
     common = {
-        "ACCOUNT":    slurm.get("account",   "nos-surge"),
-        "PARTITION":  slurm.get("partition", "hercules-2"),
-        "MAILUSER":   slurm.get("mail_user", "felicio.cassalho@noaa.gov"),
+        "ACCOUNT":    slurm.get("account",   DEFAULT_ACCOUNT),
+        "PARTITION":  slurm.get("partition", DEFAULT_PARTITION),
+        "MAILUSER":   slurm.get("mail_user", DEFAULT_MAIL_USER),
         "WORKDIR":    str(mdir),
         "LOGDIR":     str(logdir),
         "PY":         env_python(cfg, "collocate_argo", default="swf_plot"),
@@ -124,24 +127,6 @@ def submit_collocate_argo(cfg: dict, config_dir: Path) -> str:
     if not days:
         print("  collocate_argo: empty date range. Nothing to do.")
         return ""
-
-    # ---- Stage 2 only: daily files done, merge missing ----
-    if done_daily.exists():
-        print("  collocate_argo: daily collocation done (.daily_done). "
-              "Submitting merge + plot.")
-        stage2 = dict(common)
-        stage2.update({
-            "JOBNAME":  f"argo_merge_M{pid}",
-            "MEM":      slurm.get("collocate_argo_merge_mem",      "32G"),
-            "WALLTIME": slurm.get("collocate_argo_merge_walltime", "01:00:00"),
-        })
-        out2 = submitter.render_and_submit(
-            "collocate_argo_merge.sbatch", stage2,
-            logdir / "collocate_argo_merge.sbatch")
-        jid2 = SlurmSubmitter.parse_jobid(out2)
-        if do_plot:
-            return _submit_stage3(cfg, slurm, common, submitter, logdir, jid2, pid)
-        return jid2
 
     # ---- Full pipeline: Stage 1 + 2 + (optionally) 3 ----
     ntasks   = len(days)

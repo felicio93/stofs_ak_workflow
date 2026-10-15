@@ -1,6 +1,6 @@
 """
 models/ufs_schism_ww3/preprocess/gen_ww3_ounp.py
-=================================================
+================================================
 Phase 3 (interactive) — Generate ww3_ounp.inp for each group run
 directory from fix/ww3_ounp.inp template.
 
@@ -24,8 +24,6 @@ Sentinel: I{ID}_{group_id}/gen_ww3_ounp.done
 """
 
 import re
-import sys
-from pathlib import Path
 
 from workflow.core.config import (
     model_dir,
@@ -141,7 +139,7 @@ def run_gen_ww3_ounp(cfg: dict):
     print(f"{'='*60}\n")
 
     prog = ProgressTracker(
-        total=len(groups), label="gen_ww3_ounp")
+        total=len(groups))
 
     for group_id in groups:
         ok = gen_ww3_ounp_group(cfg, group_id)

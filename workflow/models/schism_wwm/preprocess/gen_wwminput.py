@@ -17,12 +17,19 @@ Group IDs are either YYYYMM (monthly) or YYYYMMDD (ndays).
 
 BEGTC / ENDTC
 -------------
-BEGTC = group start date 00:00:00
-ENDTC = group end date 00:00:00 of the NEXT day (one day past the last
-        simulation day). This gives WWM a bracket past the run end so
-        the final timestep always has a valid time window.
+BEGTC = SCHISM start time of the group, from param.nml
+        (start_year/month/day/hour)
+ENDTC = BEGTC + rnday days (the end of the SCHISM run, from param.nml)
 
-Fields substituted in the template (all others preserved verbatim):
+For the usual case (a group starting at 00:00 on its first day and
+running for the whole group) this equals group start 00:00 and the
+00:00 of the day after the last simulation day. Deriving the window from
+param.nml keeps WWM and SCHISM on the same time window even when the
+first group uses a non-zero start_day/start_hour from the template.
+
+Fields substituted in the template. The &STATION block is REBUILT from
+the station list and fixed output settings (it is not preserved verbatim);
+other namelists keep their template values for fields not listed here:
   &PROC   PROCNAME, DELTC, BEGTC, ENDTC, DMIN
   &GRID   MDC, MSC
   &INIT   LHOTR
@@ -119,24 +126,21 @@ def _wwm_time(dt_obj) -> str:
     return dt_obj.strftime('%Y%m%d.%H%M%S')
 
 
-def _compute_times(cfg: dict, group_id: str):
-    """Compute BEGTC and ENDTC for a group.
+def _compute_times(p: dict):
+    """Compute BEGTC and ENDTC from the group's param.nml values.
 
-    BEGTC = group start date 00:00:00
-    ENDTC = day AFTER group end date 00:00:00
-            (one-day bracket past the last simulation day so WWM
-             always has a valid time window at the final timestep)
+    BEGTC = start_year/month/day/hour  (SCHISM start of the group)
+    ENDTC = BEGTC + rnday days         (SCHISM end of the group)
 
+    `p` is the dict returned by read_param_nml().
     Returns (begtc_str, endtc_str) as WWM-formatted strings.
     """
     from datetime import datetime
-    gstart, gend = group_date_range(cfg, group_id)
 
-    begtc_dt = datetime(gstart.year, gstart.month, gstart.day,
-                        0, 0, 0)
-    # One calendar day past the last simulation day
-    endtc_dt = datetime(gend.year, gend.month, gend.day,
-                        0, 0, 0) + timedelta(days=1)
+    begtc_dt = (datetime(p['start_year'], p['start_month'],
+                         p['start_day'], 0, 0, 0)
+                + timedelta(hours=float(p['start_hour'])))
+    endtc_dt = begtc_dt + timedelta(days=float(p['rnday']))
 
     return _wwm_time(begtc_dt), _wwm_time(endtc_dt)
 
@@ -279,7 +283,13 @@ def _substitute_timed_field(text: str, section: str,
         return _substitute_field(text, section, field, new_value)
     total = _count_occurrences(text, field)
     if occ > total:
-        return text
+        # Sections are matched by position, so a template that lacks a
+        # section would silently shift/skip substitutions.
+        raise ValueError(
+            f"template has only {total} '{field}' entr"
+            f"{'y' if total == 1 else 'ies'} but &{section.upper()} "
+            f"is expected to be #{occ} in the section order "
+            f"{', '.join(_WWM_SECTION_ORDER)}; check fix/wwminput.nml.")
     new_text, ok = _substitute_field_nth(
         text, field, new_value, occ)
     if not ok:
@@ -544,7 +554,7 @@ def gen_wwminput_group(cfg: dict, group_id: str,
     except SystemExit:
         return False
 
-    begtc_str, endtc_str = _compute_times(cfg, group_id)
+    begtc_str, endtc_str = _compute_times(p)
     gstart, gend         = group_date_range(cfg, group_id)
     ndays                = get_group_ndays(cfg, group_id)
 
@@ -567,9 +577,13 @@ def gen_wwminput_group(cfg: dict, group_id: str,
 
     # --- Template substitution ---
     text = template_path.read_text(errors='ignore')
-    text = _apply_substitutions(
-        text, p, begtc_str, endtc_str,
-        stations, cfg, group_id, is_first_group)
+    try:
+        text = _apply_substitutions(
+            text, p, begtc_str, endtc_str,
+            stations, cfg, group_id, is_first_group)
+    except ValueError as exc:
+        print(f"  ERROR {group_id}: {exc}")
+        return False
 
     # --- Write output ---
     out_path.write_text(text)
@@ -587,15 +601,15 @@ def run_gen_wwminput(cfg: dict):
     """Generate wwminput.nml for every group in the project date range."""
     groups   = list_groups(cfg)
     grouping = cfg.get("grouping", "monthly")
-    prog     = ProgressTracker(total=len(groups),
-                               label='gen_wwminput')
+    prog     = ProgressTracker(total=len(groups))
     failed   = []
 
     print(f"\n{'='*60}")
     print(f"  gen_wwminput: {groups[0]} -> {groups[-1]}  "
           f"({len(groups)} group(s), grouping={grouping})")
     print(f"  Template: fix/wwminput.nml")
-    print(f"  ENDTC = group end + 1 day (WWM read-ahead bracket)")
+    print(f"  BEGTC/ENDTC from each group's param.nml "
+          f"(start time, start + rnday)")
     print(f"{'='*60}\n")
 
     for i, group_id in enumerate(groups):

@@ -215,7 +215,7 @@ if __name__ == "__main__":
         description="Plot DATM debug GIFs for one group")
     parser.add_argument("--config", required=True)
     parser.add_argument(
-        "--month", required=True,
+        "--group", "--month", dest="month", required=True,
         help="Group ID (YYYYMM for monthly or YYYYMMDD for ndays)")
     args = parser.parse_args()
     cfg = load_config(Path(args.config))

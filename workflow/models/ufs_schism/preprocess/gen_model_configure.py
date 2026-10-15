@@ -1,6 +1,6 @@
 """
 models/ufs_schism/preprocess/gen_model_configure.py
-====================================================
+===================================================
 Generate model_configure file for one group.
 
 Reads fix/model_configure as a template and substitutes start date,

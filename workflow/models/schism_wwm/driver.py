@@ -10,13 +10,15 @@ adding WWM-specific steps:
   - wave_skill  : WWM station output vs NDBC wave observations
 """
 
-from workflow.models.schism.driver import SchismDriver
+from workflow.models.schism.driver import SchismDriver, _na
+from typing import Optional
 
 
 class SchismWwmDriver(SchismDriver):
     name = "SCHISM+WWM"
+    supports_wwm_steps = True
 
-    def preprocess(self, only: str = None):
+    def preprocess(self, only: Optional[str] = None):
         slurm_jobs = super().preprocess(only=only)
 
         if self.enabled("gen_wwmbnd", only):
@@ -39,7 +41,10 @@ class SchismWwmDriver(SchismDriver):
 
         return slurm_jobs
 
-    def run(self, only: str = None):
+    def run(self, only: Optional[str] = None):
+        if self.cfg.get("diag_run_plots", False):
+            _na("diag_run_plots",
+                "not supported for model_type=schism_wwm; ignored")
         if self.enabled("setup_run", only):
             print("[STEP] setup_run")
             from workflow.models.schism_wwm.run.setup_run import (
@@ -58,7 +63,7 @@ class SchismWwmDriver(SchismDriver):
         else:
             print("[SKIP] submit_run")
 
-    def postprocess(self, only: str = None):
+    def postprocess(self, only: Optional[str] = None):
         # Use WWM-specific postprocess dispatcher which inherits
         # all SCHISM steps and adds wave_skill.
         from workflow.models.schism_wwm.postprocess import (

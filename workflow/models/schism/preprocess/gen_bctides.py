@@ -1,6 +1,6 @@
 """
 models/schism/preprocess/gen_bctides.py
-==============
+=======================================
 Step: Generate bctides.in for each group (interactive, swf_main).
 
 Works for all grouping modes (monthly, ndays/weekly/daily).
@@ -14,7 +14,6 @@ from pathlib import Path
 import numpy as np
 
 from workflow.core.config import (
-    load_config,
     list_groups,
     model_dir,
     ProgressTracker,
@@ -189,7 +188,7 @@ def run_gen_bctides(cfg: dict):
               f"{len(flags)} flag sets in schism.yaml")
         sys.exit(1)
 
-    prog   = ProgressTracker(total=len(groups), label="gen_bctides")
+    prog   = ProgressTracker(total=len(groups))
     failed = []
 
     for group_id in groups:

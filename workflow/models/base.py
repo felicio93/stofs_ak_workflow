@@ -6,6 +6,7 @@ Abstract base class for all model drivers.
 
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import Optional
 
 
 class ModelDriver(ABC):
@@ -17,21 +18,21 @@ class ModelDriver(ABC):
         self.cfg = cfg
         self.config_dir = Path(config_dir)
 
-    def enabled(self, step: str, only: str = None) -> bool:
+    def enabled(self, step: str, only: Optional[str] = None) -> bool:
         if only is not None:
             return step == only
         return bool(self.cfg.get(step, False))
 
     @abstractmethod
-    def preprocess(self, only: str = None):
+    def preprocess(self, only: Optional[str] = None):
         raise NotImplementedError
 
     @abstractmethod
-    def run(self, only: str = None):
+    def run(self, only: Optional[str] = None):
         raise NotImplementedError
 
     @abstractmethod
-    def postprocess(self, only: str = None):
+    def postprocess(self, only: Optional[str] = None):
         raise NotImplementedError
 
 

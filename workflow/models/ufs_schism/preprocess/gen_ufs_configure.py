@@ -1,6 +1,6 @@
 """
 models/ufs_schism/preprocess/gen_ufs_configure.py
-==================================================
+=================================================
 Generate ufs.configure file for one group.
 
 Reads fix/ufs.configure as a template, substitutes coupling parameters

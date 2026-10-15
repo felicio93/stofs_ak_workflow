@@ -17,6 +17,11 @@ from pathlib import Path
 from workflow.core.config import list_groups, model_dir
 from workflow.core.environment import env_python
 from workflow.core.slurm import SlurmSubmitter, write_manifest
+from workflow.core.slurm import (
+    DEFAULT_ACCOUNT,
+    DEFAULT_PARTITION,
+    DEFAULT_MAIL_USER,
+)
 
 TEMPLATES_DIR = (
     Path(__file__).resolve().parent.parent / "templates" / "slurm"
@@ -26,10 +31,10 @@ TEMPLATES_DIR = (
 def _common(cfg: dict) -> dict:
     slurm = cfg.get("slurm", {})
     return {
-        "ACCOUNT":   slurm.get("account",   "nos-surge"),
-        "PARTITION": slurm.get("partition", "hercules-2"),
+        "ACCOUNT":   slurm.get("account",   DEFAULT_ACCOUNT),
+        "PARTITION": slurm.get("partition", DEFAULT_PARTITION),
         "MAILUSER":  slurm.get("mail_user",
-                               "felicio.cassalho@noaa.gov"),
+                               DEFAULT_MAIL_USER),
     }
 
 

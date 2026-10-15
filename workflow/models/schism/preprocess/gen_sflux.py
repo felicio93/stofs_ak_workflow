@@ -1,6 +1,6 @@
 """
 models/schism/preprocess/gen_sflux.py
-============
+=====================================
 SLURM worker — converts one group of raw ERA5 data into SCHISM sflux files.
 
 For group group_id, reads raw/era5/YYYY/era5_YYYYMM.nc (one or more monthly

@@ -1,6 +1,6 @@
 """
 models/ufs_schism_ww3/postprocess/collocate_altimetry.py
-=========================================================
+========================================================
 Phase 5 step "collocate_altimetry" for UFS-SCHISM+WW3.
 
 Extends the SCHISM+WWM altimetry collocation by replacing the
@@ -39,11 +39,14 @@ from workflow.models.schism_wwm.postprocess.collocate_altimetry import (
     _daily_dir,
     _altimetry_obs_dir,
     _find_merged_sat_file,
-    _window,
     _build_day_list,
     _to_180,
-    _write_clean,
     run_merge,
+)
+from workflow.core.slurm import (
+    DEFAULT_ACCOUNT,
+    DEFAULT_PARTITION,
+    DEFAULT_MAIL_USER,
 )
 
 
@@ -291,10 +294,10 @@ def run_collocate_altimetry(cfg: dict,
     )
 
     common = {
-        "ACCOUNT":    slurm.get("account",   "nos-surge"),
-        "PARTITION":  slurm.get("partition", "hercules-2"),
+        "ACCOUNT":    slurm.get("account",   DEFAULT_ACCOUNT),
+        "PARTITION":  slurm.get("partition", DEFAULT_PARTITION),
         "MAILUSER":   slurm.get("mail_user",
-                                "felicio.cassalho@noaa.gov"),
+                                DEFAULT_MAIL_USER),
         "WORKDIR":    str(mdir),
         "LOGDIR":     str(logdir),
         "PY":         env_python(cfg, "collocate_altimetry",

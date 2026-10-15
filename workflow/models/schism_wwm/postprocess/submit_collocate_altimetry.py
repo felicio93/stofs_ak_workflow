@@ -1,6 +1,6 @@
 """
 models/schism_wwm/postprocess/submit_collocate_altimetry.py
-============================================================
+===========================================================
 Two-stage SLURM launcher for the satellite altimetry collocation pipeline.
 Mirrors submit_collocate_argo.py exactly.
 
@@ -28,6 +28,11 @@ from pathlib import Path
 from workflow.core.config import model_dir
 from workflow.core.environment import env_python
 from workflow.core.slurm import SlurmSubmitter
+from workflow.core.slurm import (
+    DEFAULT_ACCOUNT,
+    DEFAULT_PARTITION,
+    DEFAULT_MAIL_USER,
+)
 
 TEMPLATES_DIR = (
     Path(__file__).resolve().parent.parent
@@ -100,12 +105,12 @@ def submit_collocate_altimetry(cfg: dict,
     slurm  = cfg.get("slurm", {})
     common = {
         "ACCOUNT":    slurm.get("account",
-                                "nos-surge"),
+                                DEFAULT_ACCOUNT),
         "PARTITION":  slurm.get("partition",
-                                "hercules-2"),
+                                DEFAULT_PARTITION),
         "MAILUSER":   slurm.get(
             "mail_user",
-            "felicio.cassalho@noaa.gov"),
+            DEFAULT_MAIL_USER),
         "WORKDIR":    str(mdir),
         "LOGDIR":     str(logdir),
         "PY":         env_python(

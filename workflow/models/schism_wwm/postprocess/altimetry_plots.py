@@ -1,6 +1,6 @@
 """
 models/schism_wwm/postprocess/altimetry_plots.py
-=================================================
+================================================
 Phase 5 step "plot_altimetry" (interactive; runs in the swf_plot env).
 
 Produces seven diagnostic plots from the collocated altimetry NetCDF

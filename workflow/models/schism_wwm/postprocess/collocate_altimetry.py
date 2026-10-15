@@ -1,6 +1,6 @@
 """
 models/schism_wwm/postprocess/collocate_altimetry.py
-=====================================================
+====================================================
 Phase 5 step "collocate_altimetry".
 
 Two-stage SLURM design (parallel per-day array -> serial merge),
@@ -32,7 +32,6 @@ Works for all grouping modes (monthly, ndays/weekly/daily).
 
 import argparse
 import os
-import sys
 from datetime import date, timedelta
 from pathlib import Path
 

@@ -202,7 +202,8 @@ def extract_layer(da, layer_spec):
 
     layer_spec:
       "surface" -> last (shallowest) sigma level (-1)
-      "bottom"  -> deepest wet sigma level per node
+      "bottom"  -> deepest wet level per node (first valid level; levels
+                   below the bottom are fill values)
       int       -> explicit 0-based sigma index
     """
     import numpy as np
@@ -224,11 +225,16 @@ def extract_layer(da, layer_spec):
         first = np.take(arr, 0, axis=time_ax)
         lax   = level_ax - (1 if time_ax < level_ax else 0)
         nlev  = first.shape[lax]
-        valid = np.isfinite(first)
+        # Levels below the local bottom are filled (NaN once decoded, or a
+        # large fill value). SCHISM stores levels bottom -> surface, so the
+        # bottom wet level is the FIRST valid one along the level axis.
+        valid = (np.isfinite(first)
+                 & (first > -9990.0) & (first < 1.0e30))
         idx_shape = [1] * first.ndim
         idx_shape[lax] = nlev
         level_idx = np.arange(nlev).reshape(idx_shape)
-        deepest = np.where(valid, level_idx, -1).max(axis=lax).clip(0)
+        deepest = np.where(valid, level_idx, nlev).min(axis=lax)
+        deepest = np.minimum(deepest, nlev - 1)
         nt = arr.shape[time_ax]
         return np.stack(
             [np.take_along_axis(

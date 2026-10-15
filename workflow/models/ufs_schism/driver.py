@@ -17,10 +17,12 @@ on their output. A wait_for_slurm_jobs barrier is inserted between the
 two groups so the interactive steps never race against the SLURM jobs.
 """
 
+import sys
 import time
 
 from workflow.models.base import ModelDriver
 from workflow.core.environment import DtnRequiredError
+from typing import Optional
 
 
 def _na(step: str, reason: str):
@@ -30,7 +32,7 @@ def _na(step: str, reason: str):
 class UfsSchismDriver(ModelDriver):
     name = "UFS_SCHISM"
 
-    def preprocess(self, only: str = None):
+    def preprocess(self, only: Optional[str] = None):
         from workflow.core.config import list_groups
         from workflow.core.slurm import wait_for_slurm_jobs
 
@@ -38,6 +40,7 @@ class UfsSchismDriver(ModelDriver):
         en = lambda step: self.enabled(step, only)
 
         _slurm_jobs = []
+        _download_failed = []
 
         # =====================================================================
         # Phase 0
@@ -60,7 +63,8 @@ class UfsSchismDriver(ModelDriver):
             try:
                 print("[STEP] download_hycom")
                 from workflow.downloaders.hycom import run_download
-                run_download(cfg)
+                if run_download(cfg) is False:
+                    _download_failed.append("download_hycom")
             except DtnRequiredError as exc:
                 _na("download_hycom",
                     f"DTN required — run separately on the "
@@ -74,7 +78,8 @@ class UfsSchismDriver(ModelDriver):
                 from workflow.downloaders.era5 import (
                     run_download_era5,
                 )
-                run_download_era5(cfg)
+                if run_download_era5(cfg) is False:
+                    _download_failed.append("download_era5")
             except DtnRequiredError as exc:
                 _na("download_era5",
                     f"DTN required — run separately on the "
@@ -88,13 +93,24 @@ class UfsSchismDriver(ModelDriver):
                 from workflow.downloaders.glofas import (
                     run_download_glofas,
                 )
-                run_download_glofas(cfg)
+                if run_download_glofas(cfg) is False:
+                    _download_failed.append("download_glofas")
             except DtnRequiredError as exc:
                 _na("download_glofas",
                     f"DTN required — run separately on the "
                     f"DTN.\n         {exc}")
         else:
             print("[SKIP] download_glofas")
+
+        if _download_failed:
+            print(f"\n{'='*60}")
+            print(f"  ERROR: download step(s) finished with failures: "
+                  f"{', '.join(_download_failed)}")
+            print("  Not continuing to dependent steps. Re-run the "
+                  "download (valid files are skipped) until it "
+                  "completes cleanly.")
+            print(f"{'='*60}\n")
+            sys.exit(1)
 
         # =====================================================================
         # Phase 2: SCHISM forcing
@@ -358,15 +374,24 @@ class UfsSchismDriver(ModelDriver):
         for step in ("gen_wwmbnd", "gen_wwminput"):
             if en(step):
                 _na(step,
-                    "SCHISM+WWM only, skipped for "
-                    "model_type=ufs_schism")
+                    f"SCHISM+WWM only, skipped for "
+                    f"model_type={cfg.get('model_type', 'ufs_schism')}")
 
         return _slurm_jobs
 
     # -------------------------------------------------------------------------
     # Phase 4
     # -------------------------------------------------------------------------
-    def run(self, only: str = None):
+    def _warn_no_run_diagnostics(self):
+        """In-run diagnostic plots (diag_run_plots) are not supported
+        for UFS-based models (old I/O partitions are combined only at
+        the end of each group)."""
+        if self.cfg.get("diag_run_plots", False):
+            _na("diag_run_plots",
+                "not supported for UFS-based models; ignored")
+
+    def run(self, only: Optional[str] = None):
+        self._warn_no_run_diagnostics()
         from workflow.models.ufs_schism.run.run_manager import (
             run_phase,
         )
@@ -375,7 +400,7 @@ class UfsSchismDriver(ModelDriver):
     # -------------------------------------------------------------------------
     # Phase 5
     # -------------------------------------------------------------------------
-    def postprocess(self, only: str = None):
+    def postprocess(self, only: Optional[str] = None):
         from workflow.models.schism.postprocess import (
             postprocess_phase,
         )

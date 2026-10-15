@@ -1,6 +1,6 @@
 """
 models/schism/preprocess/aggregate_hycom.py
-==================
+===========================================
 Step 2 (interactive, runs in swf_main on any node -- no internet needed).
 
 For each group in the date range, concatenate the daily raw HYCOM files into
@@ -31,7 +31,6 @@ HYCOM files, which exist because download_hycom fetches 6 days past end_date.
 - Warns (but proceeds) when days are missing from a group.
 """
 
-import os
 import shutil
 import subprocess
 import sys
@@ -128,12 +127,39 @@ def daily_files_for_stack(var_dir: Path, prefix: str,
     return present, missing
 
 
+def fill_group_gaps(var_dir: Path, prefix: str, cfg: dict,
+                    group_id: str, present, missing):
+    """Interpolate missing daily files that fall INSIDE the group's own
+    dates (group start..end). Days only in the read-ahead pad after the
+    project end are left alone (warning only).
+
+    Returns (present, missing, unfilled_dates): the recomputed file lists
+    and the group-internal days that could not be filled.
+    """
+    from workflow.downloaders.hycom import fill_missing_days
+
+    gstart, gend = group_date_range(cfg, group_id)
+    inside = []
+    for flat in missing:
+        d = date(int(flat[:4]), int(flat[4:6]), int(flat[6:8]))
+        if gstart <= d <= gend:
+            inside.append(d)
+    if not inside:
+        return present, missing, []
+
+    filled, unfilled = fill_missing_days(var_dir, prefix, inside)
+    if filled:
+        present, missing = daily_files_for_stack(
+            var_dir, prefix, cfg, group_id)
+    return present, missing, unfilled
+
+
 def report_missing(var, group_id, missing):
     if missing:
-        ceiling = len(missing)   # just for labelling
         print(f"  WARNING [{var} {group_id}]: {len(missing)} missing day(s) "
               f"within the stack window: {', '.join(missing)}")
-        print(f"           Proceeding with available days only.")
+        print(f"           (read-ahead pad days beyond the project end "
+              f"are not filled; days inside the group are.)")
 
 
 def aggregate_ssh(present, out_file: Path, tmp_dir: Path) -> bool:
@@ -230,7 +256,7 @@ def run_aggregate(cfg: dict):
     print(f"{'='*60}\n")
 
     failures = []
-    prog     = ProgressTracker(total=len(groups), label="HYCOM aggregation")
+    prog     = ProgressTracker(total=len(groups))
 
     for group_id in groups:
         idir = mdir / f"I{pid}" / f"I{pid}_{group_id}"
@@ -251,8 +277,16 @@ def run_aggregate(cfg: dict):
         else:
             present, missing = daily_files_for_stack(
                 ssh_dir, "ssh", cfg, group_id)
+            present, missing, unfilled = fill_group_gaps(
+                ssh_dir, "ssh", cfg, group_id, present, missing)
             report_missing("ssh", group_id, missing)
             try:
+                if unfilled:
+                    raise RuntimeError(
+                        "missing day(s) inside the group could not be "
+                        "filled (gap > 3 days or no good neighbours): "
+                        + ", ".join(d.strftime("%Y%m%d")
+                                    for d in unfilled))
                 aggregate_ssh(present, ssh_out, tmp_dir)
             except Exception as exc:
                 print(f"  ERROR: SSH aggregation failed for {group_id}: {exc}")
@@ -264,8 +298,16 @@ def run_aggregate(cfg: dict):
         else:
             present, missing = daily_files_for_stack(
                 uv_dir, "uv", cfg, group_id)
+            present, missing, unfilled = fill_group_gaps(
+                uv_dir, "uv", cfg, group_id, present, missing)
             report_missing("uv", group_id, missing)
             try:
+                if unfilled:
+                    raise RuntimeError(
+                        "missing day(s) inside the group could not be "
+                        "filled (gap > 3 days or no good neighbours): "
+                        + ", ".join(d.strftime("%Y%m%d")
+                                    for d in unfilled))
                 aggregate_uv(present, uv_out, tmp_dir)
             except Exception as exc:
                 print(f"  ERROR: UV aggregation failed for {group_id}: {exc}")
@@ -277,8 +319,16 @@ def run_aggregate(cfg: dict):
         else:
             present, missing = daily_files_for_stack(
                 ts_dir, "ts", cfg, group_id)
+            present, missing, unfilled = fill_group_gaps(
+                ts_dir, "ts", cfg, group_id, present, missing)
             report_missing("ts", group_id, missing)
             try:
+                if unfilled:
+                    raise RuntimeError(
+                        "missing day(s) inside the group could not be "
+                        "filled (gap > 3 days or no good neighbours): "
+                        + ", ".join(d.strftime("%Y%m%d")
+                                    for d in unfilled))
                 aggregate_ts(present, ts_out, tmp_dir)
             except Exception as exc:
                 print(f"  ERROR: TS aggregation failed for {group_id}: {exc}")

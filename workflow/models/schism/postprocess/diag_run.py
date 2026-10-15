@@ -160,7 +160,7 @@ def _maybe_write_stack_marker(cfg, ym: str, stack: int, ddir: Path):
 def main():
     ap = argparse.ArgumentParser(description="SCHISM per-stack diagnostic frames")
     ap.add_argument("--config", required=True)
-    ap.add_argument("--month",  required=True)
+    ap.add_argument("--group", "--month", dest="month", required=True)
     ap.add_argument("--stack",  required=True, type=int)
     ap.add_argument("--var",    required=True,
                     help="Variable name to plot (one per SLURM array task)")

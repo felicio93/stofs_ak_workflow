@@ -73,22 +73,14 @@ WAVE_VAR_PLAN["TM02"] = WAVE_VAR_PLAN["TM01"]
 
 WAVE_TOKENS = set(WAVE_VAR_PLAN.keys())
 
-WIND_COMPONENTS = [
-    ("windx", 3, "u"),
-    ("windy", 4, "v"),
-]
-
-NDBC_COL_MAP = {
-    "T":            "WTMP",
-    "TEMP":         "WTMP",
-    "AIR_PRESSURE": "PRES",
-    "AIRPRESSURE":  "PRES",
-    "PATM":         "PRES",
-    "PRESSURE":     "PRES",
+# NDBC missing-value sentinel per wave column (99 is a VALID direction in
+# degrees, so sentinels must be applied per column, not globally).
+NDBC_WAVE_MISSING = {
+    "WVHT": 99.0,
+    "APD":  99.0,
+    "DPD":  99.0,
+    "MWD":  999.0,
 }
-
-# NDBC missing value sentinels for wave variables
-NDBC_WAVE_MISSING = {99.0, 999.0, 9999.0, 99.00, 999.00}
 
 
 # ---------------------------------------------------------------------------
@@ -254,9 +246,9 @@ def _load_ndbc_wave_var(cfg: dict, station_id: str,
 
     s = pd.to_numeric(df[ndbc_col], errors="coerce")
 
-    for mv in NDBC_WAVE_MISSING:
+    mv = NDBC_WAVE_MISSING.get(ndbc_col)
+    if mv is not None:
         s = s.where(s != mv, other=np.nan)
-
     s = s.where(s < 900, other=np.nan)
 
     return s.loc[start_str:end_str].dropna()
@@ -266,16 +258,53 @@ def _load_ndbc_wave_var(cfg: dict, station_id: str,
 # Metrics
 # ---------------------------------------------------------------------------
 
+def _circular_mean_deg(x: pd.Series) -> float:
+    """Circular (vector) mean of angles in degrees, in [0, 360)."""
+    rad = np.deg2rad(x.dropna().values)
+    if rad.size == 0:
+        return float("nan")
+    return float(np.rad2deg(np.arctan2(np.sin(rad).mean(),
+                                       np.cos(rad).mean())) % 360.0)
+
+
+def _wrap180(d):
+    """Wrap angle differences (deg) to [-180, 180)."""
+    return (d + 180.0) % 360.0 - 180.0
+
+
 def _metrics(obs: pd.Series, mod: pd.Series,
-             resample_rule: str):
-    """Compute bias, RMSE, R² after resampling."""
-    o  = obs.resample(resample_rule).mean()
-    m  = mod.resample(resample_rule).mean()
+             resample_rule: str, circular: bool = False):
+    """Compute bias, RMSE, R² after resampling.
+
+    circular=True is for directions in degrees: resampling uses the
+    circular mean, differences are wrapped to [-180, 180) and R² is the
+    squared circular-circular correlation coefficient.
+    """
+    if circular:
+        o = obs.resample(resample_rule).apply(_circular_mean_deg)
+        m = mod.resample(resample_rule).apply(_circular_mean_deg)
+    else:
+        o = obs.resample(resample_rule).mean()
+        m = mod.resample(resample_rule).mean()
     df = pd.concat([o, m], axis=1).dropna()
     df.columns = ["obs", "mod"]
 
     if len(df) < 2:
         return None
+
+    if circular:
+        diff = _wrap180(df["mod"] - df["obs"])
+        bias = float(np.mean(diff))
+        rmse = float(np.sqrt(np.mean(diff ** 2)))
+        ao = np.deg2rad(df["obs"].values)
+        am = np.deg2rad(df["mod"].values)
+        so = np.sin(ao - np.arctan2(np.sin(ao).mean(), np.cos(ao).mean()))
+        sm = np.sin(am - np.arctan2(np.sin(am).mean(), np.cos(am).mean()))
+        denom = np.sqrt((so ** 2).sum() * (sm ** 2).sum())
+        r2 = (float(((so * sm).sum() / denom) ** 2)
+              if denom > 1e-8 else float("nan"))
+        mean_obs = _circular_mean_deg(df["obs"])
+        return len(df), mean_obs, bias, rmse, r2
 
     bias  = float(np.mean(df["mod"] - df["obs"]))
     rmse  = float(np.sqrt(np.mean((df["mod"] - df["obs"]) ** 2)))
@@ -421,7 +450,8 @@ def run_wave_skill(cfg: dict, config_dir=None):
                 continue
 
             # ---- Compute metrics ----
-            res = _metrics(obs, mod, resample)
+            res = _metrics(obs, mod, resample,
+                           circular=(unit == "deg"))
             if res is None:
                 print(f"    {T}: fewer than 2 overlapping "
                       f"points, skipping.")

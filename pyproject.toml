@@ -49,3 +49,11 @@ include = ["workflow*"]
   "templates/slurm/*.sbatch",
   "templates/config/*.yaml",
 ]
+"workflow.models.schism_wwm" = [
+  "templates/slurm/*.sbatch",
+  "templates/config/*.yaml",
+]
+"workflow.models.ufs_schism_ww3" = [
+  "templates/slurm/*.sbatch",
+  "templates/config/*.yaml",
+]

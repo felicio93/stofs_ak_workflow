@@ -16,6 +16,11 @@ from pathlib import Path
 from workflow.core.config import model_dir
 from workflow.core.environment import env_python
 from workflow.core.slurm import SlurmSubmitter
+from workflow.core.slurm import (
+    DEFAULT_ACCOUNT,
+    DEFAULT_PARTITION,
+    DEFAULT_MAIL_USER,
+)
 
 # SLURM templates for SCHISM live under the schism model package.
 TEMPLATES_DIR = (
@@ -46,11 +51,12 @@ def submit_inspect_mesh(cfg: dict, config_dir: Path) -> str:
     subs  = {
         "WORKDIR":    str(mdir),
         "JOBNAME":    f"inspect_M{pid}",
-        "ACCOUNT":    slurm.get("account",          "nos-surge"),
-        "PARTITION":  slurm.get("partition",         "hercules-2"),
+        "ACCOUNT":    slurm.get("account",          DEFAULT_ACCOUNT),
+        "PARTITION":  slurm.get("partition",         DEFAULT_PARTITION),
         "MEM":        slurm.get("inspect_mem",       "16G"),
         "WALLTIME":   slurm.get("inspect_walltime",  "00:30:00"),
         "LOGDIR":     str(logdir),
+        "MAILUSER":   slurm.get("mail_user", DEFAULT_MAIL_USER),
         "PY":         py,
         "SCRIPT":     "-m workflow.diagnostics.inspect_mesh",
         "CONFIG_DIR": str(config_dir),

@@ -1,6 +1,6 @@
 """
 models/ufs_schism_ww3/postprocess/plot_outputs_ww3.py
-======================================================
+=====================================================
 Phase 5 step "plot_outputs_ww3" — full-run WW3 field GIFs from
 *.out_grd.ww3.nc files written by WW3 in the run directory root.
 
@@ -38,11 +38,7 @@ from pathlib import Path
 
 import numpy as np
 
-from workflow.core.config import (
-    load_config,
-    list_groups,
-    model_dir,
-)
+from workflow.core.config import load_config, model_dir
 
 
 # =============================================================================

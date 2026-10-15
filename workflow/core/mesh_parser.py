@@ -1,6 +1,6 @@
 """
 core/mesh_parser.py
-==============
+===================
 Shared SCHISM gr3 mesh parsing utilities.
 
 All functions in this module work with any valid .gr3 file — hgrid.gr3,

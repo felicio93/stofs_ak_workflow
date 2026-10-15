@@ -77,6 +77,12 @@ def normalize_grouping(cfg: dict) -> dict:
     canonical, ndays = _GROUPING_ALIASES[raw]
     cfg["grouping"] = canonical
 
+    if (ndays is not None and cfg.get("group_ndays") is not None
+            and str(cfg["group_ndays"]) != str(ndays)):
+        print(f"WARNING: grouping '{raw}' implies group_ndays={ndays}; "
+              f"the group_ndays={cfg['group_ndays']} in project.yaml is "
+              f"ignored.")
+
     if canonical == "ndays":
         if ndays is not None:
             # alias supplied the value (daily/weekly/biweekly)
@@ -235,15 +241,14 @@ class ProgressTracker:
 
     Usage::
 
-        prog = ProgressTracker(total=len(items), label="HYCOM download")
+        prog = ProgressTracker(total=len(items))
         for it in items:
             ... do work ...
             prog.update(str(it))
     """
 
-    def __init__(self, total: int, label: str = "progress"):
+    def __init__(self, total: int):
         self.total = max(1, int(total))
-        self.label = label
         self.done  = 0
         self.start = time.time()
 
@@ -304,6 +309,21 @@ def load_config(config_dir: Path) -> dict:
     code sees only 'monthly' or 'ndays'.
     """
     cfg = {}
+    nested_from = {}    # nested-block key -> file that defined it
+
+    def _merge(data, fname):
+        # dict.update() replaces nested blocks (slurm:, executables:, ...)
+        # wholesale, so warn when two files define the same block.
+        for key, val in data.items():
+            if (isinstance(val, dict) and key in nested_from
+                    and nested_from[key] != fname):
+                print(f"WARNING: '{key}:' is defined in both "
+                      f"{nested_from[key]} and {fname}; the one in {fname} "
+                      f"replaces the other (blocks are not merged).")
+            if isinstance(val, dict):
+                nested_from[key] = fname
+        cfg.update(data)
+
     for fname in BASE_CONFIG_FILES:
         fpath = config_dir / fname
         if not fpath.exists():
@@ -312,7 +332,7 @@ def load_config(config_dir: Path) -> dict:
         with open(fpath) as f:
             data = yaml.safe_load(f)
             if data:
-                cfg.update(data)
+                _merge(data, fname)
 
     # Active model YAML (schism.yaml / schism_wwm.yaml / ufs_schism.yaml …)
     model_type  = str(cfg.get("model_type", "schism")).lower()
@@ -321,7 +341,11 @@ def load_config(config_dir: Path) -> dict:
         with open(model_fpath) as f:
             data = yaml.safe_load(f)
             if data:
-                cfg.update(data)
+                _merge(data, model_fpath.name)
+    else:
+        print(f"NOTE: model config {model_fpath.name} not found in "
+              f"{config_dir}; model-specific defaults will be used. "
+              f"(Check model_type: '{model_type}'.)")
 
     # Optional Phase-5 settings
     pp_fpath = config_dir / "postprocess.yaml"
@@ -329,7 +353,13 @@ def load_config(config_dir: Path) -> dict:
         with open(pp_fpath) as f:
             data = yaml.safe_load(f)
             if data:
-                cfg.update(data)
+                _merge(data, pp_fpath.name)
+
+    # YAML parses an unquoted 2025-09-01 as a date object; the rest of the
+    # code expects ISO strings.
+    for key in ("start_date", "end_date"):
+        if isinstance(cfg.get(key), (date, datetime)):
+            cfg[key] = cfg[key].strftime("%Y-%m-%d")
 
     # Normalise grouping aliases to canonical internal form.
     normalize_grouping(cfg)

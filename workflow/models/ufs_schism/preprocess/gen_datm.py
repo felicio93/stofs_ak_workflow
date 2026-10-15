@@ -1,6 +1,6 @@
 """
 models/ufs_schism/preprocess/gen_datm.py
-=========================================
+========================================
 Convert SCHISM sflux files -> CDEPS DATM forcing NetCDF for one group.
 
 Works for all grouping modes (monthly, ndays/weekly/daily).
@@ -20,7 +20,7 @@ Sentinel: I{ID}_{group_id}/forcing/gen_datm.done
 
 import argparse
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -250,7 +250,7 @@ def gen_datm_group(cfg: dict, group_id: str):
         nc.source      = "ERA5"
         nc.history     = (
             f"Created "
-            f"{datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')} "
+            f"{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} "
             f"by stofs_ak_workflow")
         nc.Conventions = "CF-1.6"
         nc.note        = (

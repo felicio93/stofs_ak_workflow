@@ -34,7 +34,6 @@ Requires: swf_main (wget + NCO + netCDF4) on the DTN.
 import argparse
 import subprocess
 import sys
-from calendar import monthrange
 from datetime import date, timedelta
 from pathlib import Path
 

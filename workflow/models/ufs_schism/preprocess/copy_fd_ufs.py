@@ -1,6 +1,6 @@
 """
 models/ufs_schism/preprocess/copy_fd_ufs.py
-============================================
+===========================================
 Copy fix/fd_ufs.yaml into each group I{ID}_{group_id}/ directory.
 
 Works for all grouping modes (monthly, ndays/weekly/daily).

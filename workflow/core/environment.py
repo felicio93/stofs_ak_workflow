@@ -1,6 +1,6 @@
 """
 core/environment.py
-====================
+===================
 Shared environment plumbing for the workflow.
 
 swf_main provides everything needed for --phase all from a single
@@ -62,6 +62,26 @@ def check_dtn(what: str = "This step"):
         f"ssh hercules-dtn.hpc.msstate.edu "
         f"&& conda activate swf_main\n"
         f"  Or bypass with: export ALLOW_NON_DTN=1"
+    )
+
+
+def is_dtn() -> bool:
+    """Return True if the current host is a DTN or ALLOW_NON_DTN=1.
+
+    Non-raising counterpart of check_dtn(), used by postprocess steps that
+    print an [N/A] line and skip instead of failing.
+    """
+    return (DTN_HOSTNAME_HINT in socket.gethostname().lower()
+            or os.environ.get("ALLOW_NON_DTN") == "1")
+
+
+def dtn_skip(step: str):
+    """Print the standard [N/A] message for a DTN-only postprocess step."""
+    print(
+        f"[N/A]  {step}  "
+        f"(DTN required — run separately on the DTN with:\n"
+        f"         stofs-ak --run --phase postprocess "
+        f"--only {step} --config <cfg>)"
     )
 
 

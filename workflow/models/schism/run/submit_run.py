@@ -5,14 +5,15 @@ Phase 4, step "submit_run".
 
 When chain_hotstart=True, launches ONLY the first pending group.
 auto_hotstart.py chains subsequent groups automatically.
-When chain_hotstart=False, launches each group independently.
+When chain_hotstart=False (single-group testing), only the first pending
+group can start: later groups have no hotstart.nc link until chained.
 """
 
 import subprocess
 import sys
-from pathlib import Path
 
 from workflow.core.config import list_groups, model_dir
+from workflow.core.templating import unreplaced
 
 
 def run_submit_run(cfg: dict):
@@ -74,7 +75,7 @@ def run_submit_run(cfg: dict):
 
         # Guard: confirm auto_hotstart.py is rendered
         content = auto.read_text()
-        if "{{RUNDIR}}" in content or "{{NEXT_RUNDIR}}" in content:
+        if unreplaced(content):
             print(f"  ERROR {group_id}: auto_hotstart.py "
                   f"contains unrendered placeholders.")
             print(f"    Delete {rdir}/setup_run.done and "

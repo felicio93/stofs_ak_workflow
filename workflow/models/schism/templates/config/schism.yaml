@@ -63,5 +63,7 @@ mne_bin: 1600
 # should the workflow automatically symlink that hotstart into the NEXT month's
 # run directory and launch it?
 #   true  : chain month N -> month N+1 automatically (normal production run)
-#   false : stop after each month completes; no auto-chain (single-month testing)
+#   false : single-group testing. submit_run launches the FIRST pending group
+#           only; later groups have no hotstart.nc link until you chain them
+#           yourself, so do not use false for multi-group production runs.
 chain_hotstart: true

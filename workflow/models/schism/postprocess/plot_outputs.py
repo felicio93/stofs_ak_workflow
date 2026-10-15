@@ -1,6 +1,6 @@
 """
 models/schism/postprocess/plot_outputs.py
-==========================================
+=========================================
 Phase 5 step "plot_outputs" — full-run SCHISM field GIFs.
 
 Supports both New I/O (SCHISM standalone) and Old I/O (UFS-SCHISM).
@@ -382,7 +382,7 @@ def main():
     sub = ap.add_subparsers(dest="stage", required=True)
     sub.add_parser("mpi-frames")
     pf = sub.add_parser("frames")
-    pf.add_argument("--month",  required=True)
+    pf.add_argument("--group", "--month", dest="month", required=True)
     pf.add_argument("--prefix", required=True)
     pf.add_argument("--stack",  required=True, type=int)
     sub.add_parser("assemble")

@@ -1,6 +1,6 @@
 """
 models/schism/postprocess/station_skill.py
-===========================================
+==========================================
 Phase 5 step "station_skill" (interactive; runs in the swf_main env).
 
 Variable-depth matching
@@ -14,7 +14,7 @@ Different variables are compared at different depths:
 
   Sensor-depth variables (shallowest non-zero model output):
     T, TEMP              water temperature
-    S (salinity)         salinity
+    S, SAL, SALINITY     salinity (CO-OPS 'salinity' product)
 
 For T/S the model staout value at z=-1m (or the shallowest non-zero
 depth entry in station.in) is used so it matches where the physical
@@ -57,6 +57,24 @@ VAR_PLAN = {
                      "product": "water_temperature",
                      "label": "Water Temperature",
                      "unit": "degC", "color": "red"},
+    # staout_6 = salinity (SCHISM station.in order: elev, air pressure,
+    # windx, windy, T, S, ...). CO-OPS salinity records carry the value in
+    # column "s" (not "v").
+    "S":            {"staout": 6,
+                     "product": "salinity",
+                     "obs_col": "s",
+                     "label": "Salinity",
+                     "unit": "PSU",  "color": "teal"},
+    "SAL":          {"staout": 6,
+                     "product": "salinity",
+                     "obs_col": "s",
+                     "label": "Salinity",
+                     "unit": "PSU",  "color": "teal"},
+    "SALINITY":     {"staout": 6,
+                     "product": "salinity",
+                     "obs_col": "s",
+                     "label": "Salinity",
+                     "unit": "PSU",  "color": "teal"},
     "AIR_PRESSURE": {"staout": 2,
                      "product": "air_pressure",
                      "label": "Air Pressure",
@@ -99,22 +117,12 @@ _SURFACE_VARS = {
 
 # Variables where the obs sensor is at depth — use the
 # shallowest non-zero station entry to match sensor location.
-_SENSOR_DEPTH_VARS = {"T", "TEMP"}
+_SENSOR_DEPTH_VARS = {"T", "TEMP", "S", "SAL", "SALINITY"}
 
 # SCHISM staout_2 is in Pa; CO-OPS/NDBC report in hPa/mbar.
 _AIR_PRESSURE_TOKENS = {
     "AIR_PRESSURE", "AIRPRESSURE", "PATM", "PRESSURE",
 }
-
-
-# ---------------------------------------------------------------------------
-# Helper: squeeze mdl[sid] to a Series
-# ---------------------------------------------------------------------------
-
-def _squeeze(col):
-    if hasattr(col, "ndim") and col.ndim == 2:
-        return col.iloc[:, 0]
-    return col
 
 
 # ---------------------------------------------------------------------------
@@ -199,16 +207,15 @@ def _load_model_staout(cfg, staout_num: int,
                         start_str, end_str):
     """Stitch staout_N across all run groups into a DataFrame.
 
-    Uses all_stations (all depths) so idx_to_id correctly maps
-    every staout_* column regardless of depth.
+    The returned frame keeps the integer staout column number (the
+    1-based line index of the station in station.in) as its column label.
+    Entries of the same station at different depths therefore have
+    distinct columns and the caller selects the exact one by line_index.
     """
     import pandas as pd
 
     pid  = cfg["project_id"]
     mdir = model_dir(cfg)
-
-    idx_to_id = {s["line_index"]: s["station_id"]
-                 for s in all_stations}
 
     groups = list_groups(cfg)
     frames = []
@@ -254,18 +261,9 @@ def _load_model_staout(cfg, staout_num: int,
                           + pd.to_timedelta(df[0], unit="s"))
         df = df.drop(columns=[0])
 
-        rename = {}
-        for col in df.columns:
-            if col == "datetime":
-                continue
-            rename[col] = idx_to_id.get(col, col)
-        df = df.rename(columns=rename)
-
-        # Keep ALL columns including duplicates —
-        # the correct depth is selected per-variable
-        # in _assess_station via _station_for_var.
-        # Do NOT deduplicate here.
-
+        # Columns stay labelled by staout column number (== line_index);
+        # _assess_station selects the exact column for each
+        # variable/depth via _station_for_var.
         frames.append(df)
 
     if not frames:
@@ -450,10 +448,11 @@ def _obs_for_variable(source, tok, cfg, sid,
         obs = _load_obs_series(
             cfg, sid, plan["product"],
             start_str, end_str)
-        if obs is None or obs.empty or "v" not in obs:
+        col = plan.get("obs_col", "v")
+        if obs is None or obs.empty or col not in obs:
             return None
         return ("single",
-                pd.to_numeric(obs["v"],
+                pd.to_numeric(obs[col],
                               errors="coerce").dropna())
 
     # NDBC
@@ -538,18 +537,14 @@ def _assess_station(st, source, cfg,
             for comp_label, staout_num, key \
                     in WIND_COMPONENTS:
                 mdl = model_frame_fn(staout_num)
-                if mdl.empty or sid not in mdl.columns:
+                if mdl.empty or line_idx not in mdl.columns:
                     print(f"  {src_tag} {sid} "
                           f"{comp_label}: no model "
                           f"column, skipping.")
                     continue
                 o = payload[key]
-                # For wind always use surface column
-                m_raw = mdl[sid]
-                if hasattr(m_raw, "ndim") and m_raw.ndim == 2:
-                    m = m_raw.iloc[:, 0]
-                else:
-                    m = m_raw
+                # Wind always uses the surface (z=0m) entry's column
+                m = mdl[line_idx]
                 res = _metrics(o, m, rule)
                 if res is None:
                     print(f"  {src_tag} {sid} "
@@ -592,30 +587,15 @@ def _assess_station(st, source, cfg,
             continue
 
         mdl = model_frame_fn(plan["staout"])
-        if mdl.empty or sid not in mdl.columns:
+        if mdl.empty or line_idx not in mdl.columns:
             print(f"  {src_tag} {sid} {T}: no model "
-                  f"column (staout_{plan['staout']}), "
-                  f"skipping.")
+                  f"column (staout_{plan['staout']}, "
+                  f"station line {line_idx}), skipping.")
             continue
 
-        # Select the column matching line_idx for this
-        # variable's depth. mdl[sid] may be a DataFrame
-        # if multiple depth levels exist.
-        m_raw = mdl[sid]
-        if hasattr(m_raw, "ndim") and m_raw.ndim == 2:
-            # Multiple columns for this station_id —
-            # find the one corresponding to line_idx.
-            # The column order matches station.in order.
-            # line_idx is 1-based; columns are ordered
-            # by their appearance in station.in.
-            # iloc[:, 0] = first depth (z=0m for surface vars)
-            # iloc[:, 1] = second depth (z=-1m for T/S)
-            if T in _SENSOR_DEPTH_VARS and m_raw.shape[1] > 1:
-                m = m_raw.iloc[:, 1]  # sensor depth column
-            else:
-                m = m_raw.iloc[:, 0]  # surface column
-        else:
-            m = m_raw
+        # staout column number == station.in line index of the entry
+        # chosen by _station_for_var for this variable's depth.
+        m = mdl[line_idx]
 
         # Pa -> hPa for air pressure
         if T in _AIR_PRESSURE_TOKENS:

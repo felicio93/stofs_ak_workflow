@@ -1,6 +1,6 @@
 """
 models/ufs_schism_ww3/postprocess/submit_plot_outputs_ww3.py
-=============================================================
+============================================================
 Two-stage SLURM launcher for plot_outputs_ww3.
 
 Stage 1 — SLURM array (one task per on-cadence WW3 field file, throttled).
@@ -16,6 +16,11 @@ from pathlib import Path
 from workflow.core.config import list_groups, model_dir
 from workflow.core.environment import env_python
 from workflow.core.slurm import SlurmSubmitter
+from workflow.core.slurm import (
+    DEFAULT_ACCOUNT,
+    DEFAULT_PARTITION,
+    DEFAULT_MAIL_USER,
+)
 
 TEMPLATES_DIR = (
     Path(__file__).resolve().parent.parent
@@ -91,14 +96,14 @@ def submit_plot_outputs_ww3(cfg: dict,
     manifest.write_text("\n".join(all_files) + "\n")
 
     common = {
-        "ACCOUNT":    slurm.get("account",   "nos-surge"),
+        "ACCOUNT":    slurm.get("account",   DEFAULT_ACCOUNT),
         "PARTITION":  slurm.get(
             "plot_outputs_ww3_partition",
-            slurm.get("partition", "hercules-2")),
+            slurm.get("partition", DEFAULT_PARTITION)),
         "QOS":        slurm.get("plot_outputs_ww3_qos",
                                 "windfall"),
         "MAILUSER":   slurm.get("mail_user",
-                                "felicio.cassalho@noaa.gov"),
+                                DEFAULT_MAIL_USER),
         "WORKDIR":    str(mdir),
         "LOGDIR":     str(logdir),
         "PY":         env_python(cfg, "plot_outputs_ww3",

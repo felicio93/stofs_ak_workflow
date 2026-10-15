@@ -16,6 +16,11 @@ from workflow.core.config import (
 )
 from workflow.core.environment import env_python
 from workflow.core.slurm import SlurmSubmitter, write_manifest
+from workflow.core.slurm import (
+    DEFAULT_ACCOUNT,
+    DEFAULT_PARTITION,
+    DEFAULT_MAIL_USER,
+)
 
 TEMPLATES_DIR = (
     Path(__file__).resolve().parent.parent
@@ -62,10 +67,10 @@ def submit_plot_datm(cfg: dict, config_dir: Path,
 
     slurm = cfg.get("slurm", {})
     subs  = {
-        "ACCOUNT":    slurm.get("account",   "nos-surge"),
-        "PARTITION":  slurm.get("partition", "hercules-2"),
+        "ACCOUNT":    slurm.get("account",   DEFAULT_ACCOUNT),
+        "PARTITION":  slurm.get("partition", DEFAULT_PARTITION),
         "MAILUSER":   slurm.get("mail_user",
-                                "felicio.cassalho@noaa.gov"),
+                                DEFAULT_MAIL_USER),
         "WORKDIR":    str(mdir),
         "JOBNAME":    f"plotdatm_M{pid}",
         "NGROUPS":    str(len(pending)),

@@ -9,36 +9,6 @@
 isobaths: [200, 2000]
 
 # =============================================================================
-# diag_run_plots — per-output-stack diagnostic frames DURING the run
-# =============================================================================
-# Static images (no GIF), one per timestep per variable, written to
-# D{ID}/D{ID}_YYYYMM/diag/ as each SCHISM output stack completes. Dispatched
-# by auto_hotstart.py from the Phase-4 monitoring loop. Enable BEFORE setup_run
-# so the hook is baked into the run directories.
-#
-# Variable entry fields (shared by diag_run_vars and plot_outputs_vars):
-#   file_prefix : NetCDF filename prefix without _{N}.nc
-#                 New I/O: e.g. out2d, temperature, salinity
-#                 Old I/O (UFS-SCHISM): ignored — all vars are in schout_N.nc
-#   var_name    : variable name (use New I/O names — old I/O is mapped
-#                 automatically; see variable name mapping table below)
-#   label       : colorbar / title text (include units)
-#   cmap        : matplotlib colormap
-#   vmin / vmax : color limits (null = robust 2nd/98th percentile)
-#   is_3d       : true if the variable has a vertical (sigma) dimension
-#   layer       : "surface" | "bottom" | integer index (only used if is_3d)
-#   loc         : "node" (default) or "elem" (element-centered)
-#
-# diag_run_vars: the quick health-check subset plotted live during the run.
-diag_run_vars:
-  - {file_prefix: out2d,          var_name: elevation,      label: "SSH (m)",   cmap: RdBu_r, vmin: -2,   vmax: 2,    is_3d: false}
-  - {file_prefix: temperature,    var_name: temperature,    label: "SST (°C)",  cmap: jet,    vmin: -2,   vmax: 12,   is_3d: true, layer: surface}
-  - {file_prefix: salinity,       var_name: salinity,       label: "SSS (psu)", cmap: viridis,vmin: 30,   vmax: 34.5, is_3d: true, layer: surface}
-  - {file_prefix: horizontalVelX, var_name: horizontalVelX, label: "U (m/s)",   cmap: RdBu_r, vmin: -1.5, vmax: 1.5,  is_3d: true, layer: surface}
-  - {file_prefix: horizontalVelY, var_name: horizontalVelY, label: "V (m/s)",   cmap: RdBu_r, vmin: -1.5, vmax: 1.5,  is_3d: true, layer: surface}
-diag_run_dpi: 150
-
-# =============================================================================
 # plot_outputs — full-run field GIFs (after the run completes)
 # =============================================================================
 #
@@ -106,12 +76,6 @@ plot_outputs_vars:
   - {file_prefix: out2d,          var_name: windSpeedY,        label: "Wind V (m/s)",                 cmap: RdBu_r,   vmin: -25,    vmax: 25,     is_3d: false}
   - {file_prefix: out2d,          var_name: windStressX,       label: "Wind Stress X (Pa)",           cmap: RdBu_r,   vmin: -0.01,  vmax: 0.01,   is_3d: false}
   - {file_prefix: out2d,          var_name: windStressY,       label: "Wind Stress Y (Pa)",           cmap: RdBu_r,   vmin: -0.01,  vmax: 0.01,   is_3d: false}
-  # --- SCHISM+WWM wave variables (in out2d_*.nc) ---
-  - {file_prefix: out2d,          var_name: sigWaveHeight,       label: "Significant Wave Height (m)",  cmap: turbo,   vmin: 0,    vmax: 6,    is_3d: false}
-  - {file_prefix: out2d,          var_name: meanWavePeriod,      label: "Mean Wave Period (s)",          cmap: viridis, vmin: 0,    vmax: 20,   is_3d: false}
-  - {file_prefix: out2d,          var_name: zeroDowncrossPeriod, label: "Zero-Downcross Period (s)",     cmap: viridis, vmin: 0,    vmax: 20,   is_3d: false}
-  - {file_prefix: out2d,          var_name: meanWaveDirection,   label: "Mean Wave Direction (deg)",     cmap: hsv,     vmin: 0,    vmax: 360,  is_3d: false}
-  - {file_prefix: out2d,          var_name: peakPeriod,          label: "Peak Wave Period (s)",          cmap: viridis, vmin: 0,    vmax: 25,   is_3d: false}
   # --- 3D node-centered variables ---
   - {file_prefix: temperature,    var_name: temperature,       label: "Temperature (°C)",             cmap: jet,     vmin: -2,      vmax: 12,     is_3d: true, layer: surface}
   - {file_prefix: salinity,       var_name: salinity,          label: "Salinity (psu)",               cmap: viridis, vmin: 30,      vmax: 34.5,   is_3d: true, layer: surface}
@@ -281,7 +245,7 @@ collocate_argo_plot_psal_rmse_vmax: null
 collocate_argo_plot_skill_s: 20
 
 # =============================================================================
-# Satellite altimetry collocation (SCHISM+WWM Hs vs satellite Hs)
+# Satellite altimetry collocation (SCHISM+WWM / UFS-SCHISM+WW3 Hs vs satellite Hs)
 # =============================================================================
 # Source: 'cci' (default, IFREMER FTP) or 'coastwatch' (NOAA STAR)
 #
@@ -370,4 +334,4 @@ altimetry_scatter_time_delta_vmax: 1800
 
 # Distance delta colorbar upper limit in KM.
 # null = 98th percentile of the filtered data.
-altimetry_scatter_dist_delta_vmax: null
+altimetry_scatter_dist_delta_vmax: 2

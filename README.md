@@ -123,8 +123,10 @@ stofs_ak_workflow/                      <- git repo (clone this to Hercules)
 ├── docs/AUDIT.md                       <- code review record (fixed / documented / reported)
 ├── tutorials/hercules_walkthrough.md   <- copy-paste steps for the real Hercules case
 ├── utils/                              <- helper notebooks (GloFAS shapefile -> csv, shape -> station.in)
-├── templates/config_example/           <- shared config templates (copy to project)
-│   ├── project.yaml  domain.yaml  steps.yaml  envs.yaml
+├── templates/config_example/           <- ready-to-copy config set per model
+│   ├── schism/  schism_wwm/  ufs_schism/  ufs_schism_ww3/
+│   │     each: project.yaml domain.yaml steps.yaml envs.yaml <model>.yaml postprocess.yaml
+│   └── README.md
 └── workflow/
     ├── core/            config.py, mesh_parser.py, station_parser.py,
     │                    plot_style.py, slurm.py, templating.py, environment.py
@@ -210,17 +212,19 @@ Running the tool never writes into `$WF`; all generated data goes under
 
 ```bash
 mkdir -p $CFG                                   # e.g. <project_dir>/M01/config
-cp $WF/templates/config_example/*.yaml $CFG/
-# model-specific yaml (copy the one matching model_type):
-cp $WF/workflow/models/schism/templates/config/schism.yaml               $CFG/   # schism
-cp $WF/workflow/models/schism_wwm/templates/config/schism_wwm.yaml       $CFG/   # schism_wwm
-cp $WF/workflow/models/ufs_schism/templates/config/ufs_schism.yaml       $CFG/   # ufs_schism
-cp $WF/workflow/models/ufs_schism_ww3/templates/config/ufs_schism_ww3.yaml $CFG/ # ufs_schism_ww3
-# optional Phase 5 settings:
-cp $WF/workflow/models/schism/templates/config/postprocess.yaml $CFG/
+# copy the complete set for your model (schism | schism_wwm | ufs_schism | ufs_schism_ww3):
+cp $WF/templates/config_example/schism/*.yaml $CFG/
 
 stofs-ak --init --config $CFG     # safe to re-run; never deletes anything
 ```
+
+Each folder holds `project.yaml`, `domain.yaml`, `steps.yaml`, `envs.yaml`,
+the self-contained `<model>.yaml` and `postprocess.yaml`. They reproduce the
+four validated reference runs (M11 schism, M12 ufs_schism, M13 schism_wwm,
+M14 ufs_schism_ww3): same paths, short test period (`2025-09-01` ..
+`2025-09-08`, `ndays` / `group_ndays: 2`) and every applicable step `true`.
+Edit `project_id`, `project_dir`, dates, grouping and the step flags for your
+own project; see `templates/config_example/README.md`.
 
 Then populate `fix/` and `bin/`.
 
@@ -529,9 +533,10 @@ against wrong-date HYCOM sources.
    `UfsSchismDriver` (see `UfsSchismWw3Driver`); override only what differs.
 2. Register it in `workflow/models/base.py::make_driver` and add the name to
    `KNOWN_MODEL_TYPES` in `workflow/core/config.py` (both lists must match).
-3. Add `workflow/models/<name>/templates/config/<name>.yaml` (self-contained:
-   only the active model's yaml is loaded) and list the template directories
-   in `pyproject.toml` package-data.
+3. Add a config set `templates/config_example/<name>/` (project, domain, steps,
+   envs, a self-contained `<name>.yaml` since only the active model's yaml is
+   loaded, and postprocess) and run `python utils/check_config_templates.py`.
+   List the SLURM template directory in `pyproject.toml` package-data.
 4. Put SLURM templates under `templates/slurm/` and drive them with a
    `core.slurm.SlurmSubmitter`.
 5. Add the new step names to `PREPROCESS_STEPS` / `POSTPROCESS_STEPS` in

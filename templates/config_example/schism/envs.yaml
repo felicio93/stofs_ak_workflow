@@ -1,0 +1,42 @@
+# =============================================================================
+# envs.yaml — Conda environment settings
+# =============================================================================
+
+# Absolute path to your conda/miniconda installation base directory.
+conda_base: /work2/noaa/nos-surge/felicioc/envs/miniconda3
+
+# Per-step conda environment name.
+# Only steps that invoke Python need an entry here.
+#
+# Create/verify these environments once with:
+#     stofs-ak --setup-envs --config <config_dir>
+# (run on the DTN; it needs internet). Known environments and their packages
+# are defined in workflow/core/environment.py:
+#     swf_main : orchestrator + NCO/CDO (download + aggregate)
+#     swf_plot : matplotlib/cartopy/xarray (plot_hycom)
+#
+# Usage patterns:
+#   1. Interactive steps (download_hycom, aggregate_hycom) run INSIDE the
+#      activated env. The name is used only to VERIFY the active env matches;
+#      a mismatch prints a warning (no auto-switch).
+#   2. SLURM steps (plot_hycom) CALL the env's interpreter by full path:
+#        base env:  {conda_base}/bin/python
+#        named env: {conda_base}/envs/{env_name}/bin/python
+conda_envs:
+  inspect_mesh:   swf_plot
+  download_hycom: swf_main
+  aggregate_hycom: swf_main
+  download_era5:  swf_main
+  gen_sflux:      swf_main
+  plot_sflux:     swf_plot
+  plot_hycom: swf_plot
+  plot_outputs:   swf_plot   # Phase 5 field output GIFs
+  compare_sst:    swf_plot   # Phase 5 model-vs-satellite SST
+  diag_run_plots: swf_plot   # Phase 5 per-stack diagnostics (during run)
+  download_sst:   swf_main   # Phase 5 satellite SST download (DTN + NCO)
+  download_coops: swf_main   # Phase 5 CO-OPS station obs download (DTN)
+  download_ndbc:  swf_main   # Phase 5 NDBC buoy obs download (DTN)
+  station_skill:  swf_plot   # Phase 5 CO-OPS/NDBC obs vs model skill plots + metrics
+  download_argo:  swf_plot   # Phase 5 Argo float download (DTN; needs ocstrack)
+  collocate_argo: swf_plot   # Phase 5 SCHISM T/S vs Argo collocation (ocstrack)
+  plot_argo:      swf_plot   # Phase 5 Argo diagnostic plots (location map, histograms, profiles)

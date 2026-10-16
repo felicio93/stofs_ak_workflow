@@ -42,7 +42,7 @@ Paths are relative to the repo root; `models/` = `workflow/models/`.
 | ID | Change |
 |----|--------|
 | C1 | `inspect_mesh.sbatch` `{{MAILUSER}}` is now substituted. |
-| C5 | `gen_wwmbnd` added to `templates/config_example/steps.yaml`. |
+| C5 | `gen_wwmbnd` added to the WWM `steps.yaml` template (now under `templates/config_example/schism_wwm/`). |
 | C8 | The false "[N/A] … model_type=schism" message under `schism_wwm` is gone (driver attribute `supports_wwm_steps`); N/A messages print the actual `model_type`. |
 | C9 | `schism_mice.run()` / `postprocess()` raise `NotImplementedError` like `preprocess()` (previously ran plain SCHISM). |
 | – | UFS-based models: in-run diagnostic plots removed entirely (`diag_run_oldio.py`, `run_diag_oldio.sbatch`, the diag rendering in both UFS `setup_run.py`, `combine_diag_*` keys). `diag_run_plots` on a UFS model prints `[N/A]`. (`schism_wwm` already rendered diagnostics as disabled; it now prints the same `[N/A]` instead of silently ignoring the flag.) |
@@ -68,6 +68,7 @@ Paths are relative to the repo root; `models/` = `workflow/models/`.
 - `pyproject.toml` ships `schism_wwm` and `ufs_schism_ww3` templates; `models/ufs_schism/run/__init__.py` added.
 - Removed unreferenced files: root-level copies `schism_wwm/templates/collocate_altimetry_*.sbatch`, `ufs_schism/templates/run_combine_output.sbatch`; never-rendered `compare_sst_mpi`, `plot_outputs_frames`, `plot_outputs_ww3_mpi`; unreachable `plot_hs.py`.
 - Removed dead config keys from templates (`datm_fill_value`, `datm_time_units_template`, `run_type`, `restart_n`, `compare_sst_max_ntasks`, argo `*_hist_color`), dead substitutions and helpers, 36 unused imports, `ProgressTracker.label`, `datetime.utcnow()`.
+- Config templates: the shared `templates/config_example/*.yaml` and the per-model yamls under `workflow/models/*/templates/config/` were replaced by one complete, checked folder per model (`templates/config_example/<model>/`, from the four validated reference runs) plus `utils/check_config_templates.py`.
 - Conventions: `Optional[str]` for `only`; shared `DEFAULT_ACCOUNT/PARTITION/MAIL_USER` in `core/slurm.py`; shared `is_dtn()/dtn_skip()` in `core/environment.py`; `core/templating.py`; `--group` accepted as alias of `--month` in the plot/diag CLIs; docstring underlines normalised.
 - `gen_wwminput` docstring now says the `&STATION` block is generated; a template missing a section is reported as an error instead of silently mis-assigning `BEGTC/ENDTC`.
 

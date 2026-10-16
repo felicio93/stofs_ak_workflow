@@ -1,0 +1,83 @@
+# =============================================================================
+# steps.yaml — Step execution flags
+# =============================================================================
+# Set a step to true to enable it, false to skip it.
+# This template is for model_type: ufs_schism. It lists only the steps that apply to
+# this model, all set to true (as in the validated reference run).
+# Run the workflow one step at a time: enable one step, test it,
+# then disable it and enable the next.
+#
+# Steps are grouped by phase. Preprocessing steps run with:
+#     stofs-ak --run --config <config_dir>            (phase defaults to preprocess)
+# Run-management and post-processing steps run with:
+#     stofs-ak --run --phase run         --config <config_dir>
+#     stofs-ak --run --phase postprocess --config <config_dir>
+#
+# Phase 0 — Mesh diagnostics (SLURM job, run before any other step):
+inspect_mesh: true   # Plot all fix/ input files + mesh resolution + vertical layers
+
+# Phase 1 — DTN only (requires internet access):
+download_hycom:  true
+download_era5:   true   # Download ERA5 monthly raw files (one file per month)
+download_glofas: true   # Download GloFAS v4 reanalysis discharge (one file per year)
+
+# Phase 2 — Any node, no internet required:
+aggregate_hycom: true  # Concatenate HYCOM daily -> monthly SCHISM stacks
+
+# plot_hycom submits SLURM job arrays (one task per group).
+plot_hycom: true   # HYCOM debug GIFs (temperature, salinity, ssh)
+plot_sflux:     true   # ERA5/sflux debug GIFs (6-hourly, all variables)
+
+# UFS forcing and configuration (UFS models only):
+gen_datm: true   # Convert SCHISM sflux -> CDEPS DATM forcing NetCDF (UFS-SCHISM)
+plot_datm: true   # DATM debug GIFs (6-hourly, all variables)
+gen_esmf_mesh: true # Generate ESMF mesh file from DATM grid
+gen_datm_in: true   # Generate datm_in file from template
+gen_datm_streams: true # Generate datm.streams file from template
+copy_fd_ufs: true      # Copy fd_ufs.yaml to monthly input directories
+copy_noahmptable: true # Copy noahmptable.tbl to monthly input directories
+gen_model_configure: true # Generate model_configure file from template
+copy_modulefiles: true # Copy .lua modulefiles to monthly input directories
+gen_ufs_configure: true # Generate ufs.configure file from template
+
+# Phase 3 — SCHISM preprocessing (no internet required):
+# Run gen_estuary first (once, interactive) before submitting SLURM steps.
+gen_estuary:  true   # Step A: create fix/estuary.gr3 + bin/*.in files (once, interactive)
+gen_bctides:  true   # Step B: create bctides.in per month from TPXO9 (interactive)
+gen_source:   true   # Step C: GloFAS discharge -> source.nc per month (interactive)
+gen_param:    true   # Step D: copy fix/param.nml to each I{ID}_YYYYMM/ with correct dates (interactive)
+gen_sflux:    true   # Step E: ERA5 raw -> sflux_air/prc/rad per month (SLURM array)
+gen_hotstart: true   # Step F: create hotstart.nc (once, first month only, SLURM)
+gen_3Dth:     true   # Step G: create *[23D].th.nc files (SLURM array, one job per month)
+gen_nudge:    true   # Step H: create TEM/SAL_nu.nc files (SLURM array, one job per month)
+
+# =============================================================================
+# Phase 4 — Run management
+# Run with:  stofs-ak --run --phase run --config <config_dir>
+# =============================================================================
+setup_run:  true   # Populate R{ID}_YYYYMM/ dirs: symlink fix/ + I{ID}_YYYYMM/
+                    # inputs, copy executables, adapt run_test/run_comb job cards,
+                    # write auto_hotstart.py (interactive, fast)
+submit_run: true   # Run auto_hotstart.py month-by-month, chaining hotstarts.
+                    # Blocking — launch inside screen/tmux (see tutorial).
+
+# =============================================================================
+# Phase 5 — Post-processing
+# Run with:  stofs-ak --run --phase postprocess --config <config_dir>
+# Variables/layers/cadence configured in postprocess.yaml.
+# =============================================================================
+download_sst:    true   # DTN: download LEO L3S-DY satellite SST + subset -> M{ID}/obs/
+download_coops:  true   # DTN: download NOAA CO-OPS station obs (WL, water temp, air
+                         # pressure, wind) -> M{ID}/obs/coops/ (based on fix/station.in)
+download_ndbc:   true   # DTN: download NOAA NDBC buoy obs (WTMP, wind, PRES) ->
+                         # M{ID}/obs/ndbc/ (annual + current-year monthly + realtime)
+download_argo:   true   # DTN: download Argo float profiles (IFREMER GDAC via OCSTrack)
+                         # -> M{ID}/obs/argo/{region}/processed/ (domain-cropped)
+plot_outputs:    true   # Full-run field GIFs -> P{ID} (SLURM: parallel frames + GIF)
+compare_sst:     true   # Model vs satellite SST GIF -> P{ID} (needs download_sst first)
+station_skill:   true   # Interactive: CO-OPS/NDBC obs vs model staout_* time-series
+                         # plots + skill_metrics.csv -> P{ID} (needs download_coops/ndbc first)
+collocate_argo:  true   # Interactive: OCSTrack 3-D collocation of SCHISM T/S profiles
+                         # vs Argo floats -> P{ID}/P{ID}_collocate_argo/ (needs download_argo)
+plot_argo:       true   # Interactive: Argo diagnostic plots (location map, skill
+                         # histograms, profile matrix) -> P{ID}/P{ID}_collocate_argo/

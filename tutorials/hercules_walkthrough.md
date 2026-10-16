@@ -45,13 +45,18 @@ export WF=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/stofs_ak_workflow
 export CFG=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config
 
 mkdir -p $CFG
-# shared config templates:
-cp $WF/templates/config_example/*.yaml $CFG/
-# model-specific config (SCHISM). For other models copy the matching yaml
-# instead (see section 11-13):
-#   schism_wwm.yaml, ufs_schism.yaml, ufs_schism_ww3.yaml
-cp $WF/workflow/models/schism/templates/config/schism.yaml $CFG/
+# complete config set for model_type: schism (reference run M11). For the other
+# models copy templates/config_example/{schism_wwm,ufs_schism,ufs_schism_ww3}/
+# instead (sections 12-14).
+cp $WF/templates/config_example/schism/*.yaml $CFG/
 ```
+
+> The template `steps.yaml` has **every step of the model set to `true`** (it
+> reproduces the reference run). This walkthrough enables one step at a time:
+> set the flags you are not running yet to `false` (or use `--only <step>`,
+> which ignores the flags). The template also carries the reference run's
+> `project_id` (11) and test dates (`2025-09-01` .. `2025-09-08`, 2-day groups);
+> set `project_id: "01"` and the dates from the header of this tutorial.
 
 Confirm the templates look right:
 ```bash
@@ -498,11 +503,8 @@ hotstart step number, and renders `auto_hotstart.py` into each run directory.
     schism:           pschism_HERCULES_NO_PARMETIS_PREC_EVAP_BLD_STANDALONE_SH_MEM_COMM_TVD-VL
     combine_hotstart: combine_hotstart7.exe
   ```
-- Copy the updated `schism.yaml` template to your config if not already there
-  (adds `chain_hotstart: true`):
-  ```bash
-  cp $WF/workflow/models/schism/templates/config/schism.yaml $CFG/schism.yaml
-  ```
+- `chain_hotstart: true` (in `schism.yaml`, already present in the template
+  set copied in section 1) enables automatic chaining.
 
 Edit `$CFG/steps.yaml` — set only `setup_run: true`.
 
@@ -616,12 +618,8 @@ stofs-ak --run --phase run --only submit_run --config $CFG
 
 ## 10. Phase 5 — Post-processing
 
-All Phase 5 behavior is configured in `postprocess.yaml`. Copy the template
-to your config directory (one-time):
-
-```bash
-cp $WF/workflow/models/schism/templates/config/postprocess.yaml $CFG/postprocess.yaml
-```
+All Phase 5 behavior is configured in `postprocess.yaml` (already copied with
+the template set in section 1).
 
 Edit it to choose variables, layers, color scales, temporal cadence, the SST
 matching mode, and frame retention. All plots overlay the 200 m and 2000 m
@@ -800,8 +798,11 @@ circular mean).
 Differences from standalone SCHISM:
 
 ```bash
-cp $WF/workflow/models/schism_wwm/templates/config/schism_wwm.yaml $CFG/   # replaces schism.yaml
+cp $WF/templates/config_example/schism_wwm/*.yaml $CFG/   # reference run M13
 ```
+
+This set already includes the self-contained `schism_wwm.yaml` (SCHISM keys
++ `wwm_*`); do not keep a separate `schism.yaml` (it would be ignored).
 
 - Put your WWM template at `$SWF_PROJ/M01/fix/wwminput.nml`.
 - `schism_wwm.yaml` holds only the WWM keys. SCHISM keys (`estuary_temp`,
@@ -833,7 +834,7 @@ window as SCHISM. The `&STATION` block is generated from `fix/station.in`
 DATM forcing + CMEPS mediator + SCHISM (old I/O: `schout_*.nc`).
 
 ```bash
-cp $WF/workflow/models/ufs_schism/templates/config/ufs_schism.yaml $CFG/
+cp $WF/templates/config_example/ufs_schism/*.yaml $CFG/   # reference run M12
 ```
 
 - `fix/` additionally needs `datm_in`, `datm.streams`, `fd_ufs.yaml`,
@@ -885,7 +886,7 @@ ls $SWF_PROJ/M01/R01/R01_202512/
 Same as section 13 plus WW3:
 
 ```bash
-cp $WF/workflow/models/ufs_schism_ww3/templates/config/ufs_schism_ww3.yaml $CFG/   # self-contained
+cp $WF/templates/config_example/ufs_schism_ww3/*.yaml $CFG/   # reference run M14
 ```
 
 - `ufs_schism_ww3.yaml` is **self-contained** (it does not inherit from

@@ -1,0 +1,48 @@
+# =============================================================================
+# domain.yaml — Spatial domain settings
+# =============================================================================
+
+# Bounding box for data downloads. All values in decimal degrees.
+# These should generously cover the model domain and any sponge/nudging layers.
+lon_min: 150.0
+lon_max: 230.0
+lat_min:  45.0
+lat_max:  78.0
+
+# Longitude reference frame used by the mesh (hgrid.gr3).
+# This ensures downloaded data is consistent with the grid coordinate system.
+#
+# Options:
+#   "180"    ->  -180 to +180, with 0 at Greenwich  (standard geographic)
+#   "360"    ->     0 to  360, with 0 at Greenwich  (e.g. Bering Sea models
+#                              where 180 crosses the domain)
+#
+# The Bering Sea / Alaska model uses "360".
+#
+# NOTE: The "360" path is the proven production path. The "180" convention is
+# implemented but not yet validated against real HYCOM data (experimental).
+lon_reference: "360"
+
+# Depth threshold (meters) for estuary.gr3 generation.
+# Nodes with depth <= this value are marked as estuary (value=1); all others
+# are open ocean (value=0, interpolated from HYCOM).
+# Set to a large negative number (e.g. -10) to mark NO nodes as estuary —
+# HYCOM interpolation is used everywhere (appropriate for all-ocean domains
+# like the Bering Sea where there are no estuaries to exclude).
+# Set to a small positive number (e.g. 3.0) to mark shallow coastal nodes.
+estuary_depth_threshold: -10.0
+
+# -----------------------------------------------------------------------------
+# Debug plotting options (used by the plot_hycom step).
+# -----------------------------------------------------------------------------
+# Colormap for all HYCOM debug plots.
+plot_cmap: jet
+
+# Color scale limits per variable. Use [auto, auto] to derive robust limits
+# from the 2nd/98th percentiles of the data (adapts to any domain/season), or
+# set explicit numeric bounds, e.g. [-2, 16].
+plot_temp_range: [-2, 16]
+plot_salt_range: [31.5, 34]
+plot_ssh_range:  [-1, 1]
+plot_uvel_range: [-1, 1]    # m/s  eastward current  (water_u, surface and bottom GIFs)
+plot_vvel_range: [-1, 1]    # m/s  northward current (water_v, surface and bottom GIFs)

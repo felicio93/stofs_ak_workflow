@@ -31,7 +31,9 @@ import sys
 from pathlib import Path
 
 from workflow.build import hycom_patches
-from workflow.build.recipe import load_machine, recipe_hash as _recipe_hash
+from workflow.build.recipe import (
+    load_machine, modulefile_text, recipe_hash as _recipe_hash,
+)
 from workflow.build.sources import source_dir, sync_source
 from workflow.core.config import model_dir
 from workflow.core.environment import env_python
@@ -60,7 +62,10 @@ def _code_fingerprint(kind: str) -> str:
     """Hash of the code that builds a kind: plan, patches, job template."""
     parts = []
     fn = _PLANNERS.get(kind)
-    if fn is not None:
+    if kind == "ufs":
+        parts.append(inspect.getsource(_build_ufs))
+        parts.append((TEMPLATES_DIR / "build_ufs.sbatch").read_text())
+    elif fn is not None:
         parts.append(inspect.getsource(fn))
         parts.append((TEMPLATES_DIR / "build_utils.sbatch").read_text())
     else:
@@ -84,6 +89,9 @@ def installed_names(cfg: dict, target: str) -> list:
     kind = t["kind"]
     if kind == "schism":
         return [exes[t["exe_key"]]]
+    if kind == "ufs":
+        return ([exes[t["exe_key"]], f"modules.fv3_{t['compile_id']}.lua"]
+                + [exes[k] for k in t.get("install_tools") or []])
     if kind == "hycom_utils":
         names = []
         for key in hycom_patches.UTILS:
@@ -183,6 +191,59 @@ def _build_schism(cfg, config_dir, target, dry_run) -> str:
     })
     return _submit(cfg, config_dir, target, "build_schism.sbatch", subs,
                    bdir, dry_run)
+
+
+def _build_ufs(cfg, config_dir, target, dry_run) -> str:
+    """UFS-Coastal executable through its own tests/compile.sh."""
+    t       = cfg["build"]["targets"][target]
+    machine = load_machine(str(cfg["build"]["machine"]))
+    tc      = machine["toolchains"][t["toolchain"]]
+    info, sdir, bdir = _prepare(cfg, target, dry_run)
+    cid     = t["compile_id"]
+
+    # compile.sh loads modulefiles/ufs_<machine_id>.<rt_compiler>.lua from the
+    # checkout: write the profile's modulefile there (untracked file).
+    lua_name = f"ufs_{tc['machine_id']}.{tc['rt_compiler']}.lua"
+    lua_text = modulefile_text(machine, t["toolchain"])
+    if not dry_run:
+        (sdir / "modulefiles" / lua_name).write_text(lua_text)
+
+    tests = sdir / "tests"
+    installs = [
+        {"built": str(tests / f"fv3_{cid}.exe"),
+         "name": cfg["executables"][t["exe_key"]],
+         "meta": {"make_opt": t["make_opt"], "compile_id": cid,
+                  "modulefile": lua_name,
+                  "modulefile_sha256": hashlib.sha256(
+                      lua_text.encode()).hexdigest()}},
+        {"built": str(tests / f"modules.fv3_{cid}.lua"),
+         "name": f"modules.fv3_{cid}.lua", "meta": {}},
+    ]
+    for tool in t.get("install_tools") or []:
+        installs.append({"built": str(bdir / "ufs_build" / "bin" / tool),
+                         "name": cfg["executables"][tool],
+                         "meta": {"from": "UFS WW3 tools"}})
+    if not dry_run:
+        (bdir / "install_manifest.json").write_text(
+            json.dumps(installs, indent=2))
+
+    slurm = cfg.get("slurm", {})
+    subs = _slurm_subs(cfg, target)
+    subs.update({
+        "BUILD_DIR":      str(bdir),
+        "UFS_BUILD_DIR":  str(bdir / "ufs_build"),
+        "SRC_DIR":        str(sdir),
+        "MACHINE_ID":     tc["machine_id"],
+        "RT_COMPILER":    tc["rt_compiler"],
+        "COMPILE_ID":     cid,
+        "MAKE_OPT":       t["make_opt"],
+        "SOURCE_COMMIT":  info["commit"][:8],
+        "CONFIG_DIR":     str(config_dir),
+        "MEM":            slurm.get("build_ufs_mem", "32G"),
+        "WALLTIME":       slurm.get("build_ufs_walltime", "03:00:00"),
+    })
+    return _submit(cfg, config_dir, target, "build_ufs.sbatch", subs, bdir,
+                   dry_run)
 
 
 # -- utility plans -------------------------------------------------------------
@@ -325,7 +386,7 @@ def build_target(cfg: dict, config_dir: Path, target: str,
     """Prepare and submit one target. Returns the job ID ('' if skipped)."""
     t = cfg["build"]["targets"][target]
     print(f"\n--- build target {target} ({t['kind']}) ---")
-    if t["kind"] not in ("schism", *_PLANNERS):
+    if t["kind"] not in ("schism", "ufs", *_PLANNERS):
         raise NotImplementedError(f"build kind {t['kind']!r} is not "
                                   f"implemented yet")
     if not dry_run and is_current(cfg, target):
@@ -334,4 +395,6 @@ def build_target(cfg: dict, config_dir: Path, target: str,
         return ""
     if t["kind"] == "schism":
         return _build_schism(cfg, Path(config_dir), target, dry_run)
+    if t["kind"] == "ufs":
+        return _build_ufs(cfg, Path(config_dir), target, dry_run)
     return _build_utility(cfg, Path(config_dir), target, dry_run)

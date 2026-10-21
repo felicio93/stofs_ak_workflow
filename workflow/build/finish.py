@@ -74,6 +74,17 @@ def _install_manifest(cfg: dict, bdir: Path, metas: dict) -> list:
     return out
 
 
+def _ufs_details(bdir: Path) -> dict:
+    """Facts only the finished UFS build knows (from its CMake cache)."""
+    out = {}
+    cache = bdir / "ufs_build" / "CMakeCache.txt"
+    if cache.exists():
+        for line in cache.read_text().splitlines():
+            if line.startswith("ESMFMKFILE"):
+                out["esmfmkfile"] = line.split("=", 1)[1]
+    return out
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--config", required=True)
@@ -93,9 +104,14 @@ def main(argv=None):
         installed = _install_schism(cfg, t, bdir)
     else:
         installed = _install_manifest(cfg, bdir, metas)
+        if t["kind"] == "ufs":
+            for name, _ in installed:
+                metas[name] = {**metas.get(name, {}), **_ufs_details(bdir)}
 
     now   = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
     mods  = [m for m in os.environ.get("LOADEDMODULES", "").split(":") if m]
+    if t["kind"] == "ufs":      # compile.sh purges and loads its own modulefile
+        mods = ["see details.modulefile (loaded by compile.sh)"]
     h     = target_hash(cfg, target)
     entry = {}
     for name, built in installed:

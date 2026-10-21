@@ -43,6 +43,7 @@ include = ["workflow*"]
 "workflow.build" = [
   "machines/*.yaml",
   "machines/*.lua",
+  "templates/*.sbatch",
 ]
 "workflow.models.schism" = [
   "templates/slurm/*.sbatch",

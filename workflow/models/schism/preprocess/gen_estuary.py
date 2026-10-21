@@ -16,9 +16,11 @@ the stack ceiling value which depends on the group length.
 All outputs are skipped if they already exist (safe to re-run).
 
 IMPORTANT NOTES printed at runtime:
-  LON CONVENTION : The Fortran line 'lon=lon-360' is commented out in the
-                   _noscaling executables. This is correct ONLY when both
-                   hgrid.ll AND the HYCOM files use the same 0-360 convention.
+  LON CONVENTION : The utilities do not convert longitudes: hgrid.ll and the
+                   HYCOM files must share one convention. gen_hotstart,
+                   gen_3Dth and gen_nudge compare them before submitting
+                   and pick the plain or _lonshift executable
+                   (config key hycom_lon_shift).
   NO SCALING     : The _noscaling executables expect UNPACKED float data.
                    Our HYCOM files are unpacked at download (ncpdq -U).
                    DO NOT use the stock SCHISM executables.
@@ -36,11 +38,11 @@ REMINDERS = """
   ║  IMPORTANT: SCHISM Fortran executable assumptions        ║
   ╠══════════════════════════════════════════════════════════╣
   ║  1. LON CONVENTION                                       ║
-  ║     The line 'lon=lon-360' is COMMENTED OUT in the       ║
-  ║     _noscaling executables. This is correct ONLY when    ║
-  ║     both hgrid.ll AND the HYCOM files use the SAME       ║
-  ║     longitude convention (both 0-360 for this project).  ║
-  ║     If you change mesh or data source, verify this.      ║
+  ║     The executables do NOT convert longitudes: hgrid.ll  ║
+  ║     and the HYCOM files must share one convention.       ║
+  ║     gen_hotstart / gen_3Dth / gen_nudge compare them     ║
+  ║     before submitting and pick the plain or _lonshift    ║
+  ║     executable (config key hycom_lon_shift).             ║
   ║                                                          ║
   ║  2. NO SCALING (_noscaling executables)                  ║
   ║     The executables expect UNPACKED float variables.     ║

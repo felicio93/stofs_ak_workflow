@@ -303,7 +303,7 @@ def load_config(config_dir: Path) -> dict:
 
     Base files (project / domain / steps / envs) are required.
     The model-specific file matching cfg['model_type'] (e.g. schism.yaml)
-    is merged if present.  postprocess.yaml is optional.
+    is merged if present.  postprocess.yaml and build.yaml are optional.
 
     Grouping aliases are normalised before returning so all downstream
     code sees only 'monthly' or 'ndays'.
@@ -354,6 +354,14 @@ def load_config(config_dir: Path) -> dict:
             data = yaml.safe_load(f)
             if data:
                 _merge(data, pp_fpath.name)
+
+    # Optional build recipe (compile steps; see workflow/build/recipe.py)
+    build_fpath = config_dir / "build.yaml"
+    if build_fpath.exists():
+        with open(build_fpath) as f:
+            data = yaml.safe_load(f)
+            if data:
+                _merge(data, build_fpath.name)
 
     # YAML parses an unquoted 2025-09-01 as a date object; the rest of the
     # code expects ISO strings.

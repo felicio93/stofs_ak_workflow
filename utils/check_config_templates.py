@@ -6,7 +6,7 @@ Consistency check for the per-model config templates in
 templates/config_example/<model>/.
 
 For every model folder it verifies that:
-  * the six expected files exist (and no stray yaml, e.g. a separate
+  * the seven expected files exist (and no stray yaml, e.g. a separate
     schism.yaml in a derived-model folder, which would be ignored);
   * the folder loads through workflow.core.config.load_config and passes
     orchestrator.validate_config, and project.yaml model_type matches the
@@ -34,6 +34,7 @@ import orchestrator as orch                       # noqa: E402
 from workflow.core.config import (               # noqa: E402
     load_config, KNOWN_MODEL_TYPES,
 )
+from workflow.build.recipe import validate_build  # noqa: E402
 
 TEMPLATES = ROOT / "templates" / "config_example"
 MODELS = ("schism", "schism_wwm", "ufs_schism", "ufs_schism_ww3")
@@ -82,6 +83,14 @@ MODEL_KEYS["ufs_schism_ww3"] = MODEL_KEYS["ufs_schism"] | {
     "wav_pio_rearranger", "wav_pio_root", "ww3_point_output_dt",
     "ww3_fix_files", "chain_ww3_restart",
 }
+BUILD_KINDS = {
+    "schism": {"schism", "hycom_utils", "combine_hotstart", "partition_tools"},
+    "schism_wwm": {"schism", "hycom_utils", "combine_hotstart", "partition_tools"},
+    "ufs_schism": {"ufs", "hycom_utils", "combine_hotstart",
+                   "combine_output_mpi", "partition_tools"},
+    "ufs_schism_ww3": {"ufs", "hycom_utils", "combine_hotstart",
+                       "combine_output_mpi", "partition_tools"},
+}
 EXE_KEY = {"schism": "schism", "schism_wwm": "schism_wwm",
            "ufs_schism": "ufs_schism", "ufs_schism_ww3": "ufs_schism_ww3"}
 
@@ -110,7 +119,7 @@ def check_model(model: str, errors: list) -> dict:
         errors.append(f"[{model}] {msg}")
 
     expected = {"project.yaml", "domain.yaml", "steps.yaml", "envs.yaml",
-                "postprocess.yaml", f"{model}.yaml"}
+                "postprocess.yaml", "build.yaml", f"{model}.yaml"}
     present = {p.name for p in d.glob("*.yaml")} if d.is_dir() else set()
     for name in sorted(expected - present):
         err(f"missing file {name}")
@@ -161,6 +170,13 @@ def check_model(model: str, errors: list) -> dict:
 
     if cfg.get("grouping") not in ("monthly", "ndays"):
         err(f"unexpected grouping {cfg.get('grouping')!r}")
+
+    for e in validate_build(cfg):
+        err(f"build.yaml: {e}")
+    got = {t["kind"] for t in (cfg.get("build", {}).get("targets") or {}).values()}
+    if got != BUILD_KINDS[model]:
+        err(f"build.yaml: target kinds {sorted(got)} != expected "
+            f"{sorted(BUILD_KINDS[model])}")
     return cfg
 
 

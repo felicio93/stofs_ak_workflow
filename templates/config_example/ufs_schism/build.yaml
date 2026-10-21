@@ -1,0 +1,58 @@
+# =============================================================================
+# Build recipe: what to compile, from which sources, with which toolchain.
+# Used by the `build` steps (executables are installed into M{id}/bin/ under
+# the names in `executables:` of project.yaml, with a BUILD_INFO record).
+#
+#   machine      machine profile: workflow/build/machines/<name>.yaml (or a
+#                path to your own .yaml). Holds modules, compilers, UFS modulefile.
+#   source_root  where the sources are cloned and built (outside the repo and M*).
+#   sources      one checkout per source: repo + ref (branch, tag or commit).
+#                "master" tracks upstream; the resolved commit is recorded in
+#                BUILD_INFO. Pin a commit/tag here to freeze a version.
+#   targets      what to build; `source` and `toolchain` refer to the entries above.
+# =============================================================================
+build:
+  machine: hercules
+  source_root: /work2/noaa/nos-surge/felicioc/STOFS_3D_AK/src
+
+  sources:
+    schism:
+      repo: https://github.com/schism-dev/schism.git
+      ref: master
+    ufs-coastal:
+      repo: https://github.com/oceanmodeling/ufs-coastal.git
+      ref: feature/coastal_app
+
+  targets:
+    ufs_datm2sch:
+      kind: ufs
+      source: ufs-coastal
+      toolchain: ufs_esmf890
+      compile_id: datm2sch
+      exe_key: ufs_schism
+      make_opt: "-DAPP=CSTLS -DUSE_ATMOS=ON -DPREC_EVAP=ON -DNO_PARMETIS=ON -DOLDIO=ON -DPDLIB=ON -DBUILD_TOOLS=ON"
+
+    # HYCOM utilities: _noscaling (float HYCOM data) and _noscaling_lonshift
+    # (HYCOM 0-360 -> mesh -180..180); the right one is chosen at run time
+    # (hycom_lon_shift). ssh_max_3Dth: |SSH| limit of gen_3Dth (stock is 6).
+    hycom_utils:
+      kind: hycom_utils
+      source: schism
+      toolchain: schism_intel
+      ssh_max_3Dth: 20
+
+    combine_hotstart:
+      kind: combine_hotstart
+      source: schism
+      toolchain: schism_intel
+
+    combine_output_mpi:          # old-I/O output combiner (UFS runs)
+      kind: combine_output_mpi
+      source: schism
+      toolchain: schism_intel
+
+    # metis_prep + gpmetis + partition_offline.pl, for making partition.prop
+    partition_tools:
+      kind: partition_tools
+      source: schism
+      toolchain: schism_intel

@@ -1,0 +1,27 @@
+# Machine profile: MSU Hercules.
+# Everything a build needs that depends on the HPC. Adding another machine
+# means adding another file like this one (and, for UFS, its modulefile).
+name: hercules
+
+toolchains:
+  # Standalone SCHISM, SCHISM+WWM and the SCHISM utilities (classic Intel).
+  schism_intel:
+    modules:
+      - intel-oneapi-compilers/2022.2.1
+      - intel-oneapi-mpi/2021.7.1
+      - netcdf-fortran/4.6.0
+      - netcdf-c/4.9.0
+      - cmake
+      - python/3.10.8
+    fortran: ifort            # serial Fortran (utilities)
+    cc: icc                   # serial C (METIS)
+    mpi_fortran: mpiifort     # MPI Fortran; NOT mpif90 (GNU wrapper on Hercules)
+    # cmake cache shipped with SCHISM (<schism>/cmake/<file>): compilers,
+    # NetCDF paths (from $NETCDF_*_ROOT set by the modules) and flags.
+    schism_cache: SCHISM.local.hercules
+
+  # UFS-Coastal builds: spack-stack 1.9.2 with ESMF 8.9.0b14 (see the lua).
+  ufs_esmf890:
+    modulefile: hercules_ufs_esmf890.lua   # file in this directory, used verbatim
+    machine_id: hercules                   # 1st argument of ufs-coastal tests/compile.sh
+    rt_compiler: esmf890                   # 4th argument (modulefiles/ufs_<machine_id>.<rt_compiler>.lua)

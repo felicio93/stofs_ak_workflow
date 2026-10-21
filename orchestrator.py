@@ -117,6 +117,10 @@ def validate_config(cfg: dict):
               "lon_min must be less than lon_max")
         sys.exit(1)
 
+    if "build" in cfg:                      # optional build.yaml
+        from workflow.build.recipe import check_build
+        check_build(cfg)
+
 
 # Step names per phase. Used to warn when steps of another phase are enabled
 # and to validate --only.

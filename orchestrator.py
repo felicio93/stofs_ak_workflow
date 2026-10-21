@@ -136,6 +136,7 @@ PREPROCESS_STEPS = {
     "plot_hycom_outputs",
     "gen_wwmbnd", "gen_wwminput", "gen_ww3_shel", "gen_ww3_ounp",
 }
+BUILD_STEPS       = {"build_executables"}
 RUN_PHASE_STEPS   = {"setup_run", "submit_run"}
 POSTPROCESS_STEPS = {
     "plot_outputs", "plot_outputs_ww3", "station_skill", "wave_skill",
@@ -145,18 +146,26 @@ POSTPROCESS_STEPS = {
     "download_altimetry", "collocate_altimetry", "plot_altimetry",
 }
 _STEPS_BY_PHASE = {
+    "build":       BUILD_STEPS,
     "preprocess":  PREPROCESS_STEPS,
     "run":         RUN_PHASE_STEPS,
     "postprocess": POSTPROCESS_STEPS,
-    "all":         PREPROCESS_STEPS | RUN_PHASE_STEPS | POSTPROCESS_STEPS,
+    "all":         (BUILD_STEPS | PREPROCESS_STEPS | RUN_PHASE_STEPS
+                    | POSTPROCESS_STEPS),
 }
 
 
-def validate_only(phase: str, only: str):
-    """Exit with a clear message when --only is not a step of `phase`."""
+def validate_only(phase: str, only: str, cfg: Optional[dict] = None):
+    """Exit with a clear message when --only is not a step of `phase`.
+
+    For --phase build, the target names of build.yaml are valid too.
+    """
     if only is None or only in _STEPS_BY_PHASE[phase]:
         return
-    owner = [ph for ph in ("preprocess", "run", "postprocess")
+    if phase == "build" and cfg and only in (
+            (cfg.get("build") or {}).get("targets") or {}):
+        return
+    owner = [ph for ph in ("build", "preprocess", "run", "postprocess")
              if only in _STEPS_BY_PHASE[ph]]
     print(f"ERROR: '{only}' is not a step of --phase {phase}.")
     if owner:
@@ -164,8 +173,11 @@ def validate_only(phase: str, only: str):
               f"stofs-ak --run --phase {owner[0]} --only {only} "
               f"--config <cfg>")
     else:
+        valid = set(_STEPS_BY_PHASE[phase])
+        if phase == "build" and cfg:
+            valid |= set((cfg.get("build") or {}).get("targets") or {})
         print(f"  Valid steps for --phase {phase}: "
-              f"{', '.join(sorted(_STEPS_BY_PHASE[phase]))}")
+              f"{', '.join(sorted(valid))}")
     sys.exit(2)
 
 
@@ -289,10 +301,12 @@ def run_workflow(cfg: dict, config_dir: Path, phase: str = "preprocess",
     """Build the model driver from cfg['model_type'] and run one or all phases.
 
     phase is one of:
+      build                 — compile the executables of build.yaml (skipped
+                              when up to date)
       preprocess  (default) — data downloads + model input generation
       run                   — populate run dirs + launch monthly runs
       postprocess           — output plots, validation, skill metrics
-      all                   — preprocess -> run -> postprocess in sequence
+      all                   — build -> preprocess -> run -> postprocess
 
     When phase='all', the orchestrator inserts a wait barrier between the
     preprocess and run phases.
@@ -300,7 +314,7 @@ def run_workflow(cfg: dict, config_dir: Path, phase: str = "preprocess",
     _phase_mismatch_warnings(cfg, phase, only)
 
     driver = make_driver(cfg, config_dir)
-    phases = (["preprocess", "run", "postprocess"]
+    phases = (["build", "preprocess", "run", "postprocess"]
               if phase == "all" else [phase])
 
     _preprocess_slurm_jobs = []
@@ -319,7 +333,11 @@ def run_workflow(cfg: dict, config_dir: Path, phase: str = "preprocess",
             print(f"  (restricted to step: {only})")
         print(f"{'='*60}\n")
 
-        if ph == "preprocess":
+        if ph == "build":
+            from workflow.build.runner import run_build_phase
+            run_build_phase(cfg, config_dir, only=only)
+
+        elif ph == "preprocess":
             result = driver.preprocess(only=only)
             if isinstance(result, list):
                 _preprocess_slurm_jobs = [j for j in result if j]
@@ -510,13 +528,15 @@ def main():
     )
     parser.add_argument(
         "--phase", default="preprocess",
-        choices=("preprocess", "run", "postprocess", "all"),
+        choices=("build", "preprocess", "run", "postprocess", "all"),
         help=(
             "Which phase to run with --run (default: preprocess). "
+            "build = compile the executables of build.yaml "
+            "(skipped when up to date); "
             "preprocess = download + model inputs; "
             "run = populate run dirs + launch monthly runs; "
             "postprocess = output plots + validation; "
-            "all = preprocess -> run -> postprocess in sequence"
+            "all = build -> preprocess -> run -> postprocess in sequence"
         )
     )
     parser.add_argument(
@@ -534,7 +554,7 @@ def main():
     cfg = load_config(config_dir)
     validate_config(cfg)
     if args.run:
-        validate_only(args.phase, args.only)
+        validate_only(args.phase, args.only, cfg)
 
     if args.init:
         init_project(cfg)

@@ -94,7 +94,7 @@ BUILD_KINDS = {
 EXE_KEY = {"schism": "schism", "schism_wwm": "schism_wwm",
            "ufs_schism": "ufs_schism", "ufs_schism_ww3": "ufs_schism_ww3"}
 
-ALL_STEPS = (orch.PREPROCESS_STEPS | orch.RUN_PHASE_STEPS
+ALL_STEPS = (orch.BUILD_STEPS | orch.PREPROCESS_STEPS | orch.RUN_PHASE_STEPS
              | orch.POSTPROCESS_STEPS)
 
 

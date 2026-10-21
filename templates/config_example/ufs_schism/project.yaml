@@ -113,6 +113,12 @@ slurm:
   plot_mem: "16G"
   inspect_walltime: "00:10:00"
   inspect_mem: "16G"
+  # Build jobs (workflow.build); UFS builds compile much more
+  build_cpus: 8
+  build_mem: "16G"
+  build_walltime: "02:00:00"
+  build_ufs_mem: "32G"
+  build_ufs_walltime: "03:00:00"
   schism_walltime: "01:00:00"
   schism_mem: "8G"
   hotstart_walltime: "01:00:00"

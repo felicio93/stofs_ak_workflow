@@ -13,6 +13,11 @@
 #     stofs-ak --run --phase run         --config <config_dir>
 #     stofs-ak --run --phase postprocess --config <config_dir>
 #
+# Phase B — Build (SLURM): compile the executables listed in build.yaml into M{ID}/bin/.
+# Targets already built (same recipe) are skipped. Runs first in --phase all, or alone with:
+#     stofs-ak --run --phase build --config <config_dir>      (--only <target> for one)
+build_executables: true
+
 # Phase 0 — Mesh diagnostics (SLURM job, run before any other step):
 inspect_mesh: true   # Plot all fix/ input files + mesh resolution + vertical layers
 

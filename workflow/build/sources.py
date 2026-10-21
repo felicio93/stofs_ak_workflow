@@ -40,14 +40,21 @@ def _resolve(dest: Path, ref: str) -> str:
     sys.exit(1)
 
 
+_SYNCED = {}        # (source dir, ref) -> info; one sync per source per run
+
+
 def sync_source(cfg: dict, name: str) -> dict:
     """Clone or update source `name` and check out its ref.
 
     Returns a dict describing exactly what was checked out (repo, ref,
-    resolved commit, describe, commit date, submodule commits).
+    resolved commit, describe, commit date, submodule commits).  Targets
+    sharing a source trigger a single fetch per invocation.
     """
     src  = cfg["build"]["sources"][name]
     dest = source_dir(cfg, name)
+    key  = (str(dest), src["ref"])
+    if key in _SYNCED:
+        return _SYNCED[key]
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     if not dest.exists():
@@ -89,4 +96,5 @@ def sync_source(cfg: dict, name: str) -> dict:
                        out("submodule", "status", "--recursive").splitlines()],
     }
     print(f"  {name}: {src['ref']} -> {commit[:8]} ({info['describe']})")
+    _SYNCED[key] = info
     return info

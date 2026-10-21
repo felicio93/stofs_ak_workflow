@@ -33,6 +33,7 @@ conda_envs:
   plot_datm: swf_plot
   gen_esmf_mesh: swf_main
   plot_hycom: swf_plot
+  plot_hycom_outputs: swf_plot
   plot_outputs:   swf_plot   # Phase 5 field output GIFs
   compare_sst:    swf_plot   # Phase 5 model-vs-satellite SST
   download_sst:   swf_main   # Phase 5 satellite SST download (DTN + NCO)

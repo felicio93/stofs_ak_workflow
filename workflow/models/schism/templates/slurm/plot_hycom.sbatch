@@ -1,6 +1,7 @@
 #!/bin/bash --login
 # =============================================================================
-# SLURM job array template for plot_hycom debug GIFs.
+# SLURM job array template for plot_hycom (debug GIFs, and with --outputs the
+# verification of the HYCOM-derived inputs).
 # One array task per group. Works for monthly (YYYYMM) and ndays (YYYYMMDD).
 # Rendered/submitted by workflow.diagnostics.submit_plots.
 # =============================================================================
@@ -12,8 +13,8 @@
 #SBATCH -n 1
 #SBATCH --mem={{MEM_PER_TASK}}
 #SBATCH -t {{WALLTIME}}
-#SBATCH -o {{LOGDIR}}/plot_hycom_%a.out
-#SBATCH -e {{LOGDIR}}/plot_hycom_%a.err
+#SBATCH -o {{LOGDIR}}/{{LOGNAME}}_%a.out
+#SBATCH -e {{LOGDIR}}/{{LOGNAME}}_%a.err
 #SBATCH --mail-user={{MAILUSER}}
 #SBATCH --mail-type=NONE
 

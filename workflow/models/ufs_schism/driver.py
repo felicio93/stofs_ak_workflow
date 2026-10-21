@@ -337,6 +337,7 @@ class UfsSchismDriver(ModelDriver):
         else:
             print("[SKIP] gen_param")
 
+        _gen_hycom_jobs = []
         if en("gen_hotstart"):
             print("[STEP] gen_hotstart")
             from workflow.models.schism.preprocess.gen_hycom_utils import (
@@ -345,6 +346,7 @@ class UfsSchismDriver(ModelDriver):
             jid = submit_gen_hotstart(cfg, config_dir)
             if jid:
                 _slurm_jobs.append(jid)
+                _gen_hycom_jobs.append(jid)
         else:
             print("[SKIP] gen_hotstart")
 
@@ -356,6 +358,7 @@ class UfsSchismDriver(ModelDriver):
             jid = submit_gen_3Dth(cfg, config_dir)
             if jid:
                 _slurm_jobs.append(jid)
+                _gen_hycom_jobs.append(jid)
         else:
             print("[SKIP] gen_3Dth")
 
@@ -367,8 +370,21 @@ class UfsSchismDriver(ModelDriver):
             jid = submit_gen_nudge(cfg, config_dir)
             if jid:
                 _slurm_jobs.append(jid)
+                _gen_hycom_jobs.append(jid)
         else:
             print("[SKIP] gen_nudge")
+
+        if en("plot_hycom_outputs"):
+            print("[STEP] plot_hycom_outputs")
+            from workflow.diagnostics.submit_plots import (
+                submit_plot_hycom_outputs,
+            )
+            jid = submit_plot_hycom_outputs(
+                cfg, config_dir, after_jobids=_gen_hycom_jobs)
+            if jid:
+                _slurm_jobs.append(jid)
+        else:
+            print("[SKIP] plot_hycom_outputs")
 
         # WWM-only steps: skip silently for UFS-SCHISM
         for step in ("gen_wwmbnd", "gen_wwminput"):

@@ -129,6 +129,7 @@ PREPROCESS_STEPS = {
     "gen_model_configure", "copy_modulefiles", "gen_ufs_configure",
     "gen_estuary", "gen_bctides", "gen_source", "gen_param",
     "gen_sflux", "gen_hotstart", "gen_3Dth", "gen_nudge",
+    "plot_hycom_outputs",
     "gen_wwmbnd", "gen_wwminput", "gen_ww3_shel", "gen_ww3_ounp",
 }
 RUN_PHASE_STEPS   = {"setup_run", "submit_run"}
@@ -376,6 +377,7 @@ _SENTINELS = {
     # Diagnostics sentinels (in D{pid}/{prefix}_{gid}/)
     "ddir": [
         "plot_hycom.done",
+        "plot_hycom_outputs.done",
         "plot_sflux.done",
         "plot_datm.done",
     ],

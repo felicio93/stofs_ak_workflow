@@ -50,6 +50,8 @@ gen_sflux:    true   # Step E: ERA5 raw -> sflux_air/prc/rad per month (SLURM ar
 gen_hotstart: true   # Step F: create hotstart.nc (once, first month only, SLURM)
 gen_3Dth:     true   # Step G: create *[23D].th.nc files (SLURM array, one job per month)
 gen_nudge:    true   # Step H: create TEM/SAL_nu.nc files (SLURM array, one job per month)
+plot_hycom_outputs: true   # Verify + plot the inputs built from HYCOM (th files, nudging, hotstart);
+                           # fails if they are missing, empty or constant (SLURM array)
 
 # WW3 modules (UFS-SCHISM+WW3 only):
 gen_ww3_shel: true   # Step WW3-A: generate ww3_shel.nml per group from fix/ww3_shel.nml

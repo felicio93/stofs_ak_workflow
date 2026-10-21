@@ -20,8 +20,8 @@ from pathlib import Path
 
 import yaml
 
-from workflow.build.builder import build_dir, sentinel
-from workflow.build.recipe import load_machine, recipe_hash
+from workflow.build.builder import build_dir, sentinel, target_hash
+from workflow.build.recipe import load_machine
 from workflow.core.config import load_config, model_dir
 
 
@@ -56,6 +56,24 @@ def _install_schism(cfg: dict, t: dict, bdir: Path) -> list:
     return [(name, exes[0].name)]
 
 
+def _install_manifest(cfg: dict, bdir: Path, metas: dict) -> list:
+    """Install the files listed in install_manifest.json (utility kinds)."""
+    manifest = json.loads((bdir / "install_manifest.json").read_text())
+    out = []
+    for item in manifest:
+        built = bdir / item["built"]
+        if not built.exists():
+            print(f"ERROR: expected build product missing: {built}")
+            sys.exit(1)
+        dest = model_dir(cfg) / "bin" / item["name"]
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(built, dest)
+        dest.chmod(0o755)
+        metas[item["name"]] = item.get("meta") or {}
+        out.append((item["name"], built.name))
+    return out
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--config", required=True)
@@ -70,14 +88,15 @@ def main(argv=None):
     machine = load_machine(str(cfg["build"]["machine"]))
     tc      = machine["toolchains"][t["toolchain"]]
 
+    metas = {}
     if t["kind"] == "schism":
         installed = _install_schism(cfg, t, bdir)
     else:
-        raise NotImplementedError(t["kind"])
+        installed = _install_manifest(cfg, bdir, metas)
 
     now   = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
     mods  = [m for m in os.environ.get("LOADEDMODULES", "").split(":") if m]
-    h     = recipe_hash(cfg, target)
+    h     = target_hash(cfg, target)
     entry = {}
     for name, built in installed:
         path = model_dir(cfg) / "bin" / name
@@ -94,6 +113,7 @@ def main(argv=None):
             "fortran": _first_line([tc.get("fortran", "ifort"), "--version"]),
             "cmake": _first_line(["cmake", "--version"]),
             "options": t.get("options"),
+            "details": metas.get(name) or None,
             "source": info,
         }
 

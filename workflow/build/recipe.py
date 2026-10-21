@@ -134,12 +134,13 @@ def validate_build(cfg: dict) -> list:
     return errs
 
 
-def recipe_hash(cfg: dict, target: str) -> str:
+def recipe_hash(cfg: dict, target: str, code: str = "") -> str:
     """Fingerprint of everything that determines the result of `target`.
 
     Covers the target block, its source (repo + ref, not the resolved commit:
     a moving branch does not trigger rebuilds by itself), the toolchain
-    definition and the modulefile text.
+    definition, the modulefile text and `code`, a fingerprint of the code that
+    builds the target (compile commands, patches, job template).
     """
     b = cfg["build"]
     t = b["targets"][target]
@@ -152,6 +153,7 @@ def recipe_hash(cfg: dict, target: str) -> str:
         "toolchain": tc,
         "modulefile": (modulefile_text(machine, t["toolchain"])
                        if "modulefile" in tc else None),
+        "code": code,
     }
     blob = json.dumps(parts, sort_keys=True, default=str)
     return hashlib.sha256(blob.encode()).hexdigest()[:12]

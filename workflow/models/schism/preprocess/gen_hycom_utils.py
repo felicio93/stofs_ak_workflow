@@ -47,6 +47,7 @@ from pathlib import Path
 import netCDF4 as nc4
 import numpy as np
 
+from workflow.build.hycom_patches import lonshift_name
 from workflow.core.config import (
     list_groups,
     model_dir,
@@ -167,12 +168,6 @@ def _mesh_lons(path: Path):
     return _MESH_LON_CACHE[key]
 
 
-def _lonshift_name(exe: str) -> str:
-    """gen_3Dth_from_hycom_noscaling.exe -> ..._noscaling_lonshift.exe"""
-    stem, dot, ext = exe.rpartition(".")
-    return f"{stem}_lonshift.{ext}" if dot else f"{exe}_lonshift"
-
-
 def _fraction_inside(lons, xlon) -> float:
     """Fraction of mesh nodes that fall inside the HYCOM longitude range."""
     return float(np.mean((lons >= xlon.min()) & (lons <= xlon.max())))
@@ -247,7 +242,7 @@ def _select_hycom_exe(cfg: dict, mdir: Path, groups: list, key: str) -> str:
               f"(widen the download box; a mesh crossing 180 needs "
               f"lon_reference \"360\").")
 
-    name = _lonshift_name(base) if use_shift else base
+    name = lonshift_name(base) if use_shift else base
     if not (mdir / "bin" / name).exists():
         print(f"  ERROR: executable not found in M*/bin/: {name}")
         print("  Copy the compiled _noscaling executables into bin/ first.")

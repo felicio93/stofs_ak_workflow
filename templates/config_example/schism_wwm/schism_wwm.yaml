@@ -51,6 +51,15 @@ open_boundaries: [1, 2]
 # Time step of the HYCOM input data in seconds (daily data = 86400).
 hycom_dt: 86400.0
 
+# Longitude handling of the HYCOM utilities (gen_hotstart, gen_3Dth, gen_nudge).
+# They do not convert longitudes, so hgrid.ll and the HYCOM stacks must share
+# one convention. Before submitting, the workflow compares both and uses the
+# plain executable or its _lonshift variant (HYCOM 0-360 -> -180..180).
+#   auto  : choose by comparing hgrid.ll with the HYCOM longitudes (default)
+#   true  : always use the _lonshift executables
+#   false : never shift
+hycom_lon_shift: auto
+
 # Output stride for the nudging timeseries (1 = output every input timestep).
 nudge_stride: 1
 

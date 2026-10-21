@@ -60,7 +60,8 @@ DEAD_KEYS = {
 SCHISM_KEYS = {
     "estuary_temp", "estuary_sal", "outside_temp", "outside_sal",
     "open_boundary_flags", "tobc", "sobc", "tidal_constituents",
-    "tidal_cutoff_depth", "open_boundaries", "hycom_dt", "nudge_stride",
+    "tidal_cutoff_depth", "open_boundaries", "hycom_dt", "hycom_lon_shift",
+    "nudge_stride",
     "nbin", "mne_bin", "chain_hotstart",
 }
 MODEL_KEYS = {

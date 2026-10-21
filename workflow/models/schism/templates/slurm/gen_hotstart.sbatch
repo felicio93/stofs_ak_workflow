@@ -24,6 +24,9 @@ module load intel-oneapi-mpi/2021.7.1
 module load netcdf-fortran/4.6.0
 module load netcdf-c/4.9.0
 
+# The utilities crash on Hercules with the default stack size
+ulimit -s unlimited || echo "WARNING: could not raise the stack limit"
+
 echo "=== gen_hotstart for group {{GROUP}} ==="
 echo "Working dir: $(pwd)"
 
@@ -43,12 +46,24 @@ done
 [ -L "{{HOTSTART_EXE}}" ]   || ln -sf {{BINDIR}}/{{HOTSTART_EXE}} .
 
 echo ""
-echo "  REMINDER: _noscaling executable -- expects unpacked floats."
-echo "  REMINDER: lon=lon-360 is commented out -- both mesh and HYCOM on 0-360."
+echo "  Executable: {{HOTSTART_EXE}}  (expects UNPACKED float HYCOM data)"
 echo ""
 
 # Run the executable
 ./{{HOTSTART_EXE}}
+
+# A Fortran `stop` exits with status 0, so the exit code alone cannot tell
+# success from failure.  The utilities write fatal errors to fort.11, which
+# is created for every run and stays empty on success.
+if [ -s fort.11 ]; then
+    echo "ERROR: {{HOTSTART_EXE}} reported a fatal error (fort.11):"
+    cat fort.11
+    exit 1
+fi
+if [ ! -s hotstart.nc ]; then
+    echo "ERROR: hotstart.nc was not written"
+    exit 1
+fi
 
 # Write sentinel on success
 touch gen_hotstart.done

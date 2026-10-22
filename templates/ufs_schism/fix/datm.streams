@@ -1,0 +1,15 @@
+stream_info:               atm.01
+taxmode01:                 limit
+mapalgo01:                 redist
+tInterpAlgo01:             linear
+readMode01:                single
+dtlimit01:                 1.5
+stream_offset01:           0
+yearFirst01:               @[YYYY_FIRST]
+yearLast01:                @[YYYY_LAST]
+yearAlign01:               @[YYYY_FIRST]
+stream_vectors01:          null
+stream_mesh_file01:        "@[DATM_INPUT_DIR]/@[DATM_MESH_FILE]"
+stream_lev_dimname01:      null
+stream_data_files01:       "@[DATM_INPUT_DIR]/@[DATM_FORCING_FILE]"
+stream_data_variables01:   "UGRD_10maboveground Sa_u10m" "VGRD_10maboveground Sa_v10m" "MSLMA_meansealevel Sa_pslv" "TMP_2maboveground Sa_t2m" "SPFH_2maboveground Sa_q2m" "DSWRF_surface Faxa_swnet" "DLWRF_surface Faxa_lwdn" "PRATE_surface Faxa_rain"

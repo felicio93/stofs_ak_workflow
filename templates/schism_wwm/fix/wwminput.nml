@@ -1,0 +1,518 @@
+! =============================================================================
+! wwminput.nml — WWM configuration for SCHISM+WWM coupled run
+! Project: M03 / STOFS-AK Alaska/Bering Sea domain
+! =============================================================================
+!
+! Key coupling parameters (must be consistent with param.nml):
+!   DELTC    = dt * nstep_wwm = 60 * 10 = 600 s
+!   MDC      = mdc2 = 30
+!   MSC      = msc2 = 24
+!   DMIN     = h0   = 0.01 m
+!   LHOTR    = .false. for cold start (month 1); .true. for hotstart (month 2+)
+!              (gen_wwminput sets this automatically from ihot in param.nml)
+!
+! Boundary conditions (closed domain — first iteration):
+!   LBCSE  = F  (no time-varying external wave boundary data)
+!   LBCWA  = T  (parametric JONSWAP spectra at open boundaries)
+!   LINHOM = F  (spatially uniform boundary condition)
+!   wwmbnd.gr3 is still required — it defines which nodes are on the open
+!   boundary (flag=2) vs Neumann (flag=3) vs interior (flag=0).
+!   For a fully closed domain (all Neumann), set all flags to 3 in wwmbnd.gr3.
+!
+! Notes on hotstart:
+!   (1) generate hotstart outputs from WWM via &HOTFILE (LHOTF=T).
+!       Match DELTC in &HOTFILE with nhot_write*dt in SCHISM so both models
+!       write hotstarts at the same time.
+!       Use HOTSTYLE_OUT=2 (netcdf), MULTIPLEOUT=0 (single file), LCYCLEHOT=T
+!       (2 records: most recent first).
+!   (2) To restart: copy hotfile_out_WWM.nc -> hotfile_in_WWM.nc,
+!       set LHOTR=T in &INIT, adjust BEGTC in all sections.
+!       Then set ihot>0 in param.nml as usual for SCHISM.
+!   NOTE: gen_wwminput sets BEGTC/ENDTC/LHOTR automatically each month.
+! =============================================================================
+
+&PROC
+ PROCNAME       = 'R03_202509'       ! Project Name (set by gen_wwminput: R{ID}_{YYYYMM})
+ DIMMODE        = 2                  ! Mode of run (ex: 1 = 1D, 2 = 2D) always 2D when coupled to SCHISM
+ LSTEA          = F                  ! steady mode; under development
+ LQSTEA         = F                  ! Quasi-Steady Mode; In this case WWM-II is doing subiterations defined as DELTC/NQSITER unless QSCONVI is not reached
+ LSPHE          = T                  ! Spherical coordinates (lon/lat) — must be T for ics=2 in SCHISM
+ LNAUTIN        = T                  ! Nautical convention for all inputs given in degrees (suggestion: T)
+                                     ! If T, 0 is _from_ north, 90 is from east etc;
+                                     ! If F, maths. convention - 0: to east; 90: going to north
+ LMONO_IN       = F
+ LMONO_OUT      = F
+ LNAUTOUT       = T                  ! Nautical output of all quantities in degrees
+ BEGTC          = '20251201.000000'  ! Time for start the simulation, ex:yyyymmdd.hhmmss
+                                     ! (set automatically by gen_wwminput from param.nml start date)
+ DELTC          = 600.0              ! Time step in SEC (MUST match dt*nstep_wwm in SCHISM!)
+                                     ! dt=60s * nstep_wwm=10 = 600s
+ UNITC          = 'SEC'              ! Unity of time step
+ ENDTC          = '20260101.000000'  ! Time for stop the simulation, ex:yyyymmdd.hhmmss
+                                     ! (set automatically by gen_wwminput from param.nml start+rnday)
+ DMIN           = 0.01               ! Minimum water depth. This must be the same as h0 in SCHISM
+/
+
+&COUPL
+ LCPL           = T                  ! Couple with current model — main switch, keep T for SCHISM-WWM
+ LROMS          = F                  ! ROMS (set as F)
+ LTIMOR         = F                  ! TIMOR (set as F)
+ LSHYFEM        = F                  ! SHYFEM (set as F)
+ RADFLAG        = 'LON'              ! Radiation stress formulation: LON (Roland et al. 2008)
+                                     ! Use VOR for vortex force formulation (requires fwvor_* in param.nml)
+ LETOT          = F                  ! Option to compute wave-induced radiation stress.
+                                     ! F: estimated from directional spectra (Roland et al. 2008) — recommended
+                                     ! T: based on integrated wave spectrum — only for testing
+ NLVT           = 10                 ! Number of vertical layers; not used when coupled to SCHISM
+ DTCOUP         = 600.               ! Couple time step — not used when coupled to SCHISM
+/
+
+&GRID
+ LCIRD          = T                  ! Full circle in directional space
+ LSTAG          = F                  ! Stagger directional bins with half Dtheta; use F for unstructured grids
+ MINDIR         = 0.                 ! Minimum direction (degrees, nautical); not used if LCIRD=T
+ MAXDIR         = 360.               ! Maximum direction (degrees); not used if LCIRD=T
+ MDC            = 30                 ! Number of directional bins (must match mdc2 in param.nml)
+ FRLOW          = 0.04               ! Low frequency limit (Hz; 1/period)
+ FRHIGH         = 1.0                ! High frequency limit (Hz)
+ MSC            = 24                 ! Number of frequency bins (must match msc2 in param.nml)
+ IGRIDTYPE      = 3                  ! Grid type: 3 = SCHISM unstructured grid
+ FILEGRID       = 'hgrid_WWM.gr3'   ! Grid file name (IGRIDTYPE=3 requires hgrid_WWM.gr3)
+ LSLOP          = F                  ! Bottom slope limiter (default=F)
+ SLMAX          = 0.2                ! Max slope (used if LSLOP=T)
+ LVAR1D         = F                  ! Variable dx for 1D mode; not used with SCHISM
+ LOPTSIG        = F                  ! Optimize sigma grid; usually F
+ CART2LATLON    = F                  ! Convert Cartesian to lon/lat; F for ics=2
+ LATLON2CART    = F                  ! Convert lon/lat to Cartesian; F for ics=2
+ APPLY_DXP_CORR = F                  ! Apply correction for dx in propagation; usually F
+ USE_EXACT_FORMULA_SPHERICAL_AREA = T ! Use exact formula for spherical element areas; T recommended for global/large domains
+/
+
+&INIT
+ LHOTR          = F                  ! Use hotstart file (see &HOTFILE for input file name)
+                                     ! Set to F for cold start (month 1), T for hotstart (month 2+)
+                                     ! gen_wwminput sets this automatically from ihot in param.nml
+ LINID          = F                  ! Initial condition: F=default (flat spectrum); T=read from file (e.g. WW3)
+ INITSTYLE      = 1                  ! 1: Parametric JONSWAP; 2: Read from global NETCDF (IBOUNDFORMAT=3)
+/
+
+&BOUC
+ ! Closed domain configuration (first iteration — no external wave boundary data).
+ ! wwmbnd.gr3 is still required to define boundary node flags:
+ !   flag 0: interior node (not on boundary)
+ !   flag 2: active boundary (Dirichlet) — wave energy prescribed
+ !   flag 3: Neumann boundary (zero gradient) — use for closed domain
+ ! For a fully closed domain set all open boundary nodes to flag=3 in wwmbnd.gr3.
+ LBCSE          = F                  ! Wave boundary data is NOT time dependent (closed domain)
+ LBINTER        = F                  ! Interpolation in time; only used if LBCSE=T
+ LBCWA          = T                  ! Parametric wave spectra at boundaries (JONSWAP)
+                                     ! With LINHOM=F, spatially uniform parametric b.c. applied
+ LINHOM         = F                  ! Non-uniform wave b.c. in space (F=uniform; T=spatially varying)
+ LBCSP          = F                  ! Prescribed non-parametric spectra; F for closed domain
+ LINDSPRDEG     = F                  ! Directional spreading in degrees (T) or exponent (F)
+ LPARMDIR       = F                  ! Read directional spreading from WBDS; only for 1D spectra
+ FILEWAVE       = 'wwmbnd.gr3'       ! Boundary file for discrete wave spectra (not used if LBCSP=F)
+ LBSP1D         = F                  ! 1D (freq. only) format for FILEWAVE; only if LBCSP=T and LINHOM=F
+ LBSP2D         = F                  ! 2D (freq.+dir.) format; not functional
+
+ BEGTC          = '20251201.000000'  ! Begin time of wave boundary file (set by gen_wwminput)
+ DELTC          = 1                  ! Time step in boundary file
+ UNITC          = 'HR'               ! Unit: HR, MIN, SEC
+ ENDTC          = '20260101.000000'  ! End time (set by gen_wwminput)
+ FILEBOUND      = 'wwmbnd.gr3'       ! Boundary flag file (flag 0/2/3 per node)
+ IBOUNDFORMAT   = 1                  ! 1=WWM format; 3=WW3 netcdf (LBCWA=T only); 6=WW3 with LBCSP=T
+
+ ! Parametric JONSWAP boundary conditions (used when LBCWA=T and LINHOM=F)
+ ! These apply at active boundary nodes (flag=2 in wwmbnd.gr3).
+ ! For fully closed domain (all flag=3), these values are not actually used
+ ! but must be present in the namelist.
+ WBHS           = 2.0                ! Hs at boundary for parametric spectra [m]
+ WBSS           = 2                  ! Spectrum shape: 2=JONSWAP (peak period); -2=JONSWAP (mean period)
+                                     ! 1=Pierson-Moskowitz; 3=all in one bin; 4=Gaussian
+ WBTP           = 12.0               ! Tp at boundary [s]; peak or mean depending on sign of WBSS
+ WBDM           = 80.0               ! Mean wave direction at boundary [degrees, nautical]
+ WBDSMS         = 1                  ! Directional spreading: 1=degrees; 2=exponent
+ WBDS           = 10.0               ! Directional spreading at boundary [degrees or exponent]
+ WBGAUSS        = 0.1                ! Gaussian factor if WBSS=4
+ WBPKEN         = 3.3                ! JONSWAP peak enhancement factor if WBSS=2
+
+ ! NETCDF variable names (only needed if IBOUNDFORMAT=3, i.e. WW3 netcdf input)
+ NCDF_HS_NAME   = 'hs'               ! Variable name for significant wave height
+ NCDF_DIR_NAME  = 'dir'              ! Variable name for mean wave direction
+ NCDF_SPR_NAME  = 'spr'              ! Variable name for directional spreading
+ NCDF_FP_NAME   = 'fp'               ! Variable name for peak frequency
+ NCDF_F02_NAME  = 't02'              ! Variable name for zero-downcrossing frequency
+/
+
+&WIND
+ ! Wind is now passed directly from SCHISM via the coupling interface.
+ ! This section is kept empty — do not set LSEWD=T when coupled to SCHISM.
+/
+
+&CURR
+ ! Currents are now passed directly from SCHISM via the coupling interface.
+ ! This section is kept empty — do not set LSECU=T when coupled to SCHISM.
+/
+
+&WALV
+ ! Water levels are now passed directly from SCHISM via the coupling interface.
+ ! This section is kept empty — do not set LSEWL=T when coupled to SCHISM.
+/
+
+&ENGS
+ ! Source term formulations — Ardhuin et al. (2010) ST4 physics package.
+ ! This is the same configuration used in R11b (Bering Sea production run).
+ MESNL          = 1                  ! Nonlinear interaction NL4: 1=on (DIA), 0=off
+ MESIN          = 1                  ! Wind input: 1=Ardhuin et al. (ST4, use LSOURCESWAM=F)
+                                     ! 2=ECMWF WAM Cycle 4; 3=Makin & Stam; 4=Babanin; 5=Cycle 3; 0=no wind
+ IFRIC          = 1                  ! Atmospheric BL formulation (IFRIC=1 for MESIN=1)
+ MESBF          = 1                  ! Bottom friction: 1=JONSWAP; 2=Madsen et al. (1989); 3=SHOWEX
+ FRICC          = 0.067              ! JONSWAP bottom friction coefficient [0.038–0.067] (if MESBF=1)
+                                     ! Physical bottom roughness if MESBF=2 (ignored if given in rough.gr3)
+ MESBR          = 1                  ! Shallow water wave breaking: 0=off; 1=on
+ IBREAK         = 1                  ! Breaking formulation: 1=Battjes & Janssen (1978)
+                                     ! 2=Thornton & Guza (1983, const); 3=Thornton & Guza (1983, skewed)
+                                     ! 4=van der Westhuysen (2010); 5=Baldock et al. (1998)
+                                     ! 6=Church & Thornton (1993)
+ ICRIT          = 1                  ! Breaking criterion: 1=constant breaker index (BRCR=gamma)
+                                     ! 2,6=gamma from local steepness (Battjes & Stive 1985)
+                                     ! 3=biphase threshold (for IBREAK=4)
+                                     ! 4=gamma_TG = a_BRCR*slope + b_BRCR
+                                     ! 5=gamma = a_BRCR*k_ph + b_BRCR (Ruessink et al. 2003)
+ BRCR           = 0.78               ! Breaker index gamma (IBREAK=1,5) or gamma_TG (IBREAK=2,3)
+ a_BRCR         = 0.76               ! Coefficient for ICRIT=4,5
+ b_BRCR         = 0.29               ! Coefficient for ICRIT=4,5
+ min_BRCR       = 0.25               ! Minimum breaker index for ICRIT=4,5
+ max_BRCR       = 0.8                ! Maximum breaker index for ICRIT=4,5
+ a_BIPH         = 0.2                ! Biphase coefficient (for IBREAK=3)
+ BR_COEF_METHOD = 1                  ! Breaking coefficient method: 1=constant; 2=adaptive
+ B_ALP          = 0.5                ! Breaking coefficient alpha (if BR_COEF_METHOD=2, use ~40)
+ ZPROF_BREAK    = 2                  ! Vertical distribution of wave breaking source term (3D runs)
+                                     ! 1=homogeneous; 2=cosh profile; 3–5=tanh profiles; 6=surface layers
+ BC_BREAK       = 1                  ! Depth-limited breaking at boundaries: 1=on; 0=off
+ IROLLER        = 0                  ! Wave roller model: 0=off; 1=on (not used at the moment)
+ ALPROL         = 0.85               ! Wave roller alpha coefficient [0,1]: 1=full conversion to roller
+ MEVEG          = 0                  ! Vegetation dissipation: 0=off; 1=on (requires isav=1 in param.nml)
+ LMAXETOT       = T                  ! Limit shallow water wave height by wave breaking limiter (recommended T)
+ MESDS          = 1                  ! Whitecapping: same value as MESIN (1=Ardhuin ST4)
+ MESTR          = 1                  ! Triad interactions: 0=off; 1=LTA (Eldeberky); 2=corrected LTA (Salmon 2016)
+ TRICO          = 0.1                ! Triad proportionality constant alpha_EB (default 0.1)
+ TRIRA          = 2.5                ! Max freq. / mean freq. ratio for triads (2.5 recommended)
+ TRIURS         = 0.1                ! Critical Ursell number; triads not computed if Ursell < TRIURS
+/
+
+&SIN4
+ ! Ardhuin et al. (2009, 2010, 2011) ST4 wind input coefficients.
+ ! BETAMAX controls the overall wind input strength — tune to your wind product:
+ !   ECMWF: ~1.52;  CFSR: ~1.34;  ERA5: ~1.54 (same as CFSR to first order)
+ ZWND           =  10.0              ! Wind reference height [m]
+ ALPHA0         =  9.499999694526196E-003  ! Charnock coefficient
+ Z0MAX          =  0.000000000000000E+000  ! Max roughness length [m] (0=no limit)
+ BETAMAX        =  1.54000000000000        ! Max wind input growth rate (tune to wind product)
+ SINTHP         =  2.00000000000000        ! Wind input directional exponent
+ ZALP           =  6.000000052154064E-003  ! Sheltering coefficient
+ TAUWSHELTER    =  0.300000011920929       ! Wind sheltering coefficient
+ SWELLFPAR      =  1.00000000000000        ! Swell dissipation parameter
+ SWELLF         =  0.660000026226044       ! Swell dissipation coefficient
+ SWELLF2        = -1.799999922513962E-002
+ SWELLF3        =  2.199999988079071E-002
+ SWELLF4        =  150000.000000000
+ SWELLF5        =  1.20000004768372
+ SWELLF6        =  0.000000000000000E+000
+ SWELLF7        =  360000.000000000
+ Z0RAT          =  3.999999910593033E-002  ! Roughness length ratio
+ SINBR          =  0.000000000000000E+000
+/
+
+&SDS4
+ ! Ardhuin et al. ST4 whitecapping dissipation coefficients.
+ SDSC1          =  0.000000000000000E+000
+ FXPM3          =  4.00000000000000
+ FXFM3          =  2.50000000000000
+ FXFMAGE        =  0.000000000000000E+000
+ SDSC2          = -2.200000017182902E-005
+ SDSCUM         = -0.403439998626709
+ SDSSTRAIN      =  0.000000000000000E+000
+ SDSC4          =  1.00000000000000
+ SDSC5          =  0.000000000000000E+000
+ SDSC6          =  0.300000011920929
+ SDSBR          =  8.999999845400453E-004  ! Breaking threshold
+ SDSBR2         =  0.800000011920929
+ SDSP           =  2.00000000000000
+ SDSISO         =  2.00000000000000
+ SDSBCK         =  0.000000000000000E+000
+ SDSABK         =  1.50000000000000
+ SDSPBK         =  4.00000000000000
+ SDSBINT        =  0.300000011920929
+ SDSHCK         =  1.50000000000000
+ SDSDTH         =  80.0000000000000
+ SDSCOS         =  2.00000000000000
+ SDSBRF1        =  0.500000000000000
+ SDSBRFDF       =  0.000000000000000E+000
+ SDSBM0         =  1.00000000000000
+ SDSBM1         =  0.000000000000000E+000
+ SDSBM2         =  0.000000000000000E+000
+ SDSBM3         =  0.000000000000000E+000
+ SDSBM4         =  0.000000000000000E+000
+ SDSHFGEN       =  0.000000000000000E+000
+ SDSLFGEN       =  0.000000000000000E+000
+ WHITECAPWIDTH  =  0.300000011920929
+ FXINCUT        =  0.000000000000000E+000
+ FXDSCUT        =  0.000000000000000E+000
+/
+
+&NUMS
+ ! Numerical methods — same as R11b production configuration.
+ ICOMP          = 3                  ! Integration: 0=fully explicit; 1=implicit geo.+explicit src;
+                                     ! 2=implicit geo.+semi-implicit src (SWAN); 3=fully implicit (recommended)
+ AMETHOD        = 7                  ! Geographical advection: 7=Gauss-Seidel implicit solver (recommended)
+                                     ! 1=N-scheme; 2=PSI/CN; 3=LFPSI/N2; 4=PETSc small; 5=PETSc large; 6=BCGS
+ ASPAR_LOCAL_LEVEL = 0               ! Memory/locality trade-off: 0=most memory; 10=least memory
+ SMETHOD        = 1                  ! Source term integration: 1=RK3+SI splitting (recommended)
+                                     ! 0=no source terms; 2=semi-implicit; 3=RK3; 4=dynamic splitting
+ DMETHOD        = 2                  ! Directional space method: 2=Ultimate QUICKEST (recommended)
+                                     ! 0=no advection; 1=CN/Euler implicit; 3=RK5-WENO; 4=FVM upwind
+ RTHETA         = 0.5                ! Weighting factor for DMETHOD=1 (Crank-Nicholson)
+ LITERSPLIT     = F                  ! T=double Strang split; F=simple split (more efficient)
+ LFILTERTH      = F                  ! CFL filter in directional space (usually F; WWMII always stable)
+ MAXCFLTH       = 1.0                ! Max CFL in theta space (used only if LFILTERTH=T)
+ FMETHOD        = 1                  ! Frequency space method: 1=Ultimate QUICKEST (best)
+ LFILTERSIG     = F                  ! Limit advection velocity in freq. space (usually F)
+ MAXCFLSIG      = 1.0                ! Max CFL in freq. space (used only if LFILTERSIG=T)
+ LLIMT          = T                  ! Action limiter switch (must mostly be T for stability)
+ LSIGBOUND      = F                  ! Apply theta-space scheme on wet land/island boundary
+ LTHBOUND       = F                  ! Apply sigma-space scheme on wet land/island boundary
+ LSOUBOUND      = F                  ! Apply source terms on wet land/island boundary (T if SMETHOD=6)
+ MELIM          = 1                  ! Action limiter formulation: 1=WAM group (1988); 2=Hersbach & Janssen (1999)
+                                     ! Use MELIM=1 + LIMFAK=0.1 for MESIN=1/MESDS=1 (ST4, Ardhuin)
+                                     ! Use MELIM=3 + LIMFAK=0.6 for MESIN=2/MESDS=2 (Cycle 4, ECMWF)
+ LIMFAK         = 0.1                ! Action limiter proportionality coefficient (see MELIM notes)
+ LDIFR          = F                  ! Phase-decoupled diffraction (Holthuijsen et al. 2003); T if needed
+ IDIFFR         = 1                  ! Diffraction method: 1=Holthuijsen; 2=Liau; 3=Toledo
+ LCONV          = F                  ! Estimate convergence criterion (quasi-steady mode only)
+ LCFL           = F                  ! Write CFL numbers to disk (use F to save time)
+ NQSITER        = 10                 ! Quasi-steady sub-divisions per WWM time step
+ QSCONV1        = 0.98               ! Convergence: fraction of points meeting abs. Hs criterion EPSH1
+ QSCONV2        = 0.98               ! Convergence: fraction of points meeting rel. Hs criterion EPSH2
+ QSCONV3        = 0.98               ! Convergence: fraction of points meeting rel. wave action criterion EPSH3
+ QSCONV4        = 0.98               ! Convergence: fraction of points meeting rel. wave period criterion EPSH4
+ QSCONV5        = 0.98               ! Convergence: fraction of points meeting rel. wave steepness criterion EPSH5
+ LEXPIMP        = F                  ! Implicit scheme for low freq. (only if ICOMP=0)
+ FREQEXP        = 0.1                ! Min. freq. for explicit scheme (only if LEXPIMP=T and ICOMP=0)
+ EPSH1          = 0.01               ! Convergence: rel. wave height |Hsold-Hs|/Hs
+ EPSH2          = 0.01               ! Convergence: abs. wave height |Hs-Hsold|
+ EPSH3          = 0.01               ! Convergence: rel. wave action sum
+ EPSH4          = 0.01               ! Convergence: rel. avg. wave steepness
+ EPSH5          = 0.01               ! Convergence: rel. avg. wave period
+ LVECTOR        = F                  ! Optimized propagation for large HPC (>128 CPUs); try F first
+ IVECTOR        = 2                  ! Vector flavor (used if LVECTOR=T):
+                                     ! 2=all bins same dt, single communication per sub-iteration (recommended)
+ LADVTEST       = F                  ! Test advection schemes (development only)
+ LCHKCONV       = T                  ! Compute convergence criteria (required for quasi-steady mode)
+ NB_BLOCK       = 3                  ! Number of blocks for block solver
+ WAE_SOLVERTHR  = 1.E-6              ! WAE solver convergence threshold
+ MAXITER        = 1000               ! Maximum solver iterations
+ LSOURCESWAM    = F                  ! Use ECMWF WAM Cycle 4 physics (F for Ardhuin ST4 / MESIN=1)
+ LNANINFCHK     = F                  ! Check for NaN/Inf during run (useful for debugging)
+ LZETA_SETUP    = F                  ! Wave setup contribution
+ ZETA_METH      = 0                  ! Wave setup method
+ PMIN           = 5.0                ! Minimum action density threshold
+ BLOCK_GAUSS_SEIDEL = T              ! Use block Gauss-Seidel solver (recommended)
+ LNONL          = F                  ! Non-linear solver
+ L_SOLVER_NORM  = F                  ! Normalize solver
+ DTMIN_DYN      = 1.0                ! Minimum dynamic time step [s]
+ NDYNITER       = 100                ! Maximum dynamic iterations
+ DTMIN_SIN      = 1.0                ! Min. sub-step for wind input [s]
+ DTMIN_SNL4     = 1.0                ! Min. sub-step for NL4 [s]
+ DTMIN_SDS      = 1.0                ! Min. sub-step for whitecapping [s]
+ DTMIN_SNL3     = 1.0                ! Min. sub-step for NL3 [s]
+ DTMIN_SBR      = 0.1                ! Min. sub-step for breaking [s]
+ DTMIN_SBF      = 1.0                ! Min. sub-step for bottom friction [s]
+ NDYNITER_SIN   = 10
+ NDYNITER_SNL4  = 10
+ NDYNITER_SDS   = 10
+ NDYNITER_SBR   = 10
+ NDYNITER_SNL3  = 10
+ NDYNITER_SBF   = 10
+ LACCEL         = F                  ! Acceleration (experimental)
+/
+
+! Output of statistical variables over the whole domain at specified times.
+&HISTORY
+ BEGTC          = '20251201.000000'  ! Start output time yyyymmdd.hhmmss (set by gen_wwminput)
+ DELTC          = 1                  ! Output time step (if < simulation dt, simulation dt is used)
+ UNITC          = 'SEC'              ! Unit
+ ENDTC          = '20260101.000000'  ! Stop output time (set by gen_wwminput)
+ DEFINETC       = 86400              ! File definition interval [s]: 86400=daily files; <0=single file
+ OUTSTYLE       = 'NO'               ! Output format: 'NO'=no output; 'NC'=netCDF; 'XFN'; 'SHP'
+                                     ! Use 'NO' to save disk space and I/O time (outputs go to SCHISM)
+ MULTIPLEOUT    = 0                  ! 0=single netcdf (MPI_GATHER); 1=per-process files
+ USE_SINGLE_OUT = T                  ! T=single precision output (default)
+ PARAMWRITE     = T                  ! Write physical parameterization to netcdf history file
+ GRIDWRITE      = T                  ! Write grid to netcdf history file
+ PRINTMMA       = F                  ! Print min/max/avg statistics during runtime
+ FILEOUT        = 'wwm_hist.dat'     ! Output filename
+ LWXFN          = T
+ ! Variable output flags (all F since OUTSTYLE='NO')
+ HS             = F                  ! significant wave height
+ TM01           = F                  ! mean period TM01
+ TM02           = F                  ! zero-crossing mean period TM02
+ KLM            = F                  ! mean wave number
+ WLM            = F                  ! mean wave length
+ ETOTC          = F
+ ETOTS          = F
+ DM             = F                  ! mean wave direction
+ DSPR           = F                  ! directional spreading
+ TPPD           = F
+ TPP            = F
+ CPP            = F
+ WNPP           = F                  ! peak wave number
+ CGPP           = F                  ! peak group speed
+ KPP            = F
+ LPP            = F
+ PEAKD          = F                  ! peak direction
+ PEAKDSPR       = F                  ! peak directional spreading
+ DPEAK          = F
+ UBOT           = F
+ ORBITAL        = F
+ BOTEXPER       = F
+ TMBOT          = F
+ URSELL         = F
+ UFRIC          = F
+ Z0             = F
+ ALPHA_CH       = F
+ WINDX          = F
+ WINDY          = F
+ CD             = F
+ CURRTX         = F
+ CURRTY         = F
+ WATLEV         = F
+ WATLEVOLD      = F
+ DEP            = F
+ TAUW           = F
+ TAUHF          = F
+ TAUTOT         = F
+ STOKESSURFX    = F
+ STOKESSURFY    = F
+ STOKESBAROX    = F
+ STOKESBAROY    = F
+/
+
+&STATION
+ ! Station output — populated automatically by gen_wwminput from fix/station.in.
+ ! All surface stations (depth=0.0) in station.in are included.
+ BEGTC          = '20251201.000000'  ! Start time (set by gen_wwminput)
+ DELTC          = 1800.0             ! Output interval [s] (30 min)
+ UNITC          = 'SEC'
+ ENDTC          = '20260101.000000'  ! End time (set by gen_wwminput)
+ DEFINETC       = 86400              ! File definition interval [s]
+ OUTSTYLE       = 'NC'               ! Output format: 'NC'=netCDF; 'STE'=ASCII; 'NO'=no output
+ MULTIPLEOUT    = 0
+ USE_SINGLE_OUT = T
+ PARAMWRITE     = T
+ FILEOUT        = 'wwm_sta.dat'
+ LOUTITER       = F
+ IOUTS          = 1                  ! Number of stations (set by gen_wwminput from station.in)
+ NOUTS          = 'placeholder',     ! Station names (set by gen_wwminput)
+ XOUTS          = 0.0,               ! Longitudes (set by gen_wwminput)
+ YOUTS          = 0.0,               ! Latitudes (set by gen_wwminput)
+ CUTOFF         = 1*0.35             ! Cutoff frequency per station (set by gen_wwminput: N*value)
+ LSP1D          = T                  ! 1D spectral station output
+ LSP2D          = T                  ! 2D spectral station output
+ LSIGMAX        = T                  ! Adjust output to cutoff frequency
+ HS             = T                  ! significant wave height
+ TM01           = T                  ! mean period TM01
+ TM02           = T
+ KLM            = F
+ WLM            = F
+ ETOTC          = F
+ ETOTS          = F
+ DM             = T                  ! mean wave direction
+ DSPR           = F
+ TPPD           = F
+ TPP            = F
+ CPP            = F
+ WNPP           = F
+ CGPP           = F
+ KPP            = F
+ LPP            = F
+ PEAKD          = F
+ PEAKDSPR       = F
+ DPEAK          = F
+ UBOT           = F
+ ORBITAL        = F
+ BOTEXPER       = F
+ TMBOT          = F
+ URSELL         = F
+ UFRIC          = F
+ Z0             = F
+ ALPHA_CH       = F
+ WINDX          = F
+ WINDY          = F
+ CD             = F
+ CURRTX         = F
+ CURRTY         = F
+ WATLEV         = F
+ WATLEVOLD      = F
+ DEPDT          = F
+ DEP            = F
+ TAUW           = F
+ TAUHF          = F
+ TAUTOT         = F
+ STOKESSURFX    = F
+ STOKESSURFY    = F
+ STOKESBAROX    = F
+ STOKESBAROY    = F
+ RSXX           = F
+ RSXY           = F
+ RSYY           = F
+ CFL1           = F
+ CFL2           = F
+ CFL3           = F
+/
+
+&HOTFILE
+ ! Hotfile configuration.
+ ! DELTC should match nhot_write * dt in param.nml so SCHISM and WWM
+ ! write hotstarts simultaneously.
+ ! param.nml: nhot_write=50400, dt=60s → SCHISM hotstart every 50400*60 = 3024000s
+ ! For a 31-day month: 31*86400 = 2678400s — set DELTC to the full month length
+ ! so only one hotstart is written at the end of the month.
+ LHOTF          = T                  ! Write WWM hotstart file
+ FILEHOT_OUT    = 'hotfile_out_WWM.nc' ! Output hotstart filename
+ BEGTC          = '20251201.000000'  ! Start of hotfile writing (set by gen_wwminput)
+ DELTC          = 86400.0            ! Hotfile output interval [s] (set by gen_wwminput from wwm_deltc_hotfile)
+ UNITC          = 'SEC'
+ ENDTC          = '20260101.000000'  ! End of hotfile writing (set by gen_wwminput)
+ LCYCLEHOT      = T                  ! T: hotfile contains 2 last records (most recent first)
+                                     ! F: hotfile contains all N records
+                                     ! Use T (default) for efficient hotstarting
+ HOTSTYLE_OUT   = 2                  ! 1=binary; 2=netcdf (default, recommended)
+ MULTIPLEOUT    = 0                  ! 0=single file (MPI_REDUCE); 1=per-process files
+ FILEHOT_IN     = 'hotfile_in_WWM.nc' ! Input hotstart filename (used when LHOTR=T in &INIT)
+ HOTSTYLE_IN    = 2                  ! 1=binary input; 2=netcdf input
+ IHOTPOS_IN     = 1                  ! Record position in input hotfile (1 or 2 if LCYCLEHOT=T)
+                                     ! 1=most recent record (recommended)
+ MULTIPLEIN     = 0                  ! 0=read from single file; 1=read from multiple files
+/
+
+&NESTING
+ ! Nesting is not used in this configuration.
+ L_NESTING      = F
+ L_HOTFILE      = F
+ L_BOUC_PARAM   = F
+ L_BOUC_SPEC    = F
+ NB_GRID_NEST   = 0
+/
+
+! PETSc options — only used with AMETHOD=4 or 5 (not used here since AMETHOD=7)
+&PETScOptions
+ KSPTYPE             = 'bcgs'        ! KSP solver type (not active for AMETHOD=7)
+ RTOL                = 1.E-20        ! Relative convergence tolerance
+ ABSTOL              = 1.E-20        ! Absolute convergence tolerance
+ DTOL                = 10000.        ! Divergence tolerance
+ MAXITS              = 1000          ! Maximum iterations
+ INITIALGUESSNONZERO = T             ! Non-zero initial guess
+ GMRESPREALLOCATE    = T             ! Preallocate GMRES work vectors
+ PCTYPE              = 'sor'         ! Preconditioner type
+/

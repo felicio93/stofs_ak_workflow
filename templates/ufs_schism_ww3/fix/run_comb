@@ -1,0 +1,25 @@
+#!/bin/bash --login
+#
+# stofs_ak_workflow starter job card: combines the end-of-group hotstart. The workflow rewrites
+# -J, -D (./outputs) and the combine_hotstart7 command (executables.combine_hotstart, -i = nhot_write).
+#
+#SBATCH -D ./outputs
+#SBATCH -J C14
+#SBATCH -A nos-surge
+#SBATCH -p hercules-2
+#SBATCH -N 1
+#SBATCH -n 1
+#SBATCH --exclusive
+#SBATCH -t 00:45:00
+#SBATCH -o myout_cmb
+#SBATCH -e err2.cmb
+#SBATCH --mail-user=felicio.cassalho@noaa.gov
+#SBATCH --mail-type=END,FAIL
+
+set -e
+ulimit -s unlimited
+
+# modules combine_hotstart7 was built with (from the machine profile of build.yaml)
+@@MODULES:combine_hotstart@@
+
+./combine_hotstart7.exe -i 2880

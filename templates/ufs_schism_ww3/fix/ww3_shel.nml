@@ -1,0 +1,42 @@
+! -------------------------------------------------------------------- !
+! WAVEWATCH III - ww3_shel.nml - Shell namelist
+! -------------------------------------------------------------------- !
+! Dates matched to param.nml:
+!   start: 2025-09-01 00:00:00
+!   stop:  start + rnday(2) days = 2025-09-03 00:00:00
+! Forcing: all passed via ESMF coupler (winds, currents, water levels)
+! Field output cadence: 3600s (matching wtiminc in param.nml)
+! Point output cadence: 1800s (matching DELTC in &STATION of wwminput.nml)
+! Restart cadence: nhot_write*dt = 2880*60 = 172800s (end of group)
+! -------------------------------------------------------------------- !
+
+&domain_nml
+  domain%start = '20250901 000000'
+  domain%stop  = '20250903 000000'
+/
+
+&input_nml
+  input%forcing%winds        = 'C'
+  input%forcing%currents     = 'C'
+  input%forcing%water_levels = 'C'
+  input%forcing%ice_conc     = 'F'
+  input%forcing%ice_param1   = 'F'
+  input%forcing%ice_param5   = 'F'
+/
+
+&output_type_nml
+  type%field%list  = 'WND WLV CUR HS FP DIR T01'
+  type%point%file  = 'ww3_points.list'
+/
+
+&output_date_nml
+  date%field   = '20250901 000000' '3600'  '20250903 000000'
+  date%point   = '20250901 000000' '1800'  '20250903 000000'
+  date%restart = '20250901 000000' '172800' '20250903 000000'
+/
+
+&homog_count_nml
+/
+
+&homog_input_nml
+/

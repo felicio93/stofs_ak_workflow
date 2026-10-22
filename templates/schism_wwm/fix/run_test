@@ -1,0 +1,29 @@
+#!/bin/bash --login
+#
+# stofs_ak_workflow starter job card. For every run directory the workflow rewrites
+# -J (job name) and -D (run directory). Review before use:
+#   -N / -n  compute cores (see partition.prop) + scribe cores; 80 cores per Hercules node
+#   -t       wall time of ONE group (monthly groups need much more than the 2-day test groups)
+#   the executable on the srun line must match executables.schism_wwm in project.yaml (--check-fix compares them);
+#            the last argument (16) is the number of scribe cores
+
+#SBATCH -D .
+#SBATCH -J R13
+#SBATCH -A nos-surge
+#SBATCH --partition=hercules-2
+#SBATCH -N 76
+#SBATCH -n 6016
+#SBATCH --exclusive
+#SBATCH -t 08:00:00
+#SBATCH -o myout
+#SBATCH -e err2.out
+#SBATCH --mail-user=felicio.cassalho@noaa.gov
+#SBATCH --mail-type=END,FAIL
+
+set -e
+ulimit -s unlimited
+
+# modules the executable was built with (from the machine profile of build.yaml)
+@@MODULES:schism@@
+
+srun ./pschism_HERCULES_WWM_NO_PARMETIS_PREC_EVAP_BLD_STANDALONE_SH_MEM_COMM_TVD-VL 16

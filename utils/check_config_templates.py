@@ -6,6 +6,8 @@ Consistency check for the per-model config templates in
 templates/<model>/config/.
 
 For every model folder it verifies that:
+  * the fix/ starter files of the model exist (templates/<model>/fix) and
+    their @@MODULES:<kind>@@ placeholders match a build target;
   * the seven expected files exist (and no stray yaml, e.g. a separate
     schism.yaml in a derived-model folder, which would be ignored);
   * the folder loads through workflow.core.config.load_config and passes
@@ -35,6 +37,9 @@ from workflow.core.config import (               # noqa: E402
     load_config, KNOWN_MODEL_TYPES,
 )
 from workflow.build.recipe import validate_build  # noqa: E402
+from workflow.core.scaffold import (  # noqa: E402
+    TEMPLATE_FILES, _MODULES_RE, template_file,
+)
 
 TEMPLATES = ROOT / "templates"
 MODELS = ("schism", "schism_wwm", "ufs_schism", "ufs_schism_ww3")
@@ -173,6 +178,17 @@ def check_model(model: str, errors: list) -> dict:
 
     for e in validate_build(cfg):
         err(f"build.yaml: {e}")
+    kinds = {t.get("kind") for t in (cfg.get("build", {}).get("targets")
+                                     or {}).values()}
+    for name in TEMPLATE_FILES[model]:
+        tf = template_file(model, name)
+        if tf is None:
+            err(f"fix/ starter file missing: templates/{model}/fix/{name}")
+            continue
+        for kind in _MODULES_RE.findall(tf.read_text()):
+            if kind not in kinds:
+                err(f"fix/{name}: @@MODULES:{kind}@@ has no build target of "
+                    f"that kind")
     got = {t["kind"] for t in (cfg.get("build", {}).get("targets") or {}).values()}
     if got != BUILD_KINDS[model]:
         err(f"build.yaml: target kinds {sorted(got)} != expected "

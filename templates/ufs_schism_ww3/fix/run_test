@@ -1,0 +1,37 @@
+#!/bin/bash --login
+#
+# stofs_ak_workflow starter job card. For every run directory the workflow rewrites
+# -J (job name) and -D (run directory), and the executable on the srun line. Review before use:
+#   -N / -n  all PETs of ufs.configure: ATM + MED + SCHISM + WW3 (see *_petlist_bounds in ufs_schism_ww3.yaml, keep them in sync)
+#   -t       wall time of ONE group (monthly groups need much more than the 2-day test groups)
+#   the modulefile and executable must match executables.ufs_schism_ww3 in project.yaml (modules.fv3_<id> goes with fv3_<id>.exe;
+#            --check-fix compares them)
+
+#SBATCH -D .
+#SBATCH -J R14
+#SBATCH -A nos-surge
+#SBATCH --partition=hercules-2
+#SBATCH --qos=windfall
+#SBATCH -N 48
+#SBATCH -n 3834
+#SBATCH --exclusive
+#SBATCH -t 08:00:00
+#SBATCH -o myout
+#SBATCH -e err2.out
+#SBATCH --mail-user=felicio.cassalho@noaa.gov
+#SBATCH --mail-type=END,FAIL
+
+set -e
+ulimit -s unlimited
+
+module use modulefiles
+module load modules.fv3_datm2sch2ww3
+
+srun ./fv3_datm2sch2ww3.exe
+
+# Move ESMF log files to PET/ subdirectory to keep run dir clean
+if ls PET*.ESMF_LogFile 1>/dev/null 2>&1; then
+    mkdir -p PET
+    mv PET*.ESMF_LogFile PET/
+    echo "Moved $(ls PET/ | wc -l) PET log files to PET/"
+fi

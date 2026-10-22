@@ -1,0 +1,27 @@
+$ -------------------------------------------------------------------- $
+$ WAVEWATCH III NETCDF Point output post-processing                    $
+$ -------------------------------------------------------------------- $
+$ Matched to ww3_shel.nml:
+$   Cadence:  1800s
+$   Stations: 51
+$   ITYPE=2 OTYPE=2: Mean wave parameters
+$   Variables: hs, tr (TM01), fp, th1p, sth1p, th1m, sth1m
+$   hs  -> NDBC WVHT
+$   tr  -> NDBC APD  (average period = TM01)
+$   th1m -> NDBC MWD (mean wave direction)
+$ -------------------------------------------------------------------- $
+  20250901 000000  1800.  96
+$
+ -1
+$
+ ww3.
+ 6
+ 4
+ T  51
+ 2
+ 0
+ T
+$
+  2
+$
+$ -------------------------------------------------------------------- $

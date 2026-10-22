@@ -64,6 +64,38 @@ _WW3_DEFAULT_FILES = ["mod_def.ww3", "namelists.nml", "ww3_points.list",
                       "ST4TABUHF2.bin", "ww3_ESMFmesh.nc", "mesh.msh"]
 
 
+# fix/ starter files are looked up in these template folders, first match wins:
+# ufs_schism_ww3 only stores what differs from ufs_schism.
+TEMPLATE_CHAIN = {"ufs_schism_ww3": ("ufs_schism_ww3", "ufs_schism")}
+_MODULES_RE = re.compile(r"@@MODULES:([a-z_]+)@@")
+
+
+def template_file(model: str, name: str):
+    """Path of a model's fix/ starter file, or None."""
+    for m in TEMPLATE_CHAIN.get(model, (model,)):
+        p = TEMPLATES_DIR / m / "fix" / name
+        if p.is_file():
+            return p
+    return None
+
+
+def render_template(text: str, build: dict = None) -> str:
+    """Resolve @@MODULES:<kind>@@ with the `module load` lines of the
+    toolchain of the first build target of that kind (machine profile)."""
+    def repl(m):
+        if not build:
+            return m.group(0)
+        from workflow.build.recipe import load_machine
+        machine = load_machine(str(build["machine"]))
+        for t in (build.get("targets") or {}).values():
+            if t.get("kind") == m.group(1):
+                mods = machine["toolchains"][t["toolchain"]].get("modules")
+                if mods:
+                    return "\n".join(f"module load {x}" for x in mods)
+        return m.group(0)
+    return _MODULES_RE.sub(repl, text)
+
+
 def _linked_files(model: str, cfg: dict = None) -> list:
     """Static files setup_run links from fix/ (the model's own list)."""
     if model == "schism":
@@ -102,6 +134,43 @@ def _same(a: Path, b: Path) -> bool:
     return a.read_bytes() == b.read_bytes()
 
 
+def _consistency(model: str, cfg: dict, fix: Path) -> list:
+    """Cross-checks between fix/ files and the config (warnings only)."""
+    warns = []
+    exes = cfg.get("executables") or {}
+    rt = fix / "run_test"
+    if rt.exists():
+        text = rt.read_text()
+        m = re.search(r"(?m)^\s*srun\b[^\n]*?\./(\S+)", text)
+        want = exes.get(model)
+        if m and want and m.group(1) != want and model != "ufs_schism_ww3":
+            # (ufs_schism_ww3: the workflow rewrites this line itself)
+            warns.append(f"run_test runs {m.group(1)} but executables.{model} "
+                         f"is {want}")
+        if model.startswith("ufs"):
+            from workflow.core.templating import ufs_module_name
+            mm = re.search(r"(?m)^\s*module load (modules\.fv3_\S+)", text)
+            try:
+                want_mod = ufs_module_name(cfg)
+            except KeyError:
+                want_mod = None
+            if mm and want_mod and mm.group(1) != want_mod:
+                warns.append(f"run_test loads {mm.group(1)} but the "
+                             f"executable goes with {want_mod}")
+    pn = fix / "param.nml"
+    if pn.exists():
+        m = re.search(r"(?m)^\s*nws\s*=\s*(-?\d+)", pn.read_text())
+        if m:
+            nws = int(m.group(1))
+            if model.startswith("ufs") and nws != 4:
+                warns.append(f"param.nml nws={nws}: UFS builds (USE_ATMOS) "
+                             f"require nws=4")
+            if not model.startswith("ufs") and nws == 4:
+                warns.append("param.nml nws=4 needs an ATM-coupled (UFS) "
+                             "build; standalone SCHISM reads sflux with nws=2")
+    return warns
+
+
 def check_fix(cfg: dict) -> bool:
     """Print the fix/ status of a project; return False if a required file
     is missing."""
@@ -110,18 +179,20 @@ def check_fix(cfg: dict) -> bool:
         print(f"ERROR: no fix/ specification for model_type {model!r}")
         return False
     from workflow.core.config import model_dir
-    fix  = model_dir(cfg) / "fix"
-    spec = fix_spec(model, cfg)
-    tdir = TEMPLATES_DIR / model / "fix"
-    ok   = True
+    fix   = model_dir(cfg) / "fix"
+    spec  = fix_spec(model, cfg)
+    build = cfg.get("build")
+    ok    = True
 
     def status(name):
         p = fix / name
         if not p.exists():
             return "MISSING"
-        tp = tdir / name
-        if name in spec["template"] and tp.exists():
-            return "ok (same as template)" if _same(p, tp) else "ok (edited)"
+        tp = template_file(model, name)
+        if name in spec["template"] and tp is not None:
+            same = (p.read_text() == render_template(tp.read_text(), build)
+                    if tp.stat().st_size < 1_000_000 else _same(p, tp))
+            return "ok (same as template)" if same else "ok (edited)"
         return "ok"
 
     print(f"\nfix/ check: M{cfg['project_id']} ({model})  {fix}")
@@ -138,9 +209,14 @@ def check_fix(cfg: dict) -> bool:
     for n, step in spec["generated"].items():
         s = "present" if (fix / n).exists() else "not yet"
         print(f"    {s:22s} {n}   ({step})")
-    if tdir.is_dir():
+    if any(template_file(model, n) for n in spec["template"]):
         print("\n  Template files (starting points from "
               f"templates/{model}/fix/) must be reviewed for every project.")
+    warns = _consistency(model, cfg, fix)
+    if warns:
+        print("\n  Consistency warnings:")
+        for w in warns:
+            print(f"    - {w}")
     print(f"\n  {'OK: all required files present.' if ok else 'MISSING required files.'}\n")
     return ok
 
@@ -180,12 +256,17 @@ def new_project(model: str, pid: str, root: Path) -> Path:
 
     fixd = mdir / "fix"
     fixd.mkdir(parents=True, exist_ok=True)
-    src_fix = TEMPLATES_DIR / model / "fix"
-    if src_fix.is_dir():
-        for f in sorted(src_fix.iterdir()):
-            if f.is_file() and not (fixd / f.name).exists():
-                shutil.copy2(f, fixd / f.name)
-                print(f"  Copied template {fixd / f.name}")
+    build = None
+    if (cfgd / "build.yaml").exists():
+        import yaml
+        build = (yaml.safe_load((cfgd / "build.yaml").read_text()) or {}).get(
+            "build")
+    for name in TEMPLATE_FILES[model]:
+        src = template_file(model, name)
+        if src is None or (fixd / name).exists():
+            continue
+        (fixd / name).write_text(render_template(src.read_text(), build))
+        print(f"  Copied template {fixd / name}")
 
     print(f"""
   Project M{pid} ({model}) created under {root}

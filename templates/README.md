@@ -35,3 +35,24 @@ Notes
 - `chain_ww3_restart` (UFS+WW3) is `true`: WW3, DATM and mediator restarts are
   chained between groups.
 - Run `python utils/check_config_templates.py` after editing a template.
+
+## fix/ starter files
+
+`templates/<model>/fix/` holds the files of `M{ID}/fix/` that are not specific
+to a mesh. `stofs-ak --new-project` copies them, and `stofs-ak --check-fix`
+reports which ones you edited. They are taken from the validated reference
+runs; `ufs_schism_ww3` only stores what differs from `ufs_schism` (the rest is
+looked up there).
+
+| File | Origin | Notes |
+|------|--------|-------|
+| `param.nml` | M11 (`schism`), M13 (`schism_wwm`), M12 (`ufs_schism*`; M14 is identical) | `ufs_*` differ from M11 in `nws = 4` (required by USE_ATMOS), `ihot = 1` and fewer old-I/O outputs; M13 adds `icou_elfe_wwm = 1`, `nstep_wwm = 10` and the `iof_wwm` block. The workflow rewrites `start_*`, `rnday`, `nhot_write` and `ihot` per group (`gen_param`). |
+| `run_test`, `run_comb` | M11 to M14 | Job cards. `-J` and `-D` (and the WW3 `srun` executable, and the `combine_hotstart7 -i` step) are rewritten per run. `-N/-n` must match the partitioning (and the `*_petlist_bounds`). `@@MODULES:<kind>@@` is replaced by the `module load` lines of the build toolchain, so jobs run with the modules the executable was built with (the reference jobs sourced a personal `~/modules_schism.hercules`). `run_comb` account is `nos-surge` (M11 to M13 used `nosofs`). |
+| `wwminput.nml` | M13 | `gen_wwminput` sets dates, hotstart flag and stations. |
+| `datm_in`, `datm.streams`, `model_configure` | M12 (M14 identical) | Workflow placeholder style (`@[NAME]`); filled per group. |
+| `fd_ufs.yaml`, `noahmptable.tbl` | **UFS-Coastal `tests/parm/` at d84244a3** (`feature/coastal_app`, v1.0.0), copied byte for byte | The M12/M14 `fd_ufs.yaml` was an older, longer file (it lacked the newer `Sa_vfrac`/`Sa_zorl` entries and had FV3/JEDI sections). The field dictionary should match the UFS version that is built, so the upstream file is used. `noahmptable.tbl` differs from the M12 copy only in trailing whitespace. |
+| `ww3_shel.nml`, `ww3_ounp.inp`, `namelists.nml` | M14 | `gen_ww3_shel` / `gen_ww3_ounp` set dates and output counts. |
+
+Mesh-specific files (`hgrid.*`, `vgrid.in`, `partition.prop`, `*.gr3`,
+`station.in`, `source_*.csv`, and the WW3 mesh files) are not templated;
+`--check-fix` lists them.

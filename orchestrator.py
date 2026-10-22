@@ -500,11 +500,20 @@ def main():
                     "project.yaml model_type)"
     )
     parser.add_argument(
-        "--config", required=True,
+        "--config",
         help="Path to the config/ directory containing project.yaml, "
-             "domain.yaml, etc."
+             "domain.yaml, etc. (required except with --new-project)"
     )
     mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument(
+        "--new-project", action="store_true", dest="new_project",
+        help="Create <dir>/M<id>/config and fix/ from the templates of "
+             "--model (needs --model, --id, --dir; no --config)"
+    )
+    mode.add_argument(
+        "--check-fix", action="store_true", dest="check_fix",
+        help="Report which fix/ files the model needs are present"
+    )
     mode.add_argument(
         "--init", action="store_true",
         help="Initialize the project directory structure"
@@ -539,12 +548,27 @@ def main():
             "all = build -> preprocess -> run -> postprocess in sequence"
         )
     )
+    parser.add_argument("--model", help="--new-project: model_type "
+                        "(schism, schism_wwm, ufs_schism, ufs_schism_ww3)")
+    parser.add_argument("--id", dest="project_id",
+                        help="--new-project: two-digit project id")
+    parser.add_argument("--dir", dest="project_root",
+                        help="--new-project: directory that will hold M<id>/")
     parser.add_argument(
         "--only", default=None,
         help="Run only the named step (e.g. download_hycom), "
              "ignoring steps.yaml flags"
     )
     args = parser.parse_args()
+
+    if args.new_project:
+        if not (args.model and args.project_id and args.project_root):
+            parser.error("--new-project needs --model, --id and --dir")
+        from workflow.core.scaffold import new_project
+        new_project(args.model, args.project_id, Path(args.project_root))
+        return
+    if not args.config:
+        parser.error("--config is required")
 
     config_dir = Path(args.config).resolve()
     if not config_dir.is_dir():
@@ -556,7 +580,10 @@ def main():
     if args.run:
         validate_only(args.phase, args.only, cfg)
 
-    if args.init:
+    if args.check_fix:
+        from workflow.core.scaffold import check_fix
+        sys.exit(0 if check_fix(cfg) else 1)
+    elif args.init:
         init_project(cfg)
     elif args.setup_envs:
         from workflow.core.environment import setup_envs

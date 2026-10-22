@@ -1,20 +1,20 @@
-# Config templates (one folder per model)
+# Templates (one folder per model, mirroring the M{ID}/ project tree)
 
-Each folder is a complete, ready-to-copy config set for one `model_type`, taken
+`templates/<model>/config/` is a complete, ready-to-copy config set for one `model_type`, taken
 from the four validated Hercules reference runs and corrected for the current
 code:
 
 | Folder | model_type | Reference run | Files |
 |--------|------------|---------------|-------|
-| `schism/` | `schism` | M11 | project, domain, steps, envs, `schism.yaml`, postprocess |
-| `ufs_schism/` | `ufs_schism` | M12 | project, domain, steps, envs, `ufs_schism.yaml`, postprocess |
-| `schism_wwm/` | `schism_wwm` | M13 | project, domain, steps, envs, `schism_wwm.yaml`, postprocess |
-| `ufs_schism_ww3/` | `ufs_schism_ww3` | M14 | project, domain, steps, envs, `ufs_schism_ww3.yaml`, postprocess |
+| `schism/config/` | `schism` | M11 | project, domain, steps, envs, `schism.yaml`, postprocess, build |
+| `ufs_schism/config/` | `ufs_schism` | M12 | project, domain, steps, envs, `ufs_schism.yaml`, postprocess, build |
+| `schism_wwm/config/` | `schism_wwm` | M13 | project, domain, steps, envs, `schism_wwm.yaml`, postprocess, build |
+| `ufs_schism_ww3/config/` | `ufs_schism_ww3` | M14 | project, domain, steps, envs, `ufs_schism_ww3.yaml`, postprocess, build |
 
 ```bash
 export CFG=<project_dir>/M11/config            # M12/M13/M14 for the other models
 mkdir -p $CFG
-cp $WF/templates/config_example/schism/*.yaml $CFG/
+cp $WF/templates/schism/config/*.yaml $CFG/
 stofs-ak --init --config $CFG
 ```
 

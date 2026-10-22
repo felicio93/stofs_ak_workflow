@@ -3,7 +3,7 @@
 utils/check_config_templates.py
 ===============================
 Consistency check for the per-model config templates in
-templates/config_example/<model>/.
+templates/<model>/config/.
 
 For every model folder it verifies that:
   * the seven expected files exist (and no stray yaml, e.g. a separate
@@ -36,7 +36,7 @@ from workflow.core.config import (               # noqa: E402
 )
 from workflow.build.recipe import validate_build  # noqa: E402
 
-TEMPLATES = ROOT / "templates" / "config_example"
+TEMPLATES = ROOT / "templates"
 MODELS = ("schism", "schism_wwm", "ufs_schism", "ufs_schism_ww3")
 
 UFS = {"ufs_schism", "ufs_schism_ww3"}
@@ -113,7 +113,7 @@ def step_applies(step: str, model: str) -> bool:
 
 
 def check_model(model: str, errors: list) -> dict:
-    d = TEMPLATES / model
+    d = TEMPLATES / model / "config"
 
     def err(msg):
         errors.append(f"[{model}] {msg}")
@@ -184,8 +184,9 @@ def main() -> int:
     errors: list = []
     cfgs = {m: check_model(m, errors) for m in MODELS}
 
-    doms = {m: (TEMPLATES / m / "domain.yaml").read_text()
-            for m in MODELS if (TEMPLATES / m / "domain.yaml").exists()}
+    doms = {m: (TEMPLATES / m / "config" / "domain.yaml").read_text()
+            for m in MODELS
+            if (TEMPLATES / m / "config" / "domain.yaml").exists()}
     if len(set(doms.values())) > 1:
         errors.append("domain.yaml differs between model folders")
 

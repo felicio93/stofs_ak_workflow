@@ -5,7 +5,7 @@
 #
 #SBATCH -D ./outputs
 #SBATCH -J C11
-#SBATCH -A nos-surge
+#SBATCH -A nosofs
 #SBATCH -p hercules-2
 #SBATCH -N 1
 #SBATCH -n 1

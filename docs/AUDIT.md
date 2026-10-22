@@ -130,5 +130,17 @@ boundary files were identical.)
 **Open items.** The UFS+WW3 build through the workflow has not been run; M11 to
 M14 have not been rerun; `fd_ufs.yaml` now comes from the built UFS-Coastal
 version instead of the older reference copy; the shortwave handling of the DATM
-path versus sflux should be checked (see `templates/README.md` and the notes in
-the session record).
+path versus sflux should be checked (below).
+
+**To check later: shortwave radiation in the UFS runs (unverified).**
+- The SCHISM NUOPC cap imports `inst_net_sw_flx` (the `Faxa_swnet` field) into
+  `srad` (`schism_nuopc_cap.F90`, `SCHISM_StateUpdate(... 'inst_net_sw_flx', srad ...)`).
+- The standalone sflux path applies the ocean albedo: `shortwave_d =
+  max((1-albedo)*shortwave_d, 0)` (`sflux_9c.F90`, "Apply albedo", albedo from
+  `albedo.gr3`).
+- `fix/datm.streams` (M12/M14) maps the ERA5 variable `DSWRF_surface`
+  (downward shortwave) to `Faxa_swnet`.
+- If nothing in CMEPS or SCHISM applies an ocean albedo to that field, the UFS
+  runs would absorb about 6 % more sunlight than M11/M13. What the mediator does
+  with `Faxa_swnet` has not been checked. Compare surface heat fluxes or SST
+  between M11 and M12 after the rerun before drawing conclusions.

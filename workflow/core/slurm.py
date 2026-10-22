@@ -135,7 +135,9 @@ def write_manifest(months, manifest_path: Path) -> Path:
 
 
 def wait_for_slurm_jobs(job_ids: list, poll_seconds: int = 30,
-                        label: str = "preprocess SLURM jobs"):
+                        label: str = "preprocess SLURM jobs",
+                        tag: str = "[--phase all]",
+                        next_step: str = "the run phase"):
     """Block until all given SLURM job IDs have left the queue, then verify
     that none of them failed.
 
@@ -168,8 +170,8 @@ def wait_for_slurm_jobs(job_ids: list, poll_seconds: int = 30,
     # any array suffix, but be defensive in case a raw array ID is passed).
     active_base = [j.split("_")[0] for j in active]
 
-    print(f"\n  [--phase all] Waiting for {len(active)} {label} to complete "
-          f"before starting the run phase ...")
+    print(f"\n  {tag} Waiting for {len(active)} {label} to complete "
+          f"before starting {next_step} ...")
     print(f"  Job IDs: {', '.join(active)}")
 
     while True:
@@ -221,4 +223,4 @@ def wait_for_slurm_jobs(job_ids: list, poll_seconds: int = 30,
         print("  Fix the problem (see logs in M{ID}/logs/) and re-run. "
               "Not starting the run phase.")
         sys.exit(1)
-    print(f"  All {label} have completed. Proceeding to run phase.")
+    print(f"  All {label} have completed. Proceeding to {next_step}.")

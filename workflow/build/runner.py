@@ -39,7 +39,8 @@ def run_build_phase(cfg: dict, config_dir: Path, only=None):
             jobs.append(jid)
     if jobs:
         from workflow.core.slurm import wait_for_slurm_jobs
-        wait_for_slurm_jobs(jobs, poll_seconds=30, label="build jobs")
+        wait_for_slurm_jobs(jobs, poll_seconds=30, label="build jobs",
+                            tag="[build]", next_step="the checks")
 
     stale = [n for n in names if not is_current(cfg, n)]
     if stale:

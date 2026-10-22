@@ -24,7 +24,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from workflow.core.templating import unreplaced
+from workflow.core.templating import ufs_module_name, unreplaced
 from workflow.core.config import (
     list_groups,
     model_dir,
@@ -271,6 +271,7 @@ def _render_combine_output_sbatch(cfg: dict, mdir: Path,
         "RUNDIR":           str(rdir),
         "MAILUSER":         slurm.get(
             "mail_user", DEFAULT_MAIL_USER),
+        "UFS_MODULE":       ufs_module_name(cfg),
     }
     text = COMBINE_OUTPUT_SBATCH_TEMPLATE.read_text()
     for k, v in subs.items():
@@ -312,6 +313,7 @@ def _render_convert_ww3_sbatch(cfg: dict, mdir: Path,
         "MONTH":        group_id,
         "FIXDIR":       str(fix),
         "WW3_OUNP_EXE": ww3_ounp_exe,
+        "UFS_MODULE":   ufs_module_name(cfg),
     }
 
     if not CONVERT_WW3_STA_SBATCH_TEMPLATE.exists():

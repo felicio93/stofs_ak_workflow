@@ -27,7 +27,7 @@ set -e
 ulimit -s unlimited
 
 module use {{RUNDIR}}/modulefiles
-module load modules.fv3_datm2sch
+module load {{UFS_MODULE}}
 
 echo "=== combine_output11_MPI: stacks ${COMBINE_BEGIN} to ${COMBINE_END} ==="
 echo "Working dir: $(pwd)"

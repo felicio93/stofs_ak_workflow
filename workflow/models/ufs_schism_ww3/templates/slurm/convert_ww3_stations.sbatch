@@ -17,10 +17,10 @@
 set -e
 ulimit -s unlimited
 
-# Load UFS environment from the fix/ directory modulefile
-# (same environment used by the main model run)
-module use {{FIXDIR}}
-module load modules.fv3_datm2sch
+# Load the UFS environment: the modulefile installed next to the executable
+# (bin/ -> run dir modulefiles/), the same one used by the main model run
+module use {{RUNDIR}}/modulefiles
+module load {{UFS_MODULE}}
 
 cd {{RUNDIR}}
 

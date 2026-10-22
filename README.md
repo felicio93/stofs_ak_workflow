@@ -19,16 +19,17 @@ run on the DTN, preprocessing/execution on compute nodes via SLURM.
 5. [Project directory structure](#project-directory-structure)
 6. [Prerequisites and installation](#prerequisites-and-installation)
 7. [Starting a new project](#starting-a-new-project)
-8. [Configuration reference](#configuration-reference)
-9. [Steps by phase](#steps-by-phase)
-10. [Running the workflow](#running-the-workflow)
-11. [Run management in detail (Phase 4)](#run-management-in-detail-phase-4)
-12. [Post-processing (Phase 5)](#post-processing-phase-5)
-13. [Sentinels, resuming and `--refresh`](#sentinels-resuming-and---refresh)
-14. [Conventions](#conventions)
-15. [Adding a new model](#adding-a-new-model)
-16. [Known limitations](#known-limitations)
-17. [Troubleshooting](#troubleshooting)
+8. [Building the executables (build phase)](#building-the-executables-build-phase)
+9. [Configuration reference](#configuration-reference)
+10. [Steps by phase](#steps-by-phase)
+11. [Running the workflow](#running-the-workflow)
+12. [Run management in detail (Phase 4)](#run-management-in-detail-phase-4)
+13. [Post-processing (Phase 5)](#post-processing-phase-5)
+14. [Sentinels, resuming and `--refresh`](#sentinels-resuming-and---refresh)
+15. [Conventions](#conventions)
+16. [Adding a new model](#adding-a-new-model)
+17. [Known limitations](#known-limitations)
+18. [Troubleshooting](#troubleshooting)
 
 See also `tutorials/hercules_walkthrough.md` (copy-paste walkthrough for a
 real Hercules project) and `docs/AUDIT.md` (code review record).
@@ -37,21 +38,24 @@ real Hercules project) and `docs/AUDIT.md` (code review record).
 
 ## Overview
 
-The workflow has three top-level phases, dispatched by a model **driver**
+The workflow has four top-level phases, dispatched by a model **driver**
 selected from `project.yaml` (`model_type`):
 
 | Phase | CLI | What it does |
 |-------|-----|--------------|
+| **Build** | `stofs-ak --run --phase build` | Compile the model and utility executables from source into `M{ID}/bin/` (skipped when up to date) |
 | **Preprocess** | `stofs-ak --run` (default) | Download forcing, generate every model input |
 | **Run** | `stofs-ak --run --phase run` | Populate run directories, launch group runs, chain restarts automatically |
 | **Postprocess** | `stofs-ak --run --phase postprocess` | Field GIFs, SST/Argo/altimetry comparison, station skill |
 
-`--phase all` runs the three in sequence.
+`--phase all` runs the four in sequence (build -> preprocess -> run ->
+postprocess).
 
 Preprocessing steps run in different execution contexts:
 
 | Context | Where | Internet | Examples |
 |---------|-------|----------|----------|
+| Build | login node (git) + SLURM job per target | git only | `build_executables` (SCHISM, UFS-Coastal, HYCOM/combine/partition utilities) |
 | Downloads | DTN | yes | `download_hycom`, `download_era5`, `download_glofas`, `download_sst`, `download_coops`, `download_ndbc`, `download_argo`, `download_altimetry` |
 | Interactive | any node | no | `aggregate_hycom`, `gen_estuary`, `gen_bctides`, `gen_source`, `gen_param`, `gen_datm_in`, ... |
 | SLURM | login node, runs on compute | no | `inspect_mesh`, `gen_sflux`, `gen_hotstart`, `gen_3Dth`, `gen_nudge`, `gen_datm`, `gen_esmf_mesh`, plot steps |
@@ -107,6 +111,9 @@ Key ideas:
   enumeration, `.gr3` and `station.in` parsing, plotting style,
   `SlurmSubmitter` (render `{{KEY}}` templates + `sbatch`), environment
   guards (`check_dtn`, `is_dtn`, `check_cdsapi`, `env_python`, `setup_envs`).
+- **`workflow.build`** compiles the executables (`recipe.py` machine profiles +
+  `build.yaml`, `sources.py` git checkouts, `builder.py` one SLURM job per
+  target, `finish.py` install + provenance, `hycom_patches.py`).
 - **Downloaders** and **diagnostics** are model-agnostic.
 - **SLURM templates** and **model YAML templates** live inside each model
   package (`workflow/models/<model>/templates/`).
@@ -123,12 +130,17 @@ stofs_ak_workflow/                      <- git repo (clone this to Hercules)
 ├── docs/AUDIT.md                       <- code review record (fixed / documented / reported)
 ├── tutorials/hercules_walkthrough.md   <- copy-paste steps for the real Hercules case
 ├── utils/                              <- helper notebooks (GloFAS shapefile -> csv, shape -> station.in)
-├── templates/config_example/           <- ready-to-copy config set per model
+├── templates/                          <- one folder per model, mirroring M{ID}/
 │   ├── schism/  schism_wwm/  ufs_schism/  ufs_schism_ww3/
-│   │     each: project.yaml domain.yaml steps.yaml envs.yaml <model>.yaml postprocess.yaml
-│   └── README.md
+│   │     config/  project.yaml domain.yaml steps.yaml envs.yaml <model>.yaml
+│   │              postprocess.yaml build.yaml
+│   │     fix/     starter files (param.nml, run_test, run_comb, ...)
+│   └── README.md                       <- origin of every template file
 └── workflow/
-    ├── core/            config.py, mesh_parser.py, station_parser.py,
+    ├── build/           recipe.py, sources.py, builder.py, finish.py, runner.py,
+    │                    hycom_patches.py, machines/<hpc>.yaml (+ UFS modulefile),
+    │                    templates/build_*.sbatch
+    ├── core/            config.py, mesh_parser.py, station_parser.py, scaffold.py,
     │                    plot_style.py, slurm.py, templating.py, environment.py
     ├── downloaders/     hycom.py, era5.py, glofas.py
     ├── diagnostics/     inspect_mesh.py, plot_hycom.py, plot_sflux.py,
@@ -160,7 +172,9 @@ For project ID `01` the workflow creates this tree under `project_dir`
 <project_dir>/M01/
 ├── config/        your edited YAML files (not in git)
 ├── fix/           fixed mesh + static inputs (single source of truth; symlinked, not copied)
-├── bin/           compiled executables (+ *.lua modulefiles for UFS)
+├── bin/           executables installed by the build phase (+ modules.fv3_*.lua for UFS)
+│                  and BUILD_INFO.yaml (what each one was built from)
+├── build/         build sentinels (<target>.done, holding the recipe hash)
 ├── raw/           raw downloads (hycom/{ssh,ts,uv}, era5/YYYY, glofas/YYYY); a permanent cache
 ├── obs/           observations (sst_leo, coops, ndbc, argo, altimetry)
 ├── I01/           processed inputs, one directory per group:  I01_YYYYMM/ (or I01_YYYYMMDD/)
@@ -203,47 +217,181 @@ stofs-ak --setup-envs --config <cfg>     # on the DTN; creates/verifies swf_plot
 ERA5/GloFAS need a `~/.cdsapirc` on the DTN with your Copernicus key
 (`url: https://cds.climate.copernicus.eu/api`, `key: <uid>:<api-key>`).
 
+The build phase needs `git` on the login node and the compilers, MPI, NetCDF
+and cmake modules named in the machine profile
+(`workflow/build/machines/<hpc>.yaml`); it loads them inside its SLURM jobs.
+`swf_main` needs `pyyaml` (it is in the env above).
+
 Running the tool never writes into `$WF`; all generated data goes under
-`project_dir`.
+`project_dir` (and the build `source_root`).
 
 ---
 
 ## Starting a new project
 
 ```bash
-mkdir -p $CFG                                   # e.g. <project_dir>/M01/config
-# copy the complete set for your model (schism | schism_wwm | ufs_schism | ufs_schism_ww3):
-cp $WF/templates/config_example/schism/*.yaml $CFG/
+# one of: schism | schism_wwm | ufs_schism | ufs_schism_ww3
+stofs-ak --new-project --model ufs_schism_ww3 --id 14 --dir <project_dir>
+export CFG=<project_dir>/M14/config
 
-stofs-ak --init --config $CFG     # safe to re-run; never deletes anything
+# edit $CFG/project.yaml, domain.yaml, steps.yaml (dates, domain box, SLURM account, steps)
+# put your mesh files in <project_dir>/M14/fix/   (hgrid.gr3, hgrid.ll, vgrid.in, partition.prop, ...)
+
+stofs-ak --check-fix --config $CFG   # which fix/ files are present / missing / edited
+stofs-ak --init      --config $CFG   # create the directory tree (safe to re-run; deletes nothing)
+stofs-ak --setup-envs --config $CFG  # on the DTN; creates/verifies the conda envs
+stofs-ak --run --phase all --config $CFG   # build -> preprocess -> run -> postprocess
 ```
 
-Each folder holds `project.yaml`, `domain.yaml`, `steps.yaml`, `envs.yaml`,
-the self-contained `<model>.yaml` and `postprocess.yaml`. They reproduce the
-four validated reference runs (M11 schism, M12 ufs_schism, M13 schism_wwm,
-M14 ufs_schism_ww3): same paths, short test period (`2025-09-01` ..
-`2025-09-08`, `ndays` / `group_ndays: 2`) and every applicable step `true`.
-Edit `project_id`, `project_dir`, dates, grouping and the step flags for your
-own project; see `templates/config_example/README.md`.
+`--new-project` creates `<project_dir>/M<id>/config/` from
+`templates/<model>/config/` (with `project_id`, `project_dir` and the build
+`source_root` filled in) and `M<id>/fix/` from `templates/<model>/fix/`. It
+refuses to overwrite a non-empty config directory. (It needs the repository
+checkout, i.e. `pip install -e`.) Copying `templates/<model>/config/*.yaml` by
+hand works too.
 
-Then populate `fix/` and `bin/`.
+The config templates reproduce the four validated reference runs (M11 schism,
+M12 ufs_schism, M13 schism_wwm, M14 ufs_schism_ww3): same paths, short test
+period (`2025-09-01` .. `2025-09-08`, `ndays` / `group_ndays: 2`) and every
+applicable step `true`. Edit `project_id`, `project_dir`, dates, grouping and
+the step flags for your own project; see `templates/README.md`.
 
-**Common `fix/` inputs (all models):** `hgrid.gr3`, `hgrid.ll`, `vgrid.in`,
-`partition.prop`, `tvd.prop`, `albedo.gr3`, `diffmin.gr3`, `diffmax.gr3`,
-`watertype.gr3`, `shapiro.gr3`, `windrot_geo2proj.gr3`, `rough.gr3`,
-`TEM_nudge.gr3`, `SAL_nudge.gr3`, `station.in`, `param.nml`, `run_test`,
-`run_comb`, `source_glofas.csv`, `source_schism.csv`. Missing optional files
-are skipped with a NOTE by `setup_run`.
+### The `fix/` directory
 
-| Model | Extra `fix/` inputs | `bin/` |
-|-------|---------------------|--------|
-| `schism` | none | `gen_*_noscaling.exe`, SCHISM exe, `combine_hotstart7.exe` |
-| `schism_wwm` | `wwminput.nml` template | same, WWM-enabled SCHISM exe (`executables.schism_wwm`) |
-| `ufs_schism` | `datm_in`, `datm.streams`, `fd_ufs.yaml`, `noahmptable.tbl`, `model_configure` | `*.lua` modulefiles, UFS exe (`executables.ufs_schism`), `combine_output11_MPI`, `combine_hotstart7.exe` |
-| `ufs_schism_ww3` | everything above + `ww3_shel.nml`, `ww3_ounp.inp`, `mod_def.ww3`, `namelists.nml`, `ww3_points.list`, `ST4TABUHF2.bin`, `ww3_ESMFmesh.nc`, `mesh.msh` | UFS+WW3 exe (`executables.ufs_schism_ww3`), optionally `ww3_ounp` |
+`fix/` is the single source of truth for static inputs. Three kinds of files:
 
-The `_noscaling` HYCOM utilities expect **unpacked** float data (the
-downloader unpacks with `ncpdq -U`); do not use the stock SCHISM utilities.
+- **Starter files** copied by `--new-project` from `templates/<model>/fix/`:
+  `param.nml`, `run_test`, `run_comb` (all models), `wwminput.nml`
+  (`schism_wwm`), `datm_in`, `datm.streams`, `fd_ufs.yaml`, `noahmptable.tbl`,
+  `model_configure` (UFS), `ww3_shel.nml`, `ww3_ounp.inp`, `namelists.nml`
+  (UFS+WW3). They encode choices and must be reviewed for every project;
+  `--check-fix` shows which ones you edited. In the job cards
+  `@@MODULES:<kind>@@` is replaced by the `module load` lines of the toolchain
+  in `build.yaml`, so jobs run with the modules the executables were built
+  with. The workflow rewrites `-J`/`-D` (and the WW3 `srun` executable and the
+  `combine_hotstart7 -i` step) per run directory; `-N/-n` must match your
+  partitioning (and `*_petlist_bounds` for UFS).
+- **Mesh-specific files you supply:** `hgrid.gr3`, `hgrid.ll`, `vgrid.in`,
+  `partition.prop` (see `partition_tools`), `tvd.prop`, `albedo.gr3`,
+  `diffmin.gr3`, `diffmax.gr3`, `watertype.gr3`, `shapiro.gr3`,
+  `windrot_geo2proj.gr3`, `rough.gr3`, `TEM_nudge.gr3`, `SAL_nudge.gr3`,
+  `station.in`, `source_glofas.csv`, `source_schism.csv`; `schism_wwm` also
+  `hgrid_WWM.gr3`; `ufs_schism_ww3` also `mod_def.ww3`, `ww3_points.list`,
+  `ST4TABUHF2.bin`, `ww3_ESMFmesh.nc`, `mesh.msh`. Missing optional files are
+  skipped with a NOTE by `setup_run`; `--check-fix` marks which are required.
+- **Generated by a step:** `estuary.gr3` (`gen_estuary`), `wwmbnd.gr3`
+  (`gen_wwmbnd`).
+
+`bin/` is filled by the build phase (next section). The HYCOM utilities
+expect **unpacked** float data (the downloader unpacks with `ncpdq -U`), so
+the stock SCHISM utilities must not be used; the build step makes the right
+ones.
+
+---
+
+## Building the executables (build phase)
+
+`--phase build` compiles what a project needs and installs it into `M{ID}/bin/`
+under the names listed in `executables:` (project.yaml). It is the first phase
+of `--phase all`, and a target that is already built is skipped, so it costs
+nothing when nothing changed.
+
+```bash
+stofs-ak --run --phase build --config $CFG                       # every target of build.yaml
+stofs-ak --run --phase build --only hycom_utils --config $CFG    # one target
+python -m workflow.build --config $CFG --target schism --dry-run # only render the job script
+```
+
+**How it works.** For each target the login node (the only place with git and
+network) clones or fetches the source into `build.source_root` and checks out
+`ref`; the checkout belongs to the workflow, and the build stops if it has
+local modifications. One SLURM job per target then compiles out of tree (no
+network needed), installs the products into `M{ID}/bin/`, writes
+`M{ID}/bin/BUILD_INFO.yaml` and the sentinel `M{ID}/build/<target>.done`. The
+phase waits for the jobs (final states checked with `sacct`) and stops if a
+target is not built. Job resources: `slurm.build_cpus` (8), `build_mem`
+(`16G`), `build_walltime` (`02:00:00`); UFS targets use `build_ufs_mem`
+(`32G`) and `build_ufs_walltime` (`03:00:00`; the UFS+WW3 compile takes about
+an hour).
+
+### build.yaml
+
+```yaml
+build:
+  machine: hercules           # workflow/build/machines/hercules.yaml, or a path to your own
+  source_root: /abs/path      # clones and build dirs; outside the repo and M*; no default
+  sources:                    # one checkout per source
+    schism:      {repo: https://github.com/schism-dev/schism.git, ref: master}
+    ufs-coastal: {repo: https://github.com/oceanmodeling/ufs-coastal.git, ref: feature/coastal_app}
+  targets:
+    schism:        {kind: schism, source: schism, toolchain: schism_intel, exe_key: schism,
+                    options: {NO_PARMETIS: true, PREC_EVAP: true, BLD_STANDALONE: true,
+                              SH_MEM_COMM: true, OLDIO: false, TVD_LIM: VL}}
+    hycom_utils:   {kind: hycom_utils, source: schism, toolchain: schism_intel, ssh_max_3Dth: 20}
+```
+
+`ref` is a branch, tag or commit. The templates use `master` /
+`feature/coastal_app` (track upstream); the resolved commit and every UFS
+submodule commit are recorded in `BUILD_INFO.yaml`, so a moving branch is
+always traceable. Pin a tag or commit to freeze a version.
+
+| `kind` | Builds | Installed into `bin/` as | Notes |
+|--------|--------|--------------------------|-------|
+| `schism` | standalone SCHISM (`pschism`): `cmake -C <schism>/cmake/<machine cache> -D<options>`, `make pschism` | `executables.<exe_key>` | the built name follows from the options (e.g. `pschism_HERCULES_NO_PARMETIS_PREC_EVAP_BLD_STANDALONE_SH_MEM_COMM_TVD-VL`); `USE_WWM: true` gives the SCHISM+WWM build |
+| `ufs` | UFS-Coastal through its own `tests/compile.sh` (`make_opt`, `compile_id`) | `fv3_<compile_id>.exe` (as `executables.<exe_key>`), `modules.fv3_<compile_id>.lua`, `install_tools` (e.g. `ww3_ounp`) | the modulefile comes from the machine profile (ESMF 8.9.0b14 on Hercules) and is the one run jobs load |
+| `hycom_utils` | `gen_hot_from_hycom_0`, `gen_3Dth_from_hycom`, `gen_nudge_from_hycom`, each `_noscaling` and `_noscaling_lonshift` | `executables.gen_hotstart/gen_3Dth/gen_nudge` and their `_lonshift` variants | generated at build time from the pristine SCHISM sources (see below) |
+| `combine_hotstart` | `combine_hotstart7` | `executables.combine_hotstart` | |
+| `combine_output_mpi` | `combine_output11_MPI` (with `mpiifort`, not the GNU `mpif90`) | `executables.combine_output` | UFS models (old I/O) |
+| `partition_tools` | `metis_prep`, `gpmetis` (METIS built in a copy of the tree), `partition_offline.pl` | `metis_prep`, `gpmetis`, `partition_offline.pl` | `bin/partition_offline.pl <ncompute>` in a directory with `hgrid.gr3` and `vgrid.in` writes `partition.prop.<ncompute>` (compute cores, excluding scribes) |
+
+**Machine profiles.** `workflow/build/machines/<name>.yaml` holds everything
+that depends on the HPC: the module list, compilers and MPI wrapper of each
+toolchain, the name of SCHISM's own cmake cache for the machine
+(`cmake/SCHISM.local.<machine>` ships with SCHISM for many HPCs) and, for UFS,
+the modulefile (`hercules_ufs_esmf890.lua`, shipped verbatim). Porting to
+another HPC means adding a profile like `hercules.yaml` (and its UFS modulefile).
+
+**Skipping and rebuilding.** A target's sentinel holds a *recipe hash*: its
+`build.yaml` block, the source `repo`+`ref`, the toolchain, the modulefile text
+and the code that builds it (compile commands, patches, job template). Changing
+any of those rebuilds the target; an unchanged recipe is skipped even if
+`master` has moved. To force a rebuild delete `M{ID}/build/<target>.done`
+(`--refresh` never touches it).
+
+**`BUILD_INFO.yaml`** records, for every installed file: target, build time,
+recipe hash, sha256, machine and toolchain, modules, compiler and cmake
+versions, options (and the UFS `make_opt`, modulefile sha256 and ESMF
+installation), the source repo/ref/commit/describe and submodule commits.
+
+### HYCOM utilities and longitudes
+
+The stock `gen_*_from_hycom` utilities expect scaled shorts and do no longitude
+conversion. `hycom_utils` therefore builds, from the pristine upstream source
+(`workflow/build/hycom_patches.py`; every edit must match exactly once, so an
+upstream change fails the build instead of producing a wrong executable):
+
+- `_noscaling`: the `*1.e-3+20` scaling removed, `rjunk = -29999` (fill
+  value -30000). `ssh_max_3Dth` sets the |SSH| limit of `gen_3Dth` (stock 6;
+  the Bering/Alaska recipe uses 20). The temperature floor is the stock -2.
+- `_noscaling_lonshift`: additionally `where (xind > 180) xind = xind - 360`
+  right after the HYCOM longitude axis is read (HYCOM 0-360 -> mesh -180..180;
+  only valid when the shifted axis is still increasing, i.e. HYCOM does not
+  cross 180).
+
+The choice is made **at run time**, before `gen_hotstart` / `gen_3Dth` /
+`gen_nudge` submit: the workflow compares `fix/hgrid.ll` with the `xlon` axis of
+the first `TS_1.nc`, prints both overlaps and picks the plain or `_lonshift`
+executable. `hycom_lon_shift: auto|true|false` (in `<model>.yaml`) overrides it.
+It stops before submitting if no mesh node falls inside the HYCOM grid: the
+utilities would otherwise fill every node with the constants of
+`gen_*_from_nc.in` without any error (see Troubleshooting). Alaska (mesh and
+HYCOM both 0-360, `lon_reference: "360"`) uses the plain executables; a
+-180..180 mesh with HYCOM downloaded as 0-360 and not crossing 180 (e.g.
+STOFS-3D-Atlantic) uses `_lonshift`. Run the utilities with `ulimit -s unlimited`
+(the job templates do).
+
+After the jobs, `plot_hycom_outputs` verifies the files and plots them (see
+Steps by phase).
 
 ---
 
@@ -253,7 +401,9 @@ All files in the config directory are merged into one flat dict by
 `workflow.core.config.load_config`:
 
 `project.yaml` + `domain.yaml` + `steps.yaml` + `envs.yaml` +
-`<model_type>.yaml` + optional `postprocess.yaml`.
+`<model_type>.yaml` + optional `postprocess.yaml` and `build.yaml` (the latter
+keeps everything under one `build:` key; see
+[Building the executables](#building-the-executables-build-phase)).
 
 Later files win; **nested blocks (`slurm:`, `executables:`, `conda_envs:`) are
 replaced, not merged**, and a warning is printed if two files define the same
@@ -272,7 +422,7 @@ the ones you want to change into your `<model_type>.yaml`.
 | `start_date` / `end_date` | inclusive, `YYYY-MM-DD` |
 | `grouping` | `monthly` (default), `ndays`, or alias `daily` / `weekly` / `biweekly` |
 | `group_ndays` | required with `grouping: ndays`; ignored (with a warning) when an alias is used |
-| `slurm:` | account, partition, mail_user, per-step walltime/mem (see template) |
+| `slurm:` | account, partition, mail_user, per-step walltime/mem (see template), `build_cpus/mem/walltime` (+ `build_ufs_mem/walltime`) for the build jobs |
 | `executables:` | executable names in `M{id}/bin/` (`gen_hotstart`, `gen_3Dth`, `gen_nudge`, and per model `schism` / `schism_wwm` / `ufs_schism` / `ufs_schism_ww3`, `combine_hotstart`, `combine_output`, `ww3_ounp`) |
 
 With monthly grouping use a `start_date` on the 1st; a warning is printed
@@ -302,10 +452,11 @@ on mismatch); SLURM steps call the env interpreter by full path.
 
 | File | Main keys |
 |------|-----------|
-| `schism.yaml` | `estuary_temp/sal`, `outside_temp/sal`, `open_boundary_flags`, `tobc`, `sobc`, `tidal_constituents`, `tidal_cutoff_depth`, `open_boundaries`, `hycom_dt`, `nudge_stride`, `nbin`, `mne_bin`, `chain_hotstart` |
+| `schism.yaml` | `estuary_temp/sal`, `outside_temp/sal`, `open_boundary_flags`, `tobc`, `sobc`, `tidal_constituents`, `tidal_cutoff_depth`, `open_boundaries`, `hycom_dt`, `hycom_lon_shift`, `nudge_stride`, `nbin`, `mne_bin`, `chain_hotstart` |
 | `schism_wwm.yaml` | `wwm_cutoff_freq`, `wwm_outstyle_station`, `wwm_lsp1d`, `wwm_lsp2d`, `wwm_deltc_hotfile`, `wwm_procname` |
 | `ufs_schism.yaml` | DATM (`datm_subdir`, `datm_filename_template`, `dt_atmos`), coupling (`coupling_dt`, `*_model`, `cpl_mode`, `coupling_config`, `case_name`), PET lists (`med/atm/ocn_petlist_bounds`), OMP threads |
 | `ufs_schism_ww3.yaml` | all of the above (self-contained) + `wav_model`, `wav_petlist_bounds`, `wav_omp_num_threads`, `med_pio_*`, `wav_mesh_file`, `wav_pio_*`, `ww3_point_output_dt`, `ww3_fix_files`, `chain_ww3_restart` |
+| `build.yaml` | `build:` block: `machine`, `source_root`, `sources`, `targets` (see the build section) |
 | `postprocess.yaml` | isobaths, `diag_run_vars`, `plot_outputs_*`, `compare_sst_*`, `station_skill_*`, `coops_*`, `ndbc_*`, `argo_*`/`collocate_argo_*`, altimetry and WW3 plot keys (documented inline) |
 
 `chain_hotstart` (default `true`): `true` chains group N -> N+1
@@ -324,6 +475,12 @@ are still chained). Configs copied from an older template that contain
 Legend: **S** = schism, **W** = schism_wwm, **U** = ufs_schism, **R** =
 ufs_schism_ww3 (WW3). Steps not valid for a model print `[N/A]`.
 
+### Phase B: build (`--phase build`, first in `--phase all`)
+
+| Step | Context | Models | Description |
+|------|---------|--------|-------------|
+| `build_executables` | login node + SLURM job per target | all | every target of `build.yaml` (skipped when up to date); `--only <target>` builds one |
+
 ### Phase 0-3: preprocess (`stofs-ak --run`)
 
 | Step | Context | Models | Description |
@@ -341,6 +498,7 @@ ufs_schism_ww3 (WW3). Steps not valid for a model print `[N/A]`.
 | `gen_param` | interactive | all | `param.nml` per group (dates, `rnday`, `nhot_write`, `ihot`) |
 | `gen_hotstart` | SLURM | all | `hotstart.nc` (first group only) |
 | `gen_3Dth`, `gen_nudge` | SLURM array | all | `*.th.nc`, `TEM/SAL_nu.nc` |
+| `plot_hycom_outputs` | SLURM array (after the three above, `afterany`) | all | verifies the HYCOM-derived inputs and plots them (below) |
 | `gen_wwmbnd` | interactive | W | `fix/wwmbnd.gr3` (once) |
 | `gen_wwminput` | interactive | W | `wwminput.nml` per group (`BEGTC/ENDTC` from `param.nml`) |
 | `gen_datm`, `plot_datm` | SLURM | U, R | sflux -> CDEPS DATM forcing; debug GIFs |
@@ -348,6 +506,23 @@ ufs_schism_ww3 (WW3). Steps not valid for a model print `[N/A]`.
 | `gen_datm_in`, `gen_datm_streams`, `gen_model_configure`, `gen_ufs_configure` | interactive | U, R | UFS config files per group |
 | `copy_fd_ufs`, `copy_noahmptable`, `copy_modulefiles` | interactive | U, R | copy static UFS files into each `I{ID}_*` |
 | `gen_ww3_shel`, `gen_ww3_ounp` | interactive | R | `ww3_shel.nml`, `ww3_ounp.inp` per group |
+
+`gen_hotstart`, `gen_3Dth` and `gen_nudge` first run the longitude preflight
+(chooses the plain or `_lonshift` executable, see the build section), set
+`ulimit -s unlimited`, and write their `.done` sentinel only if `fort.11` (the
+fatal-error log; a Fortran `stop` still exits 0) is empty and the outputs exist
+with time records.
+
+`plot_hycom_outputs` (for one group by hand, in `swf_plot`:
+`python -m workflow.diagnostics.plot_hycom --config $CFG --group <id> --outputs`)
+checks, per group, the
+open-boundary files, the nudging files and (first group) the hotstart:
+**FAIL** (non-zero exit, no sentinel, so `--phase all` stops) if a file is
+missing, has no time records, holds non-finite values or is **constant** (the
+signature of HYCOM data not being used); **WARN** for values outside the
+expected range or a large mean difference from the nearest HYCOM value at the
+open boundary (day 0). Figures and `plot_hycom_outputs.txt` go to
+`D{ID}/D{ID}_{g}/` (boundary vs HYCOM, nudging fields, hotstart surface T/S).
 
 For UFS models a SLURM barrier waits for `gen_datm` + `gen_esmf_mesh` before
 the interactive config steps that read their output (only when no `--only`).
@@ -374,12 +549,15 @@ the interactive config steps that read their output (only when no `--only`).
 ## Running the workflow
 
 ```bash
+stofs-ak --new-project --model <type> --id NN --dir <project_dir>  # scaffold config/ + fix/
+stofs-ak --check-fix --config $CFG                            # fix/ files: present / missing / edited
+stofs-ak --run --phase build --config $CFG                    # compile the executables (up-to-date targets skipped)
 stofs-ak --run --config $CFG                                  # preprocess (default)
 stofs-ak --run --only download_hycom --config $CFG            # one step, ignores flags
 stofs-ak --run --phase run         --only setup_run  --config $CFG
 stofs-ak --run --phase run         --only submit_run --config $CFG   # blocking: screen/tmux
 stofs-ak --run --phase postprocess --config $CFG
-stofs-ak --run --phase all --config $CFG                      # preprocess -> run -> postprocess
+stofs-ak --run --phase all --config $CFG                      # build -> preprocess -> run -> postprocess
 stofs-ak --refresh --config $CFG                              # reset sentinels (see below)
 ```
 
@@ -393,9 +571,11 @@ Notes:
   skipped).
 - `download_hycom` (DTN, no `sbatch`) and `plot_hycom` (needs `sbatch`) cannot
   both succeed in one invocation on the same node.
-- `--phase all` waits for the SLURM jobs of the preprocess phase and stops
-  before the run phase if any of them did not COMPLETE (checked with
-  `sacct`).
+- `--phase all` waits for the SLURM jobs of the build and preprocess phases
+  and stops before the next phase if any of them did not COMPLETE (checked
+  with `sacct`). A first build (UFS+WW3 in particular, about an hour) makes
+  the first `--phase all` long: run the build phase alone first, in
+  `screen`/`tmux`.
 - Steps of another phase that are enabled in `steps.yaml` produce a warning;
   `--only` with a name that does not belong to the phase is an error.
 - Save output with `... 2>&1 | tee <project_dir>/M01/logs/<name>_$(date +%Y%m%d_%H%M%S).log`.
@@ -491,7 +671,8 @@ Re-run the same command; check logs for `ERROR:`.
 |----------|-----------|
 | `I{ID}_{g}/` | `gen_hotstart.done`, `gen_3Dth.done`, `gen_nudge.done`, `bctides.done`, `sflux/gen_sflux.done`, `gen_wwminput.done`, `gen_ww3_shel.done`, `gen_ww3_ounp.done`, `{datm_subdir}/gen_datm.done`, `{datm_subdir}/gen_esmf_mesh.done`, `gen_datm_in.done`, `gen_datm_streams.done`, `gen_model_configure.done`, `gen_ufs_configure.done`, `copy_*.done` |
 | `R{ID}_{g}/` | `setup_run.done`, `run.done`, `outputs/combine_output.done`, `convert_ww3_sta.done` |
-| `D{ID}_{g}/` | `plot_hycom.done`, `plot_sflux.done`, `plot_datm.done`, `diag/diag_*.done` |
+| `M{ID}/build/` | `<target>.done` (the recipe hash; **not** reset by `--refresh`: delete it to rebuild) |
+| `D{ID}_{g}/` | `plot_hycom.done`, `plot_hycom_outputs.done`, `plot_sflux.done`, `plot_datm.done`, `diag/diag_*.done` |
 | `P{ID}/P{ID}_*/` | `plot_outputs.done`, `compare_sst.done`, `station_skill.done`, `wave_skill.done`, `collocate_argo.done`, `plot_argo.done`, `collocate_altimetry.done`, `plot_outputs_ww3.done`, `.frames_done` |
 
 `stofs-ak --refresh` deletes the sentinels of the first three directory
@@ -504,7 +685,9 @@ HYCOM data quality: after each month the downloader scans for spatially
 constant fields; up to 3 consecutive corrupt days are replaced by linear
 interpolation (original kept as `*.nc.bad`, file marked
 `repaired_by_workflow`), more stops the workflow. A stale-data check guards
-against wrong-date HYCOM sources.
+against wrong-date HYCOM sources. The HYCOM-derived SCHISM inputs are
+checked separately by `plot_hycom_outputs` (constant or empty boundary files
+fail the step).
 
 ---
 
@@ -533,10 +716,12 @@ against wrong-date HYCOM sources.
    `UfsSchismDriver` (see `UfsSchismWw3Driver`); override only what differs.
 2. Register it in `workflow/models/base.py::make_driver` and add the name to
    `KNOWN_MODEL_TYPES` in `workflow/core/config.py` (both lists must match).
-3. Add a config set `templates/config_example/<name>/` (project, domain, steps,
-   envs, a self-contained `<name>.yaml` since only the active model's yaml is
-   loaded, and postprocess) and run `python utils/check_config_templates.py`.
-   List the SLURM template directory in `pyproject.toml` package-data.
+3. Add `templates/<name>/config/` (project, domain, steps, envs, a
+   self-contained `<name>.yaml` since only the active model's yaml is loaded,
+   postprocess and build) and `templates/<name>/fix/` (starter files), register
+   the model in `workflow/core/scaffold.py` (`MODELS`, `TEMPLATE_FILES`,
+   `REQUIRED`) and run `python utils/check_config_templates.py`. List the SLURM
+   template directory in `pyproject.toml` package-data.
 4. Put SLURM templates under `templates/slurm/` and drive them with a
    `core.slurm.SlurmSubmitter`.
 5. Add the new step names to `PREPROCESS_STEPS` / `POSTPROCESS_STEPS` in
@@ -552,7 +737,13 @@ detection in `auto_hotstart.py` is heuristic; monthly grouping spans whole
 calendar months; ERA5/GloFAS have no extra pad day for the last group; a
 corrupt-day run crossing a month boundary is not caught by the >3-day rule;
 `setup_run` is duplicated between `schism`/`schism_wwm` and
-`ufs_schism`/`ufs_schism_ww3`; the vendored TPXO code is unchanged.
+`ufs_schism`/`ufs_schism_ww3`; the vendored TPXO code is unchanged. Build
+templates track upstream branches (`master`, `feature/coastal_app`) by
+default, so a rebuild after changing the recipe may pick up newer sources
+(pin `ref` to avoid it); `--new-project` needs the repository checkout
+(editable install); the `run_test` executable and (for UFS) modulefile names
+are checked by `--check-fix` but only the WW3 `srun` executable is rewritten
+by `setup_run`.
 
 ---
 
@@ -570,3 +761,9 @@ corrupt-day run crossing a month boundary is not caught by the >3-day rule;
 | `unreplaced placeholder` warning/error | a template key is missing from the Python substitutions; the message names the key |
 | Download phase stops with failures | re-run the download; valid files are skipped |
 | HYCOM stale-data warning | re-download that month |
+| Build target failed | `M{ID}/logs/build_<target>.out` / `.err`; fix and re-run `--phase build` (finished targets are skipped) |
+| `has local modifications` in the build step | the checkout under `build.source_root` is managed by the workflow; clean it or use another `source_root` |
+| Compile of `gen_*`/combiner crashes or the run job stops on `stack` | the utilities need `ulimit -s unlimited` (the templates set it) |
+| `plot_hycom_outputs` FAIL: `... constant (10)`/`(0)` | the boundary file holds the `outside_temp/sal` constants: every node was outside the HYCOM grid (longitude mismatch). Check the `Longitude check` lines printed before submitting `gen_3Dth`; fix `hycom_lon_shift` or the mesh/HYCOM convention, delete `gen_3Dth.done` and re-run |
+| `Longitude check ... ERROR: no mesh node falls inside the HYCOM longitude range` | `fix/hgrid.ll` and the HYCOM download use different longitude conventions or boxes (`lon_reference`, `lon_min/lon_max`) |
+| `--check-fix` warns that `run_test` runs a different executable or modulefile | edit `fix/run_test` (or `executables:`) so they agree with the build |

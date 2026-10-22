@@ -7,6 +7,7 @@ below are hardcoded to my case:
 - Project dir:  `/work2/noaa/nos-surge/felicioc/STOFS_3D_AK`
 - Model:        `M01`  (so `M01/`, `I01/`, `R01/`, `P01/`, `D01/`)
 - model_type:   `schism` (SCHISM+WWM, UFS-SCHISM and UFS-SCHISM+WW3 differences are in sections 11-14)
+- Executables:  built by the workflow itself (`--phase build`, section 3b) from `build.yaml`
 - conda base:   `/work2/noaa/nos-surge/felicioc/envs/miniconda3`
 - Envs:         `swf_main` (download + aggregate + SCHISM preproc), `swf_plot` (plotting + mesh diagnostics)
 - Dates:        `2024-09-07` → `2026-06-30` (monthly; Sep 7 = first full ESPC-D-V02 day)
@@ -36,34 +37,41 @@ cd stofs_ak_workflow && git pull
 
 ---
 
-## 1. One-time: create the config
+## 1. One-time: create the project (config + starter `fix/` files)
 
 The config must exist before any other step (including `--setup-envs`).
+`--new-project` copies the model's templates: `M01/config/*.yaml` and the
+starter files of `M01/fix/` (`param.nml`, `run_test`, `run_comb`, ...).
 
 ```bash
 export WF=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/stofs_ak_workflow
 export CFG=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config
 
-mkdir -p $CFG
-# complete config set for model_type: schism (reference run M11). For the other
-# models copy templates/config_example/{schism_wwm,ufs_schism,ufs_schism_ww3}/
-# instead (sections 12-14).
-cp $WF/templates/config_example/schism/*.yaml $CFG/
+# model: schism | schism_wwm | ufs_schism | ufs_schism_ww3 (sections 12-14).
+# Needs pyyaml: run it from swf_main (bootstrap in section 2, first command)
+# or any env that has it; `stofs-ak` exists after `pip install -e $WF`.
+python $WF/orchestrator.py --new-project --model schism --id 01 \
+    --dir /work2/noaa/nos-surge/felicioc/STOFS_3D_AK
 ```
+
+(Copying `$WF/templates/schism/config/*.yaml` into `$CFG` by hand works too,
+but then you also have to copy `templates/schism/fix/*`.)
 
 > The template `steps.yaml` has **every step of the model set to `true`** (it
 > reproduces the reference run). This walkthrough enables one step at a time:
 > set the flags you are not running yet to `false` (or use `--only <step>`,
 > which ignores the flags). The template also carries the reference run's
-> `project_id` (11) and test dates (`2025-09-01` .. `2025-09-08`, 2-day groups);
-> set `project_id: "01"` and the dates from the header of this tutorial.
+> test dates (`2025-09-01` .. `2025-09-08`, 2-day groups) and slurm/mail
+> settings; set the dates from the header of this tutorial. `--new-project`
+> already set `project_id`, `project_dir` and the build `source_root`.
 
 Confirm the templates look right:
 ```bash
 cat $CFG/project.yaml   # model_type: schism, project_dir, dates, slurm, executables
 cat $CFG/domain.yaml    # lon 150-230, lat 45-78, lon_reference "360", plot ranges
 cat $CFG/envs.yaml      # conda_base, swf_main / swf_plot
-cat $CFG/schism.yaml    # T/S constants, open boundaries, dt, nbin/mne_bin
+cat $CFG/schism.yaml    # T/S constants, open boundaries, dt, hycom_lon_shift, nbin/mne_bin
+cat $CFG/build.yaml     # machine, source_root, sources (repo + ref), targets
 cat $CFG/steps.yaml     # all flags (set only the ones you want to run)
 ```
 
@@ -147,18 +155,50 @@ cp /path/to/windrot_geo2proj.gr3   $SWF_PROJ/M01/fix/
 cp /path/to/rough.gr3              $SWF_PROJ/M01/fix/   # or drag.gr3 / manning.gr3
 ```
 
-**Copy compiled _noscaling executables into `bin/`:**
+`--new-project` already copied the starter files `param.nml`, `run_test` and
+`run_comb` into `fix/`. Review them (in the job cards `-N/-n` must match your
+partitioning: compute cores of `partition.prop` + scribes), then check what
+is still missing:
+
 ```bash
-cp /path/to/gen_hot_from_hycom_0_noscaling.exe  $SWF_PROJ/M01/bin/
-cp /path/to/gen_3Dth_from_hycom_noscaling.exe   $SWF_PROJ/M01/bin/
-cp /path/to/gen_nudge_from_hycom_noscaling.exe  $SWF_PROJ/M01/bin/
+stofs-ak --check-fix --config $CFG
+# Required: ... MISSING ...  -> copy those files; Expected: setup_run skips a missing one with a NOTE
 ```
 
-> **IMPORTANT:** Only use the `_noscaling` executables. They expect unpacked
-> float data (our HYCOM files are unpacked at download with `ncpdq -U`). Stock
-> SCHISM executables apply `scale_factor * 1e-3 + 20` — using them on
-> already-unpacked data gives wrong values. The `lon=lon-360` line is commented
-> out — correct for our 0-360 mesh.
+### 3b. Build the executables
+
+`bin/` is filled by the build phase from `$CFG/build.yaml`: SCHISM (and its
+HYCOM, combine and partition utilities for this model) are cloned/fetched into
+`build.source_root`, compiled by one SLURM job per target, and installed into
+`$SWF_PROJ/M01/bin/` under the names of `executables:` in `project.yaml`.
+Run it on a login node (git is only available there); use `screen`/`tmux` the
+first time:
+
+```bash
+conda activate swf_main
+stofs-ak --run --phase build --config $CFG
+squeue -u $USER
+tail -n 3 $SWF_PROJ/M01/logs/build_*.out      # each ends with "=== build <target> complete ==="
+ls -l $SWF_PROJ/M01/bin
+head -40 $SWF_PROJ/M01/bin/BUILD_INFO.yaml    # commit, options, modules, sha256 of each file
+```
+
+A second run says `up to date ... skipping` for every target. To rebuild one
+target delete `$SWF_PROJ/M01/build/<target>.done` (or change its block in
+`build.yaml`). Details: README, "Building the executables".
+
+> **IMPORTANT — HYCOM utilities.** `bin/` gets two builds of each of
+> `gen_hot_from_hycom_0`, `gen_3Dth_from_hycom` and `gen_nudge_from_hycom`:
+> `_noscaling` and `_noscaling_lonshift`. Both expect unpacked float data (our
+> HYCOM files are unpacked at download with `ncpdq -U`); the stock SCHISM
+> utilities apply `scale_factor * 1e-3 + 20` and give wrong values. The
+> utilities do **not** convert longitudes, so mesh and HYCOM must share a
+> convention: before submitting `gen_hotstart` / `gen_3Dth` / `gen_nudge` the
+> workflow compares `fix/hgrid.ll` with the HYCOM `xlon` (this project:
+> both 0-360 -> plain executables) and stops if no mesh node is inside the
+> HYCOM grid. Without that, every node falls "outside" the HYCOM grid and the
+> utilities silently write the constants of `gen_*_from_nc.in` (this happened
+> in the first M11 to M14 runs: open-boundary T=10, S=0, u=v=elev=0).
 
 ---
 
@@ -444,6 +484,12 @@ cat $SWF_PROJ/M01/logs/gen_hotstart.out
 ls -lh $SWF_PROJ/M01/I01/I01_202409/hotstart.nc
 ```
 
+Before submitting, the console prints the longitude check, e.g.
+`Longitude check (gen_hotstart): mesh 157.00..220.00, HYCOM 150.00..230.00`
+`mesh nodes inside HYCOM: unshifted 100.0 %, shifted 0.0 %  -> ... no shift`.
+The job writes `gen_hotstart.done` only if `fort.11` is empty and
+`hotstart.nc` exists.
+
 ### Step 3F — gen_3Dth (SLURM array, every month)
 
 Set only `gen_3Dth: true`.
@@ -462,6 +508,10 @@ ls -lh $SWF_PROJ/M01/I01/I01_202410/
 
 Re-run a month: `rm $SWF_PROJ/M01/I01/I01_202410/gen_3Dth.done`.
 
+`gen_3Dth.done` is written only if `fort.11` is empty and the four files have
+time records (`ncdump -h` shows `time = UNLIMITED ; // (N currently)` with
+N > 0). `fort.20` holds progress lines, not errors.
+
 ### Step 3G — gen_nudge (SLURM array, every month)
 
 Set only `gen_nudge: true`.
@@ -477,6 +527,27 @@ squeue -u $USER
 ls -lh $SWF_PROJ/M01/I01/I01_202410/
 # expect: TEM_nu.nc  SAL_nu.nc  gen_nudge.done
 ```
+
+### Step 3H — plot_hycom_outputs (SLURM array, verification + figures)
+
+Set only `plot_hycom_outputs: true`. It runs after `gen_hotstart`, `gen_3Dth`
+and `gen_nudge` (when they are submitted in the same invocation it waits for
+them with `afterany`) and checks every group:
+
+```bash
+conda activate swf_main
+stofs-ak --run --config $CFG
+cat $SWF_PROJ/M01/D01/D01_202410/plot_hycom_outputs.txt     # PASS / FAIL + warnings
+ls $SWF_PROJ/M01/D01/D01_202410/HYCOM_outputs_*.jpg         # boundary vs HYCOM, nudging, hotstart
+```
+
+`FAIL` (no sentinel; `--phase all` stops) means a boundary or nudging file is
+missing, empty or **constant** (e.g. `TEM_3D.th.nc: constant (10)`: HYCOM
+was not used). `WARN` lines report values outside the expected range or a
+large mean difference from the nearest HYCOM value at the open boundary (day
+0; validated runs give about 0.03 degC, 0.02 psu, 0.002 m). Open the boundary
+figure once: surface T, S, SSH and speed along the open boundary, SCHISM file
+vs HYCOM.
 
 ---
 
@@ -494,7 +565,10 @@ hotstart step number, and renders `auto_hotstart.py` into each run directory.
 - All Phase 3 preprocessing done for every month
 - `fix/run_test` and `fix/run_comb` job card templates present in `M01/fix/`
 - `bin/pschism_*` and `bin/combine_hotstart7.exe` present in `M01/bin/`
-- Add the new executables block to `$CFG/project.yaml` if not already there:
+  (built in step 3b; `--check-fix` also warns if `fix/run_test` runs a
+  different executable than `executables.schism`)
+- The `executables:` block of `$CFG/project.yaml` (already in the template)
+  names them; it must agree with `build.yaml`:
   ```yaml
   executables:
     gen_hotstart: gen_hot_from_hycom_0_noscaling.exe
@@ -798,13 +872,14 @@ circular mean).
 Differences from standalone SCHISM:
 
 ```bash
-cp $WF/templates/config_example/schism_wwm/*.yaml $CFG/   # reference run M13
+python $WF/orchestrator.py --new-project --model schism_wwm --id 01 --dir $SWF_PROJ   # reference run M13
 ```
 
 This set already includes the self-contained `schism_wwm.yaml` (SCHISM keys
 + `wwm_*`); do not keep a separate `schism.yaml` (it would be ignored).
+`build.yaml` builds the SCHISM executable with `USE_WWM: true`.
 
-- Put your WWM template at `$SWF_PROJ/M01/fix/wwminput.nml`.
+- `fix/wwminput.nml` is a starter file (from M13); also supply `hgrid_WWM.gr3`.
 - `schism_wwm.yaml` holds only the WWM keys. SCHISM keys (`estuary_temp`,
   `tidal_constituents`, ...) have code defaults; copy any you want to change
   from `schism.yaml` into `schism_wwm.yaml`.
@@ -834,13 +909,15 @@ window as SCHISM. The `&STATION` block is generated from `fix/station.in`
 DATM forcing + CMEPS mediator + SCHISM (old I/O: `schout_*.nc`).
 
 ```bash
-cp $WF/templates/config_example/ufs_schism/*.yaml $CFG/   # reference run M12
+python $WF/orchestrator.py --new-project --model ufs_schism --id 01 --dir $SWF_PROJ   # reference run M12
 ```
 
-- `fix/` additionally needs `datm_in`, `datm.streams`, `fd_ufs.yaml`,
-  `noahmptable.tbl`, `model_configure`; `bin/` needs the UFS executable
-  (`executables.ufs_schism`), `combine_output11_MPI`, `combine_hotstart7.exe`
-  and the `*.lua` modulefiles.
+- `fix/` additionally holds the starter files `datm_in`, `datm.streams`,
+  `fd_ufs.yaml` (the one shipped with the built UFS-Coastal version),
+  `noahmptable.tbl`, `model_configure`; the build phase puts the UFS
+  executable (`executables.ufs_schism` = `fv3_datm2sch.exe`),
+  `modules.fv3_datm2sch.lua`, `combine_output11_MPI` and
+  `combine_hotstart7.exe` into `bin/`. `run_test` loads that modulefile.
 - Preprocessing order after the SCHISM steps of section 6-8
   (`aggregate_hycom`, `gen_sflux`, `gen_estuary`, `gen_bctides`, `gen_source`,
   `gen_param`, `gen_hotstart`, `gen_3Dth`, `gen_nudge`):
@@ -886,16 +963,20 @@ ls $SWF_PROJ/M01/R01/R01_202512/
 Same as section 13 plus WW3:
 
 ```bash
-cp $WF/templates/config_example/ufs_schism_ww3/*.yaml $CFG/   # reference run M14
+python $WF/orchestrator.py --new-project --model ufs_schism_ww3 --id 01 --dir $SWF_PROJ   # reference run M14
 ```
 
 - `ufs_schism_ww3.yaml` is **self-contained** (it does not inherit from
   `ufs_schism.yaml`). Update `*_petlist_bounds` to match your `fix/run_test`
   allocation before `setup_run`.
 - `project.yaml`: `executables.ufs_schism_ww3`, optionally `executables.ww3_ounp`.
-- `fix/` additionally: `ww3_shel.nml`, `ww3_ounp.inp`, plus the files listed
-  in `ww3_fix_files` (`mod_def.ww3`, `namelists.nml`, `ww3_points.list`,
-  `ST4TABUHF2.bin`, `ww3_ESMFmesh.nc`, `mesh.msh`).
+  The build target `ufs_datm2sch2ww3` (about an hour of compilation, so run
+  the build phase alone first) installs `fv3_datm2sch2ww3.exe`,
+  `modules.fv3_datm2sch2ww3.lua` and `ww3_ounp` (from the UFS build) into `bin/`.
+- `fix/` additionally: the starter files `ww3_shel.nml`, `ww3_ounp.inp`,
+  `namelists.nml`, plus the mesh-specific files listed in `ww3_fix_files`
+  (`mod_def.ww3`, `ww3_points.list`, `ST4TABUHF2.bin`, `ww3_ESMFmesh.nc`,
+  `mesh.msh`).
 - Extra preprocessing steps (after `gen_param`):
 
 ```bash

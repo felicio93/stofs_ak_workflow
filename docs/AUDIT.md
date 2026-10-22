@@ -92,3 +92,43 @@ Paths are relative to the repo root; `models/` = `workflow/models/`.
 - **T1:** `tidal/tides.py` / `tpxo.py` (vendored from pyschism) have shared class-level state and unreachable branches; left untouched because they produce the validated tides.
 - **Duplicated code kept on purpose:** `setup_run.py` is ~85 % duplicated between `schism`/`schism_wwm` and `ufs_schism`/`ufs_schism_ww3`; boundary loaders disagree on `hgrid.ll` vs `hgrid.gr3` priority. Merging them changes what runs and cannot be validated without HPC runs.
 - **Style kept:** `print` with `[STEP]/[SKIP]/[N/A]/[NOTE]` tags (no `logging`); sentinel names unchanged (renaming would orphan `.done` files on existing runs); `{{MONTH}}` / `IS_LAST_MONTH` template keys and `--month` CLI flag kept for compatibility.
+
+## 4. Post-audit finding: constant open-boundary files (2026-10-21)
+
+The static audit above could not see this; it appeared while rebuilding the
+executables on Hercules.
+
+**Finding.** In M11, M12 and M14 (`I*_20250901`) `TEM_3D.th.nc` was exactly 10,
+`SAL_3D.th.nc` 0, `uv3D.th.nc` 0 and `elev2D.th.nc` 0 (standard deviation 0); the
+nudging files and the hotstart were fine. The `gen_3Dth` executable in `bin/`
+had been built from a source with an active `lon=lon-360` / `xind=xind-360`
+while mesh (`hgrid.ll` 157..220) and HYCOM (`xlon` 150..230) were both 0-360,
+so every open-boundary node fell outside the shifted HYCOM grid and was filled
+with the constants of `gen_3Dth_from_nc.in`. Nothing failed: a Fortran `stop`
+exits 0 and the job script wrote the sentinel. The job scripts and tutorial
+claimed the line was commented out.
+
+**Evidence of the fix** (scratch tests on I11_20250901 with executables built
+from the pristine upstream source by `workflow/build/hycom_patches.py`):
+boundary T/S/SSH/speed within 0.025 degC / 0.016 psu / 0.002 m / 0.009 m/s of
+the nearest HYCOM value; nudging files identical to M11's; hotstart byte for
+byte identical to M11's; the shifted variant on this mesh stops with
+`Lon must be increasing`; a floor of 0 degC (an old Bering edit) clamped 44 % of
+the boundary nodes, so the stock -2 is used.
+
+**Changes.** Executables are built by the workflow (`--phase build`) from the
+pristine sources; the utilities' job scripts check `fort.11` and the outputs
+before writing the sentinel; a longitude preflight selects the executable
+(`hycom_lon_shift`); `plot_hycom_outputs` verifies and plots the inputs;
+`ulimit -s unlimited` is set in the job scripts.
+
+**Consequence.** M11 to M14 were forced with constant boundary T/S, no HYCOM
+velocity and no HYCOM elevation. They must be rerun with regenerated inputs
+before any comparison is trusted. (It does not distinguish M12 from M14, whose
+boundary files were identical.)
+
+**Open items.** The UFS+WW3 build through the workflow has not been run; M11 to
+M14 have not been rerun; `fd_ufs.yaml` now comes from the built UFS-Coastal
+version instead of the older reference copy; the shortwave handling of the DATM
+path versus sflux should be checked (see `templates/README.md` and the notes in
+the session record).

@@ -130,8 +130,9 @@ def fix_spec(model: str, cfg: dict = None) -> dict:
                           if k in _linked_files(model, cfg)}}
 
 
-def _same(a: Path, b: Path) -> bool:
-    return a.read_bytes() == b.read_bytes()
+def _norm(text: str) -> str:
+    """Compare files ignoring trailing whitespace and trailing blank lines."""
+    return "\n".join(l.rstrip() for l in text.split("\n")).rstrip("\n")
 
 
 def _consistency(model: str, cfg: dict, fix: Path) -> list:
@@ -190,8 +191,8 @@ def check_fix(cfg: dict) -> bool:
             return "MISSING"
         tp = template_file(model, name)
         if name in spec["template"] and tp is not None:
-            same = (p.read_text() == render_template(tp.read_text(), build)
-                    if tp.stat().st_size < 1_000_000 else _same(p, tp))
+            same = (_norm(p.read_text())
+                    == _norm(render_template(tp.read_text(), build)))
             return "ok (same as template)" if same else "ok (edited)"
         return "ok"
 

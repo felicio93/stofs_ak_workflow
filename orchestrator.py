@@ -134,7 +134,7 @@ PREPROCESS_STEPS = {
     "gen_estuary", "gen_bctides", "gen_source", "gen_param",
     "gen_sflux", "gen_hotstart", "gen_3Dth", "gen_nudge",
     "plot_hycom_outputs",
-    "gen_wwmbnd", "gen_wwminput", "gen_ww3_mesh", "gen_ww3_shel", "gen_ww3_ounp",
+    "gen_wwmbnd", "gen_wwminput", "gen_ww3_mesh", "gen_ww3_points", "gen_ww3_shel", "gen_ww3_ounp",
 }
 BUILD_STEPS       = {"build_executables"}
 RUN_PHASE_STEPS   = {"setup_run", "submit_run"}

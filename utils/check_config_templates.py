@@ -53,7 +53,7 @@ UFS_STEPS = {
     "gen_model_configure", "copy_modulefiles", "gen_ufs_configure",
 }
 WWM_STEPS = {"gen_wwmbnd", "gen_wwminput"}
-WW3_STEPS = {"gen_ww3_mesh", "gen_ww3_shel", "gen_ww3_ounp",
+WW3_STEPS = {"gen_ww3_mesh", "gen_ww3_points", "gen_ww3_shel", "gen_ww3_ounp",
              "plot_outputs_ww3"}
 WAVE_STEPS = {"wave_skill", "download_altimetry", "collocate_altimetry",
               "plot_altimetry"}

@@ -28,6 +28,7 @@ MODELS = ("schism", "schism_wwm", "ufs_schism", "ufs_schism_ww3")
 GENERATED = {
     "estuary.gr3": "gen_estuary",
     "wwmbnd.gr3":  "gen_wwmbnd",
+    "ww3_points.list": "gen_ww3_points",
     "mesh.msh":        "gen_ww3_mesh",
     "mod_def.ww3":     "gen_ww3_mesh",
     "ST4TABUHF2.bin":  "gen_ww3_mesh",

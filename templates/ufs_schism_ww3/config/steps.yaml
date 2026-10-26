@@ -61,6 +61,7 @@ plot_hycom_outputs: true   # Verify + plot the inputs built from HYCOM (th files
 # WW3 modules (UFS-SCHISM+WW3 only):
 gen_ww3_shel: true   # Step WW3-A: generate ww3_shel.nml per group from fix/ww3_shel.nml
                       # (dates, output cadences and restart interval updated per group)
+gen_ww3_points: true  # Step WW3-0b: ww3_points.list from fix/station.in, one point per distinct lon/lat (kept if present)
 gen_ww3_mesh: true   # Step WW3-0: mesh.msh / mod_def.ww3 / ww3_ESMFmesh.nc from hgrid.ll (kept if already in fix/)
 gen_ww3_ounp: true   # Step WW3-B: generate ww3_ounp.inp per group from fix/ww3_ounp.inp
                       # (start time and number of records updated per group)

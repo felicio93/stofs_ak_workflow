@@ -54,6 +54,8 @@ looked up there).
 | `ww3_shel.nml`, `ww3_ounp.inp`, `namelists.nml` | M14 | `gen_ww3_shel` / `gen_ww3_ounp` set dates and output counts. |
 | `ww3_grid.nml` | M14 | Input of `ww3_grid` in `gen_ww3_mesh` (UNST, SPHE, `SF=-1`, `ZLIM=4`). Spectral and time-step values mirror `param.nml`/`wwminput.nml` (24x30, 600 s); review them when those change. |
 
+`station.in` is supplied by the user (one line per station and depth); `ww3_points.list` is derived from it by `gen_ww3_points`.
+
 Mesh-specific files (`hgrid.*`, `vgrid.in`, `partition.prop`, `*.gr3`,
 `station.in`, `source_*.csv`, and the WW3 mesh files) are not templated;
 `--check-fix` lists them.

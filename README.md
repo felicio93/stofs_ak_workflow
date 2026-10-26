@@ -506,6 +506,7 @@ ufs_schism_ww3 (WW3). Steps not valid for a model print `[N/A]`.
 | `gen_datm_in`, `gen_datm_streams`, `gen_model_configure`, `gen_ufs_configure` | interactive | U, R | UFS config files per group |
 | `copy_fd_ufs`, `copy_noahmptable`, `copy_modulefiles` | interactive | U, R | copy static UFS files into each `I{ID}_*` |
 | `gen_ww3_mesh` | interactive + 1 SLURM job | R | once per project: `mesh.msh` (from `hgrid.ll`, same numbering), `mod_def.ww3` + `ST4TABUHF2.bin` (`ww3_grid` from the UFS build), `ww3_ESMFmesh.nc` (`ESMF_Scrip2Unstruct`). Files already in `fix/` are kept and checked, never overwritten |
+| `gen_ww3_points` | interactive | R | once: `ww3_points.list` from `fix/station.in`, one point per distinct lon/lat (surface only), named by station id (`KU2`, `KU2b`, ...). A `ww3_points.list` already in `fix/` is kept |
 | `gen_ww3_shel`, `gen_ww3_ounp` | interactive | R | `ww3_shel.nml`, `ww3_ounp.inp` per group |
 
 `gen_hotstart`, `gen_3Dth` and `gen_nudge` first run the longitude preflight

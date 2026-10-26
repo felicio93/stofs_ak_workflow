@@ -7,6 +7,7 @@ Inherits all UFS-SCHISM preprocessing, run, and postprocessing steps
 from UfsSchismDriver and adds WW3-specific preprocessing steps:
 
   gen_ww3_mesh  : mesh.msh, mod_def.ww3, ww3_ESMFmesh.nc from hgrid.ll (once)
+  gen_ww3_points: ww3_points.list from station.in (once; kept if present)
   gen_ww3_shel  : generate ww3_shel.nml per group (interactive)
   gen_ww3_ounp  : generate ww3_ounp.inp per group (interactive)
 
@@ -61,6 +62,15 @@ class UfsSchismWw3Driver(UfsSchismDriver):
             run_gen_ww3_mesh(self.cfg, self.config_dir)
         else:
             print("[SKIP] gen_ww3_mesh")
+
+        if self.enabled("gen_ww3_points", only):
+            print("[STEP] gen_ww3_points")
+            from workflow.models.ufs_schism_ww3.preprocess.gen_ww3_points import (
+                run_gen_ww3_points,
+            )
+            run_gen_ww3_points(self.cfg)
+        else:
+            print("[SKIP] gen_ww3_points")
 
         if self.enabled("gen_ww3_shel", only):
             print("[STEP] gen_ww3_shel")

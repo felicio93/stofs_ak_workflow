@@ -974,7 +974,7 @@ python $WF/orchestrator.py --new-project --model ufs_schism_ww3 --id 01 --dir $S
   the build phase alone first) installs `fv3_datm2sch2ww3.exe`,
   `modules.fv3_datm2sch2ww3.lua` and `ww3_ounp` (from the UFS build) into `bin/`.
 - `fix/` additionally: the starter files `ww3_shel.nml`, `ww3_ounp.inp`,
-  `namelists.nml`, `ww3_grid.nml`, plus `ww3_points.list` (yours) and the
+  `namelists.nml`, `ww3_grid.nml`, plus `station.in` (yours; `ww3_points.list` is made from it by `gen_ww3_points` unless you provide one) and the
   mesh-specific files listed in `ww3_fix_files`. `mod_def.ww3`,
   `ST4TABUHF2.bin`, `ww3_ESMFmesh.nc` and `mesh.msh` are made by the step
   `gen_ww3_mesh` when they are not in `fix/` (it needs `fix/hgrid.ll`, the

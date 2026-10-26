@@ -114,6 +114,12 @@ def _build_ufs_configure(cfg: dict,
     to enable parallel NetCDF restart writes (much faster than default).
     """
     coupling_dt      = int(cfg.get("coupling_dt", 3600))
+    # Where SCHISM puts its coupled fields (cap attribute meshloc):
+    # "element" (the UFS-Coastal regression-test setting) or "node".
+    meshloc          = str(cfg.get("ocn_meshloc", "element")).lower()
+    if meshloc not in ("element", "node"):
+        raise ValueError(f"ocn_meshloc must be 'element' or 'node', "
+                         f"got {meshloc!r}")
     with_wav         = _has_wav(cfg)
     ndays            = get_group_ndays(cfg, group_id)
     is_first         = _is_first_group(cfg, group_id)
@@ -151,7 +157,7 @@ def _build_ufs_configure(cfg: dict,
     # WAV block
     wav_block = ""
     if with_wav:
-        wav_mesh     = cfg.get("wav_mesh_file", "scrip.nc")
+        wav_mesh     = cfg.get("wav_mesh_file", "ww3_ESMFmesh.nc")
         pio_typename = cfg.get("wav_pio_typename",  "pnetcdf")
         pio_numio    = cfg.get("wav_pio_numiotasks", 4)
         pio_stride   = cfg.get("wav_pio_stride",    -99)
@@ -273,7 +279,7 @@ OCN_attributes::
   DumpFields = false
   ProfileMemory = false
   OverwriteSlice = true
-  meshloc = element
+  meshloc = {meshloc}
   CouplingConfig = {cfg.get('coupling_config', 'none')}
 ::{wav_block}
 # Run Sequence #
@@ -394,7 +400,7 @@ def gen_ufs_configure_group(cfg: dict,
         print(f"  WAV petlist: "
               f"{cfg.get('wav_petlist_bounds', '?')}")
         print(f"  WAV mesh:    "
-              f"{cfg.get('wav_mesh_file', 'scrip.nc')}")
+              f"{cfg.get('wav_mesh_file', 'ww3_ESMFmesh.nc')}")
 
     content = _build_ufs_configure(
         cfg, nhours_fcst, schism_dt, group_id)

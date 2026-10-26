@@ -135,6 +135,7 @@ atm_model: "datm"
 ocn_model: "schism"
 cpl_mode: "coastal"
 coupling_config: "none"
+ocn_meshloc: "element"      # SCHISM cap meshloc: element (UFS-Coastal tests) | node
 case_name: "ufs.cpld"
 med_petlist_bounds: "0 159"
 atm_petlist_bounds: "0 159"

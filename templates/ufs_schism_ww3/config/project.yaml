@@ -150,5 +150,6 @@ executables:
   gen_nudge:    gen_nudge_from_hycom_noscaling.exe
   ufs_schism_ww3:   fv3_datm2sch2ww3.exe
   ww3_ounp:         ww3_ounp        # WW3 point output conversion (optional)
+  ww3_grid:         ww3_grid        # WW3 grid preprocessor (mod_def.ww3 + scrip.nc), from the UFS build
   combine_output:   combine_output11_MPI
   combine_hotstart: combine_hotstart7.exe

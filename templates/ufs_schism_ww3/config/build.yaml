@@ -31,7 +31,8 @@ build:
       compile_id: datm2sch2ww3
       exe_key: ufs_schism_ww3
       make_opt: "-DAPP=CSTLSW -DUSE_WW3=ON -DUSE_ATMOS=ON -DPREC_EVAP=ON -DNO_PARMETIS=ON -DOLDIO=ON -DPDLIB=ON -DBUILD_TOOLS=ON"
-      install_tools: [ww3_ounp]   # taken from the UFS build (build/bin)
+      install_tools: [ww3_ounp, ww3_grid]   # taken from the UFS build (build/bin);
+                                      # ww3_grid has the model's switches (SCRIP)
 
     # HYCOM utilities: _noscaling (float HYCOM data) and _noscaling_lonshift
     # (HYCOM 0-360 -> mesh -180..180); the right one is chosen at run time

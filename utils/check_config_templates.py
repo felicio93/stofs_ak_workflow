@@ -76,7 +76,7 @@ MODEL_KEYS = {
                    "wwm_lsp2d", "wwm_deltc_hotfile", "wwm_procname"},
     "ufs_schism": {"datm_subdir", "datm_filename_template", "dt_atmos",
                    "coupling_dt", "med_model", "atm_model", "ocn_model",
-                   "cpl_mode", "coupling_config", "case_name",
+                   "cpl_mode", "coupling_config", "ocn_meshloc", "case_name",
                    "med_petlist_bounds", "atm_petlist_bounds",
                    "ocn_petlist_bounds", "med_omp_num_threads",
                    "atm_omp_num_threads", "ocn_omp_num_threads"},

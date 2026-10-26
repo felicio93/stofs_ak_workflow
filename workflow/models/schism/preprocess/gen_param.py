@@ -8,7 +8,7 @@ Parameters updated per group
 -----------------------------
     start_year   <- year of the group start date
     start_month  <- month of the group start date
-    start_day    <- day-of-month of the group start date
+    start_day    <- day-of-month of the group start date (all groups)
     start_hour   <- 0 for all groups except the first (which keeps the
                     template value)
     rnday        <- number of simulation days in the group
@@ -83,12 +83,10 @@ def _process_group(group_id: str, cfg: dict, template_text: str,
                    dt: float, mdir: Path, is_first: bool) -> bool:
     """Write I{ID}/I{ID}_{group_id}/param.nml for one group.
 
-    First group: start_day, start_hour, and ihot are kept from the template
-    (the user's cold-start values). Only start_year, start_month, rnday, and
-    nhot_write are updated.
-
-    All subsequent groups: start_day, start_hour=0, and ihot=1 are enforced
-    in addition to start_year, start_month, rnday, and nhot_write.
+    All groups: start_year, start_month, start_day, rnday and nhot_write.
+    First group: start_hour and ihot are kept from the template (the
+    user's cold-start values).
+    All subsequent groups: start_hour=0 and ihot=1 are enforced.
 
     Returns True on success, False on failure.
     """
@@ -120,21 +118,18 @@ def _process_group(group_id: str, cfg: dict, template_text: str,
     # Always update these
     text = _set_nml_value(text, "start_year",  gstart.year)
     text = _set_nml_value(text, "start_month", gstart.month)
+    text = _set_nml_value(text, "start_day",   gstart.day)
     text = _set_nml_value(text, "rnday",       ndays)
     text = _set_nml_value(text, "nhot_write",  total_steps)
 
     if is_first:
-        # Keep template's start_day, start_hour, ihot (cold-start values)
-        day_str  = _read_nml_value(text, "start_day")  or "?"
+        # Keep template's start_hour and ihot (cold-start values)
         hour_str = _read_nml_value(text, "start_hour") or "?"
         ihot_str = _read_nml_value(text, "ihot")       or "?"
         print(f"  {group_id}: first group — keeping template values: "
-              f"start_day={day_str}, "
-              f"start_hour={hour_str}, "
-              f"ihot={ihot_str}")
+              f"start_hour={hour_str}, ihot={ihot_str}")
     else:
         # Enforce hotstart values for all subsequent groups
-        text = _set_nml_value(text, "start_day",  gstart.day)
         text = _set_nml_value(text, "start_hour", 0)
         text = _set_nml_value(text, "ihot",        1)
 
@@ -206,10 +201,9 @@ def run_gen_param(cfg: dict):
     print(f"  gen_param: {groups[0]} -> {groups[-1]}  "
           f"({len(groups)} group(s), grouping={grouping})")
     print(f"  Template: fix/param.nml  |  dt = {dt} s")
-    print(f"  First group ({groups[0]}): "
-          f"start_day/start_hour/ihot kept from template")
-    print(f"  All others: start_day from group date, "
-          f"start_hour=0, ihot=1 enforced")
+    print(f"  start_year/month/day from each group's start date")
+    print(f"  First group ({groups[0]}): start_hour/ihot kept from template")
+    print(f"  All others: start_hour=0, ihot=1 enforced")
     print(f"{'='*60}\n")
 
     for i, group_id in enumerate(groups):

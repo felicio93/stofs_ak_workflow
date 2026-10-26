@@ -144,3 +144,26 @@ path versus sflux should be checked (below).
   runs would absorb about 6 % more sunlight than M11/M13. What the mediator does
   with `Faxa_swnet` has not been checked. Compare surface heat fluxes or SST
   between M11 and M12 after the rerun before drawing conclusions.
+- **Checked 2026-10-26: confirmed.** CMEPS coastal mode maps `Faxa_swnet`
+  atm -> ocn bilinearly with `mrg_type='copy'`
+  (`esmFldsExchange_coastal_mod.F90`, "to ocn: state fields"), and with
+  `nws=4` SCHISM uses `srad` as received (`schism_step.F90`, the `USE_ATMOS`
+  block; the `(1-albedo)` factor exists only in the sflux path). The UFS runs
+  therefore take downward shortwave as net shortwave. Not yet changed: the fix
+  (scale DSWRF by `1-albedo` when writing the DATM forcing) changes the UFS
+  physics relative to M12/M14 and needs a decision.
+
+## 5. Pre-run review for M21 to M24 (2026-10-26)
+
+Found by reading the code paths the September 2025 weekly runs use, with the
+SCHISM, WWM, WW3 and CMEPS sources.
+
+| Item | Effect before the fix | Fix |
+|---|---|---|
+| WWM hotfile record (`gen_wwminput`) | WWM writes the hotfile at its first step and then every `DELTC`; with `LCYCLEHOT=T` the writes alternate between records 1 and 2 (`wwm_output.F90`, `wwm_hotfile.F90`). A 7-day group ends in record 2, but `IHOTPOS_IN=1` was fixed, so every weekly M23 group would restart WWM from day 6 of the previous group. (2-day groups end in record 1, which is why M13 did not show it.) | `IHOTPOS_IN` is computed per group from the previous group's length; a `wwm_deltc_hotfile` that does not divide it is an error. |
+| Hang detection (`auto_hotstart`) | A run at its last step writing restarts (UFS: WW3 + mediator) for longer than one poll (1 h) was cancelled as a hang and resubmitted from scratch. | No hang cancel once `TIME STEP >= nhot_write`. |
+| TIMEOUT / OUT_OF_MEMORY (`auto_hotstart`) | Treated like a transient failure: up to 5 identical resubmissions. | Stops with the state and the last time step. |
+| Scribe hang (`auto_hotstart`) | Under scribed I/O the job can stay in the queue after "Run completed successfully" (SCHISM's sample param.nml), holding the nodes until the walltime. | The job is cancelled if still queued 15 min after completion. |
+| `start_day` (`gen_param`) | First group kept the template's `start_day`; right only when the run starts on the template's day. | `start_day` from the group start for all groups. |
+| `convert_ww3_sta` job | Name `ww3sta_<YYYYMM>` shared by all weekly groups of a month; default memory for a job reading the ~1 GB `mod_def.ww3`. | Full group id in the name; `--mem` (`slurm.convert_ww3_mem`, 32G). |
+

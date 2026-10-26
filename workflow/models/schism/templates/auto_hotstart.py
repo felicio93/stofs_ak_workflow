@@ -75,6 +75,7 @@ _COMBINE_POLL_SECONDS = 300
 _MAX_RESUBMITS  = 5
 _GRACE_CHECKS   = 10
 _GRACE_SLEEP    = 30
+_RELEASE_WAIT   = 900   # s a completed run may stay in the queue (scribes)
 
 _SQUEUE_RETRIES     = 5
 _SQUEUE_RETRY_SLEEP = 20
@@ -229,6 +230,20 @@ def job_exit_code(job_id: str) -> int:
             except ValueError:
                 return -1
     return -1
+
+
+def job_state(job_id: str) -> str:
+    """SLURM state of a finished job (e.g. COMPLETED, TIMEOUT), or ''."""
+    rc, out = sh(f"sacct -n -X -o State -j {job_id}")
+    if rc != 0:
+        return ""
+    for token in out.split():
+        return token.strip().rstrip("+")
+    return ""
+
+
+# States where resubmitting the same job card would fail the same way.
+_NO_RESUBMIT_STATES = {"TIMEOUT", "OUT_OF_MEMORY", "OUT_OF_ME"}
 
 
 def diagnose_failure(job_id: str) -> str:
@@ -648,6 +663,28 @@ def combine_and_chain():
             sys.exit(r.returncode)
 
 
+def release_finished_job():
+    """After a successful run, make sure the job leaves the queue.
+
+    Under scribed I/O the scribe ranks can hang after the run completes
+    (SCHISM's sample param.nml: "the code (the scribe part) will hang but
+    the outputs will be there. Just kill the job"), holding all nodes until
+    the walltime. Wait for the job to exit by itself, then cancel it.
+    """
+    waited = 0
+    while waited < _RELEASE_WAIT:
+        status = squeue_line_for(RUN_JOBNAME)
+        if status is None:
+            return
+        time.sleep(60)
+        waited += 60
+    status = squeue_line_for(RUN_JOBNAME)
+    if status is not None and status != _QUEUE_UNKNOWN:
+        log(f"{RUN_JOBNAME}: run completed but the job is still in the queue "
+            f"after {_RELEASE_WAIT // 60} min (scribes); cancelling it.")
+        sh(f"scancel -n {RUN_JOBNAME} -u {_queue_user()}")
+
+
 # =============================================================================
 # Main
 # =============================================================================
@@ -709,6 +746,12 @@ def main():
                     step = mirror_time_step()
                     if step is None:
                         log(f"{RUN_JOBNAME}: running but mirror.out has no TIME STEP yet.")
+                    elif step == previous_step and step >= NHOT_WRITE:
+                        # Last step reached: the model is writing its
+                        # hotstart/restart files (UFS: WW3 + mediator
+                        # restarts can take longer than one poll).
+                        log(f"{RUN_JOBNAME}: at the final TIME STEP {step}; "
+                            f"writing restart files, not a hang.")
                     elif step == previous_step:
                         log(f"{RUN_JOBNAME}: HANG detected at TIME STEP {step}; cancelling.")
                         sh(f"scancel {job_id}")
@@ -733,6 +776,14 @@ def main():
             else:
                 diag      = diagnose_failure(job_id if job_id != "?" else "0")
                 exit_code = job_exit_code(job_id if job_id != "?" else "0")
+                state     = job_state(job_id if job_id != "?" else "0")
+                if state in _NO_RESUBMIT_STATES:
+                    log(f"ERROR: job {job_id} ended with state {state} "
+                        f"(last TIME STEP {mirror_time_step()} of {NHOT_WRITE}).")
+                    log("Resubmitting the same job card would fail the same way: "
+                        "raise -t (TIMEOUT) or the memory/nodes in fix/run_test, "
+                        "re-run setup_run for this group, then re-run submit_run.")
+                    sys.exit(1)
                 if diag:
                     log("ERROR: SCHISM run failed with a non-recoverable error.")
                     log("Do NOT resubmit until the problem is fixed.")
@@ -769,6 +820,7 @@ def main():
                 break
 
     log(f"{RUN_JOBNAME}: run completed successfully.")
+    release_finished_job()
     dispatch_diag_plots(run_finished=True)
     combine_output_stacks()
     combine_and_chain()

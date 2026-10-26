@@ -491,8 +491,9 @@
  MULTIPLEOUT    = 0                  ! 0=single file (MPI_REDUCE); 1=per-process files
  FILEHOT_IN     = 'hotfile_in_WWM.nc' ! Input hotstart filename (used when LHOTR=T in &INIT)
  HOTSTYLE_IN    = 2                  ! 1=binary input; 2=netcdf input
- IHOTPOS_IN     = 1                  ! Record position in input hotfile (1 or 2 if LCYCLEHOT=T)
-                                     ! 1=most recent record (recommended)
+ IHOTPOS_IN     = 1                  ! Record of the input hotfile to read (1 or 2 if LCYCLEHOT=T).
+                                     ! Set per group by gen_wwminput to the record holding the
+                                     ! previous group's end state (it alternates with LCYCLEHOT=T).
  MULTIPLEIN     = 0                  ! 0=read from single file; 1=read from multiple files
 /
 

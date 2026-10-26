@@ -499,11 +499,45 @@ def _apply_substitutions(text: str, p: dict,
 
 
 # =============================================================================
+# Hotfile record of the previous group
+# =============================================================================
+
+def hotfile_latest_record(prev_ndays: int, deltc_hot: float,
+                          lcyclehot: bool) -> int:
+    """Record of the previous group's hotfile that holds its end state.
+
+    WWM writes the hotfile at its first step (HOTF%TMJD starts at BEGTC and
+    MAIN%TMJD = BEGTC + K*DELT with K >= 1) and then every DELTC up to and
+    including ENDTC (wwm_output.F90), so a group of L days writes
+    1 + L*86400/DELTC records.  With LCYCLEHOT=T the writes alternate
+    between records 1 and 2 (POS = mod(IDXHOTOUT,2)+1, wwm_hotfile.F90):
+    a 7-day group with daily hotfiles ends in record 2, a 2-day one in 1.
+    """
+    span = prev_ndays * 86400.0
+    if deltc_hot <= 0 or span % deltc_hot != 0:
+        raise ValueError(
+            f"wwm_deltc_hotfile={deltc_hot:g}s does not divide the previous "
+            f"group ({prev_ndays} days): its last hotfile would not be at "
+            f"the end of the group")
+    nwrite = 1 + int(span // deltc_hot)
+    return (nwrite - 1) % 2 + 1 if lcyclehot else nwrite
+
+
+def _read_lcyclehot(text: str) -> bool:
+    m = re.search(r'(?im)^\s*LCYCLEHOT\s*=\s*\.?([TF])', text)
+    if not m:
+        raise ValueError("LCYCLEHOT is not set in wwminput.nml &HOTFILE; "
+                         "set it explicitly (T recommended)")
+    return m.group(1).upper() == 'T'
+
+
+# =============================================================================
 # Per-group entry point
 # =============================================================================
 
 def gen_wwminput_group(cfg: dict, group_id: str,
-                       is_first_group: bool) -> bool:
+                       is_first_group: bool,
+                       prev_ndays: int = None) -> bool:
     """Generate wwminput.nml for one group.
 
     Parameters
@@ -581,6 +615,13 @@ def gen_wwminput_group(cfg: dict, group_id: str,
         text = _apply_substitutions(
             text, p, begtc_str, endtc_str,
             stations, cfg, group_id, is_first_group)
+        if not is_first_group and prev_ndays:
+            pos = hotfile_latest_record(
+                prev_ndays, float(cfg.get('wwm_deltc_hotfile', 86400.0)),
+                _read_lcyclehot(text))
+            text = _substitute_field(text, 'HOTFILE', 'IHOTPOS_IN', str(pos))
+            print(f"  IHOTPOS_IN = {pos}  (end state of the previous "
+                  f"{prev_ndays}-day group)")
     except ValueError as exc:
         print(f"  ERROR {group_id}: {exc}")
         return False
@@ -613,8 +654,10 @@ def run_gen_wwminput(cfg: dict):
     print(f"{'='*60}\n")
 
     for i, group_id in enumerate(groups):
+        prev = get_group_ndays(cfg, groups[i - 1]) if i > 0 else None
         ok = gen_wwminput_group(cfg, group_id,
-                                is_first_group=(i == 0))
+                                is_first_group=(i == 0),
+                                prev_ndays=prev)
         if not ok:
             failed.append(group_id)
         prog.update(group_id)

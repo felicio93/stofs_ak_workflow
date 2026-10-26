@@ -8,6 +8,7 @@
 #SBATCH -p {{PARTITION}}
 #SBATCH -N 1
 #SBATCH -n 1
+#SBATCH --mem={{MEM}}
 #SBATCH -t 00:10:00
 #SBATCH -o {{LOGDIR}}/convert_ww3_sta_{{MONTH}}.out
 #SBATCH -e {{LOGDIR}}/convert_ww3_sta_{{MONTH}}.err

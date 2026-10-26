@@ -299,8 +299,9 @@ def _render_convert_ww3_sbatch(cfg: dict, mdir: Path,
     ww3_ounp_name = exes.get("ww3_ounp", "ww3_ounp")
     ww3_ounp_exe  = str(bind / ww3_ounp_name)
 
-    # Job name uses first 6 chars of group_id (YYYYMM or YYYYMMDD[:6])
-    jobname = f"ww3sta_{group_id[:6]}"
+    # The full group id: weekly groups of one month must not share a name
+    # (auto_hotstart waits on the job name).
+    jobname = f"ww3sta_{group_id}"
 
     subs = {
         "RUNDIR":       str(rdir),
@@ -314,6 +315,8 @@ def _render_convert_ww3_sbatch(cfg: dict, mdir: Path,
         "FIXDIR":       str(fix),
         "WW3_OUNP_EXE": ww3_ounp_exe,
         "UFS_MODULE":   ufs_module_name(cfg),
+        # ww3_ounp reads all of mod_def.ww3 (about 1 GB for the AK meshes)
+        "MEM":          slurm.get("convert_ww3_mem", "32G"),
     }
 
     if not CONVERT_WW3_STA_SBATCH_TEMPLATE.exists():

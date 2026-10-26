@@ -6,7 +6,7 @@ Build targets of the `build:` recipe (see recipe.py).
 For each target the login node prepares and submits, and the job compiles:
 
   1. sync_source     clone/fetch the source and check out `ref` (needs network)
-  2. a fresh build directory <source_root>/_build/<target>/ with
+  2. a fresh build directory <source_root>/_build/M{ID}/<target>/ with
      source_info.json (what was checked out) and, for utilities,
      install_manifest.json (what the job produces and where it is installed)
   3. one SLURM job (templates/build_<kind>.sbatch) that compiles and then runs
@@ -51,7 +51,10 @@ _NETCDF_LINK = ("-I$NC/include -I$NF/include -L$NF/lib -L$NC/lib "
 
 
 def build_dir(cfg: dict, target: str) -> Path:
-    return Path(cfg["build"]["source_root"]) / "_build" / target
+    # One build directory per project: projects sharing a source_root (and so
+    # the clones) must not compile into the same directory at the same time.
+    return (Path(cfg["build"]["source_root"]) / "_build"
+            / f"M{cfg['project_id']}" / target)
 
 
 def sentinel(cfg: dict, target: str) -> Path:

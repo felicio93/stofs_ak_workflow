@@ -41,6 +41,49 @@ def _first_line(cmd: list) -> str:
         return "unknown"
 
 
+def update_build_info(info_file: Path, entry: dict, timeout: float = 300.0):
+    """Add `entry` to BUILD_INFO.yaml without losing concurrent updates.
+
+    The build jobs of a project finish at about the same time and all write
+    this file.  A lock directory (mkdir is atomic on any file system, unlike
+    flock on some Lustre mounts) serialises the read-modify-write, and the
+    file is replaced atomically.  A file that is not valid YAML is kept as
+    BUILD_INFO.yaml.corrupt and a new record is started.
+    """
+    import time
+    info_file = Path(info_file)
+    info_file.parent.mkdir(parents=True, exist_ok=True)
+    lock = info_file.parent / (info_file.name + ".lock")
+    t0 = time.time()
+    while True:
+        try:
+            lock.mkdir()
+            break
+        except FileExistsError:
+            if time.time() - t0 > timeout:      # a dead job left it behind
+                print(f"WARNING: removing stale lock {lock}")
+                shutil.rmtree(lock, ignore_errors=True)
+                t0 = time.time()
+            time.sleep(0.5)
+    try:
+        record = {}
+        if info_file.exists():
+            try:
+                record = yaml.safe_load(info_file.read_text()) or {}
+            except yaml.YAMLError as e:
+                bad = info_file.parent / (info_file.name + ".corrupt")
+                shutil.copy2(info_file, bad)
+                print(f"WARNING: {info_file.name} is not valid YAML "
+                      f"({type(e).__name__}); kept as {bad.name}, starting "
+                      f"a new record.")
+        record.update(entry)
+        tmp = info_file.parent / (info_file.name + f".tmp{os.getpid()}")
+        tmp.write_text(yaml.safe_dump(record, sort_keys=False))
+        os.replace(tmp, info_file)
+    finally:
+        shutil.rmtree(lock, ignore_errors=True)
+
+
 def _install_schism(cfg: dict, t: dict, bdir: Path) -> list:
     """Copy the pschism executable; return [(installed name, built name)]."""
     exes = sorted((bdir / "bin").glob("pschism*"))
@@ -134,11 +177,7 @@ def main(argv=None):
         }
 
     info_file = model_dir(cfg) / "bin" / "BUILD_INFO.yaml"
-    record = {}
-    if info_file.exists():
-        record = yaml.safe_load(info_file.read_text()) or {}
-    record.update(entry)
-    info_file.write_text(yaml.safe_dump(record, sort_keys=False))
+    update_build_info(info_file, entry)
 
     s = sentinel(cfg, target)
     s.parent.mkdir(parents=True, exist_ok=True)

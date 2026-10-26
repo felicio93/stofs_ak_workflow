@@ -6,6 +6,7 @@ UfsSchismWw3Driver — UFS-SCHISM+WW3 externally coupled model.
 Inherits all UFS-SCHISM preprocessing, run, and postprocessing steps
 from UfsSchismDriver and adds WW3-specific preprocessing steps:
 
+  gen_ww3_mesh  : mesh.msh, mod_def.ww3, ww3_ESMFmesh.nc from hgrid.ll (once)
   gen_ww3_shel  : generate ww3_shel.nml per group (interactive)
   gen_ww3_ounp  : generate ww3_ounp.inp per group (interactive)
 
@@ -51,6 +52,15 @@ class UfsSchismWw3Driver(UfsSchismDriver):
         # These run AFTER all UFS-SCHISM steps because they read
         # param.nml (for nhot_write/dt) which must already be in
         # I{ID}_{group_id}/ from gen_param.
+
+        if self.enabled("gen_ww3_mesh", only):
+            print("[STEP] gen_ww3_mesh")
+            from workflow.models.ufs_schism_ww3.preprocess.gen_ww3_mesh import (
+                run_gen_ww3_mesh,
+            )
+            run_gen_ww3_mesh(self.cfg, self.config_dir)
+        else:
+            print("[SKIP] gen_ww3_mesh")
 
         if self.enabled("gen_ww3_shel", only):
             print("[STEP] gen_ww3_shel")

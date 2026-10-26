@@ -974,9 +974,21 @@ python $WF/orchestrator.py --new-project --model ufs_schism_ww3 --id 01 --dir $S
   the build phase alone first) installs `fv3_datm2sch2ww3.exe`,
   `modules.fv3_datm2sch2ww3.lua` and `ww3_ounp` (from the UFS build) into `bin/`.
 - `fix/` additionally: the starter files `ww3_shel.nml`, `ww3_ounp.inp`,
-  `namelists.nml`, plus the mesh-specific files listed in `ww3_fix_files`
-  (`mod_def.ww3`, `ww3_points.list`, `ST4TABUHF2.bin`, `ww3_ESMFmesh.nc`,
-  `mesh.msh`).
+  `namelists.nml`, `ww3_grid.nml`, plus `ww3_points.list` (yours) and the
+  mesh-specific files listed in `ww3_fix_files`. `mod_def.ww3`,
+  `ST4TABUHF2.bin`, `ww3_ESMFmesh.nc` and `mesh.msh` are made by the step
+  `gen_ww3_mesh` when they are not in `fix/` (it needs `fix/hgrid.ll`, the
+  build's `ww3_grid` in `bin/`, and runs one SLURM job):
+
+```bash
+stofs-ak --run --only gen_ww3_mesh --config $CFG
+```
+
+  `mesh.msh` is written with the hgrid's node and element numbering. WW3
+  numbers its nodes in file order and the UFS cap takes element *i* of
+  `ww3_ESMFmesh.nc` as WW3 node *i*, so the three files must keep the SCHISM
+  order; the step refuses a mesh with nodes that no triangle uses and checks
+  the ESMF mesh against `mesh.msh`. Files that already exist are kept.
 - Extra preprocessing steps (after `gen_param`):
 
 ```bash

@@ -1,0 +1,50 @@
+! -------------------------------------------------------------------- !
+! WAVEWATCH III - ww3_grid.nml - Grid pre-processing                   !
+! -------------------------------------------------------------------- !
+! Spectral parameters matched to wwminput.nml / param.nml:
+!   MSC=24 -> NK=24
+!   MDC=30 -> NTH=30
+!   FRLOW=0.04 Hz -> FREQ1=0.04
+!   FRHIGH=1.0 Hz -> XFR = (1.0/0.04)^(1/23) ~ 1.1419
+!   dt*nstep_wwm = 60*10 = 600s -> all DT* = 600.
+!   h0=0.01 -> DMIN=0.01
+! -------------------------------------------------------------------- !
+
+&SPECTRUM_NML
+  SPECTRUM%XFR       =  1.1419
+  SPECTRUM%FREQ1     =  0.04
+  SPECTRUM%NK        =  24
+  SPECTRUM%NTH       =  30
+/
+
+&RUN_NML
+  RUN%FLCX         =  T
+  RUN%FLCY         =  T
+  RUN%FLCTH        =  T
+  RUN%FLCK         =  T
+  RUN%FLSOU        =  T
+/
+
+&TIMESTEPS_NML
+  TIMESTEPS%DTMAX        =  600.
+  TIMESTEPS%DTXY         =  600.
+  TIMESTEPS%DTKTH        =  600.
+  TIMESTEPS%DTMIN        =  600.
+/
+
+&GRID_NML
+  GRID%NAME         =  'alaska'
+  GRID%NML          =  'namelists.nml'
+  GRID%TYPE         =  'UNST'
+  GRID%COORD        =  'SPHE'
+  GRID%CLOS         =  'T'
+  GRID%ZLIM         =  4.0
+  GRID%DMIN         =  0.01
+/
+
+&UNST_NML
+  UNST%SF          =  -1.
+  UNST%FILENAME    =  'mesh.msh'
+  UNST%IDLA      =  4
+  UNST%FORMAT    =  '(20f10.2)'
+/

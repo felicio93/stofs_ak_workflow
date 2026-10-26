@@ -52,6 +52,7 @@ looked up there).
 | `datm_in`, `datm.streams`, `model_configure` | M12 (M14 identical) | Workflow placeholder style (`@[NAME]`); filled per group. |
 | `fd_ufs.yaml`, `noahmptable.tbl` | **UFS-Coastal `tests/parm/` at d84244a3** (`feature/coastal_app`, v1.0.0), copied byte for byte | The M12/M14 `fd_ufs.yaml` was an older, longer file (it lacked the newer `Sa_vfrac`/`Sa_zorl` entries and had FV3/JEDI sections). The field dictionary should match the UFS version that is built, so the upstream file is used. `noahmptable.tbl` differs from the M12 copy only in trailing whitespace. |
 | `ww3_shel.nml`, `ww3_ounp.inp`, `namelists.nml` | M14 | `gen_ww3_shel` / `gen_ww3_ounp` set dates and output counts. |
+| `ww3_grid.nml` | M14 | Input of `ww3_grid` in `gen_ww3_mesh` (UNST, SPHE, `SF=-1`, `ZLIM=4`). Spectral and time-step values mirror `param.nml`/`wwminput.nml` (24x30, 600 s); review them when those change. |
 
 Mesh-specific files (`hgrid.*`, `vgrid.in`, `partition.prop`, `*.gr3`,
 `station.in`, `source_*.csv`, and the WW3 mesh files) are not templated;

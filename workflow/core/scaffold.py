@@ -28,6 +28,10 @@ MODELS = ("schism", "schism_wwm", "ufs_schism", "ufs_schism_ww3")
 GENERATED = {
     "estuary.gr3": "gen_estuary",
     "wwmbnd.gr3":  "gen_wwmbnd",
+    "mesh.msh":        "gen_ww3_mesh",
+    "mod_def.ww3":     "gen_ww3_mesh",
+    "ST4TABUHF2.bin":  "gen_ww3_mesh",
+    "ww3_ESMFmesh.nc": "gen_ww3_mesh",
 }
 
 # Starter copies shipped in templates/<model>/fix/ (they encode choices, so
@@ -40,7 +44,8 @@ TEMPLATE_FILES = {
                                 "noahmptable.tbl", "model_configure"],
     "ufs_schism_ww3": _JOB_CARDS + [
         "datm_in", "datm.streams", "fd_ufs.yaml", "noahmptable.tbl",
-        "model_configure", "ww3_shel.nml", "ww3_ounp.inp", "namelists.nml"],
+        "model_configure", "ww3_shel.nml", "ww3_ounp.inp", "namelists.nml",
+        "ww3_grid.nml"],
 }
 
 # Files whose absence stops a step or the setup (everything else in the

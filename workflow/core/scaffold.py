@@ -28,6 +28,7 @@ MODELS = ("schism", "schism_wwm", "ufs_schism", "ufs_schism_ww3")
 GENERATED = {
     "estuary.gr3": "gen_estuary",
     "wwmbnd.gr3":  "gen_wwmbnd",
+    "hgrid_WWM.gr3": "gen_wwmbnd",
     "ww3_points.list": "gen_ww3_points",
     "mesh.msh":        "gen_ww3_mesh",
     "mod_def.ww3":     "gen_ww3_mesh",
@@ -56,8 +57,7 @@ _REQUIRED_BASE = ["hgrid.gr3", "hgrid.ll", "vgrid.in", "partition.prop",
                   "param.nml", "run_test", "run_comb"]
 REQUIRED = {
     "schism":     _REQUIRED_BASE,
-    "schism_wwm": _REQUIRED_BASE + ["wwminput.nml", "hgrid_WWM.gr3",
-                                    "station.in"],
+    "schism_wwm": _REQUIRED_BASE + ["wwminput.nml", "station.in"],
     "ufs_schism": _REQUIRED_BASE + ["datm_in", "datm.streams", "fd_ufs.yaml",
                                     "noahmptable.tbl", "model_configure"],
     "ufs_schism_ww3": _REQUIRED_BASE + [

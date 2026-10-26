@@ -163,11 +163,30 @@ def gen_wwmbnd(cfg: dict) -> bool:
 # Entry point
 # =============================================================================
 
+def ensure_hgrid_wwm(cfg: dict):
+    """fix/hgrid_WWM.gr3 is the grid file WWM reads (wwminput.nml FILEGRID,
+    IGRIDTYPE=3). For SCHISM+WWM it is the SCHISM mesh itself (the M13 file is
+    byte-identical to hgrid.ll), so a missing one becomes a link to hgrid.ll
+    (lon/lat, which LSPHE=T needs). An existing file is kept."""
+    fix = model_dir(cfg) / 'fix'
+    target = fix / 'hgrid_WWM.gr3'
+    if target.exists() or target.is_symlink():
+        print("  fix/hgrid_WWM.gr3 exists: kept.")
+        return
+    if not (fix / 'hgrid.ll').exists():
+        print("  ERROR: fix/hgrid_WWM.gr3 and fix/hgrid.ll are both missing.")
+        sys.exit(1)
+    target.symlink_to('hgrid.ll')
+    print("  fix/hgrid_WWM.gr3 -> hgrid.ll (WWM reads the SCHISM mesh).")
+
+
 def run_gen_wwmbnd(cfg: dict):
     """
-    Generate fix/wwmbnd.gr3. Called by SchismWwmDriver.preprocess().
+    Generate fix/wwmbnd.gr3 (and link fix/hgrid_WWM.gr3 if absent).
+    Called by SchismWwmDriver.preprocess().
     This is a one-time step (fix/ file, not per-month).
     """
+    ensure_hgrid_wwm(cfg)
     ok = gen_wwmbnd(cfg)
     if not ok:
         print("  ERROR: gen_wwmbnd failed.")

@@ -879,7 +879,7 @@ This set already includes the self-contained `schism_wwm.yaml` (SCHISM keys
 + `wwm_*`); do not keep a separate `schism.yaml` (it would be ignored).
 `build.yaml` builds the SCHISM executable with `USE_WWM: true`.
 
-- `fix/wwminput.nml` is a starter file (from M13); also supply `hgrid_WWM.gr3`.
+- `fix/wwminput.nml` is a starter file (from M13). `hgrid_WWM.gr3` (the grid WWM reads) is the SCHISM mesh: `gen_wwmbnd` links it to `hgrid.ll` when it is not in `fix/`.
 - `schism_wwm.yaml` holds only the WWM keys. SCHISM keys (`estuary_temp`,
   `tidal_constituents`, ...) have code defaults; copy any you want to change
   from `schism.yaml` into `schism_wwm.yaml`.

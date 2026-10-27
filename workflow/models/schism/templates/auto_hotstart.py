@@ -71,6 +71,7 @@ _POLL_SCHEDULE  = [0, 60, 60, 60, 60, 60, 300, 1200, 1800]
 # at end of group (WW3 restart ~7GB + mediator restart ~2GB can take
 # 30-60 minutes to write after the last time step).
 _POLL_STEADY    = 3600
+_QUICK_CHECK    = 120   # s between completion checks within a poll interval
 _COMBINE_POLL_SECONDS = 300
 _MAX_RESUBMITS  = 5
 _GRACE_CHECKS   = 10
@@ -94,11 +95,20 @@ QUEUE_CMD = f"squeue -u {_queue_user()}"
 
 
 def _poll_sleep(poll_iter: int):
+    """Sleep until the next full poll, but return early once the run has
+    completed or the job has left the queue (checked every
+    _QUICK_CHECK s), so a finished group does not wait out a long poll
+    interval. The hang check still runs only at the full polls."""
     secs = (_POLL_SCHEDULE[poll_iter]
             if poll_iter < len(_POLL_SCHEDULE)
             else _POLL_STEADY)
-    if secs > 0:
-        time.sleep(secs)
+    while secs > 0:
+        nap = min(secs, _QUICK_CHECK)
+        time.sleep(nap)
+        secs -= nap
+        if secs > 0 and (run_completed()
+                         or squeue_line_for(RUN_JOBNAME) is None):
+            return
 
 
 def log(msg):

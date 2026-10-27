@@ -368,12 +368,31 @@ def _save_jpeg(fig, path):
     print(f"  Wrote {path}")
 
 
+def _map_figure(lon, lat, ncols=2, panel_w=6.0):
+    """Side-by-side map panels sized to the domain.
+
+    The panels use an equal-degree aspect, so a wide domain gives short
+    maps; the figure height follows the domain instead of a fixed size,
+    which would leave empty bands above and below the maps.
+    """
+    w = float(np.nanmax(lon) - np.nanmin(lon)) or 1.0
+    h = float(np.nanmax(lat) - np.nanmin(lat)) or 1.0
+    panel_h = min(max(panel_w * h / w, 2.5), 8.0)
+    fig, axes = plt.subplots(1, ncols,
+                             figsize=(ncols * (panel_w + 1.8), panel_h + 1.4))
+    fig.subplots_adjust(left=0.06, right=0.94, bottom=0.12, top=0.86,
+                        wspace=0.22)
+    return fig, axes
+
+
 def _scatter_panel(ax, lon, lat, vals, title, label, cmap, boundaries, vlim):
     lo, hi = robust_limits(vals, *vlim)
     sc = ax.scatter(lon, lat, c=vals, s=1.0, cmap=cmap, vmin=lo, vmax=hi,
                     rasterized=True)
-    cb = ax.figure.colorbar(sc, ax=ax, location="right", pad=0.02,
-                            fraction=0.046, shrink=0.9)
+    # Colorbar on the drawn map (axes coordinates follow the equal-aspect
+    # box), so it is exactly as tall as the map.
+    cax = ax.inset_axes([1.02, 0.0, 0.025, 1.0])
+    cb = ax.figure.colorbar(sc, cax=cax)
     cb.set_label(label, fontsize=LABEL_FS)
     cb.ax.tick_params(labelsize=TICK_FS)
     _draw_boundaries(ax, boundaries)
@@ -491,7 +510,7 @@ def _verify_nudge(cfg, idir, ddir, ym, hgrid_ll, boundaries, fails, warns):
     if len(vals) < 2 or hgrid_ll is None:
         return
     _, lons, lats, _ = read_nodes(hgrid_ll)
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6), constrained_layout=True)
+    fig, axes = _map_figure(lons, lats)
     for ax, (key, label) in zip(axes, (("T", "Surface temperature (°C)"),
                                        ("S", "Surface salinity (psu)"))):
         v, node = vals[key]
@@ -521,7 +540,7 @@ def _verify_hotstart(cfg, idir, ddir, ym, hgrid_ll, boundaries, fails, warns):
     _, lons, lats, _ = read_nodes(hgrid_ll)
     step = max(1, len(lons) // 400000)           # keep the scatter light
     sl   = slice(None, None, step)
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6), constrained_layout=True)
+    fig, axes = _map_figure(lons, lats)
     _scatter_panel(axes[0], lons[sl], lats[sl], t[sl],
                    "Hotstart surface temperature", "°C", cmap, boundaries,
                    (None, None))

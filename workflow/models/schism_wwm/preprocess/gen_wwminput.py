@@ -230,29 +230,6 @@ def _substitute_field(text: str, section: str, field: str,
     return new_text
 
 
-def _substitute_field_nth(text: str, field: str, new_value: str,
-                           occurrence: int) -> tuple:
-    """Substitute only the Nth occurrence of field = ..."""
-    pattern = re.compile(
-        r'(?i)(^\s*' + re.escape(field) + r'\s*=\s*)([^\n]*)',
-        re.MULTILINE
-    )
-    matches = list(pattern.finditer(text))
-    if occurrence > len(matches):
-        return text, False
-
-    m      = matches[occurrence - 1]
-    prefix = m.group(1)
-    rest   = m.group(2)
-    val_match = re.match(
-        r"(\s*'[^']*'|[^\s!,]*)(.*)$", rest, re.DOTALL)
-    suffix   = val_match.group(2) if val_match else ''
-    new_text = (text[:m.start()]
-                + prefix + new_value + suffix
-                + text[m.end():])
-    return new_text, True
-
-
 def _count_occurrences(text: str, field: str) -> int:
     pattern = re.compile(
         r'(?i)^\s*' + re.escape(field) + r'\s*=',
@@ -261,41 +238,31 @@ def _count_occurrences(text: str, field: str) -> int:
     return len(pattern.findall(text))
 
 
-# Section order for BEGTC/ENDTC occurrence-based substitution
-_WWM_SECTION_ORDER = [
-    'PROC', 'BOUC', 'WIND', 'CURR', 'WALV',
-    'HISTORY', 'STATION', 'HOTFILE',
-]
-_SECTION_BEGTC_OCC = {
-    s: i + 1 for i, s in enumerate(_WWM_SECTION_ORDER)
-}
-_SECTION_ENDTC_OCC = {
-    s: i + 1 for i, s in enumerate(_WWM_SECTION_ORDER)
-}
+def _section_span(text: str, section: str):
+    """(start, end) of the &SECTION ... / namelist block, or None."""
+    m = re.search(r'(?ims)^\s*&' + re.escape(section) + r'\b.*?^\s*/\s*$',
+                  text)
+    return (m.start(), m.end()) if m else None
 
 
-def _substitute_timed_field(text: str, section: str,
-                             field: str, new_value: str) -> str:
-    occ_map = (_SECTION_BEGTC_OCC if field.upper() == 'BEGTC'
-               else _SECTION_ENDTC_OCC)
-    occ     = occ_map.get(section.upper())
-    if occ is None:
-        return _substitute_field(text, section, field, new_value)
-    total = _count_occurrences(text, field)
-    if occ > total:
-        # Sections are matched by position, so a template that lacks a
-        # section would silently shift/skip substitutions.
-        raise ValueError(
-            f"template has only {total} '{field}' entr"
-            f"{'y' if total == 1 else 'ies'} but &{section.upper()} "
-            f"is expected to be #{occ} in the section order "
-            f"{', '.join(_WWM_SECTION_ORDER)}; check fix/wwminput.nml.")
-    new_text, ok = _substitute_field_nth(
-        text, field, new_value, occ)
-    if not ok:
-        print(f"  WARNING: could not substitute {field} in "
-              f"&{section}")
-    return new_text
+def _substitute_timed_field(text: str, section: str, field: str,
+                            new_value: str, required: bool = True) -> str:
+    """Set `field` inside the &SECTION block only.
+
+    The same field names (BEGTC, ENDTC, DELTC) appear in several sections,
+    so the block is located by name. With required=False a section that is
+    absent or does not set the field is left alone: in the coupled setup
+    &WIND, &CURR and &WALV are empty because SCHISM passes those fields.
+    """
+    span = _section_span(text, section)
+    if span is None or _count_occurrences(text[span[0]:span[1]], field) == 0:
+        if required:
+            raise ValueError(f"{field} not found in &{section} of "
+                             f"fix/wwminput.nml")
+        return text
+    a, b = span
+    return text[:a] + _substitute_field(text[a:b], section, field,
+                                        new_value) + text[b:]
 
 
 # =============================================================================
@@ -446,8 +413,8 @@ def _apply_substitutions(text: str, p: dict,
 
     text = _substitute_field(text, 'PROC', 'PROCNAME',
                              f"'{procname}'")
-    text, _ = _substitute_field_nth(
-        text, 'DELTC', f"{deltc_wwm:.1f}", 1)
+    text = _substitute_timed_field(
+        text, 'PROC', 'DELTC', f"{deltc_wwm:.1f}")
     text = _substitute_field(text, 'PROC', 'DMIN',
                              f"{p['h0']:.4f}")
     text = _substitute_timed_field(
@@ -467,33 +434,27 @@ def _apply_substitutions(text: str, p: dict,
              else '.false.')
     text = _substitute_field(text, 'INIT', 'LHOTR', lhotr)
 
-    # Step 5: &BOUC, &WIND, &CURR, &WALV, &HISTORY
+    # Step 5: &BOUC, &WIND, &CURR, &WALV (each only if it sets a time
+    # window; empty in the coupled setup), &HISTORY
     for section in ('BOUC', 'WIND', 'CURR', 'WALV'):
         text = _substitute_timed_field(
-            text, section, 'BEGTC', f"'{begtc_str}'")
+            text, section, 'BEGTC', f"'{begtc_str}'", required=False)
         text = _substitute_timed_field(
-            text, section, 'ENDTC', f"'{endtc_str}'")
+            text, section, 'ENDTC', f"'{endtc_str}'", required=False)
 
     text = _substitute_timed_field(
         text, 'HISTORY', 'BEGTC', f"'{begtc_str}'")
     text = _substitute_timed_field(
         text, 'HISTORY', 'ENDTC', f"'{endtc_str}'")
 
-    # Step 6: &HOTFILE times + DELTC (last occurrence)
+    # Step 6: &HOTFILE times + DELTC
     deltc_hot = float(cfg.get('wwm_deltc_hotfile', 86400.0))
     text = _substitute_timed_field(
         text, 'HOTFILE', 'BEGTC', f"'{begtc_str}'")
     text = _substitute_timed_field(
         text, 'HOTFILE', 'ENDTC', f"'{endtc_str}'")
-
-    total_deltc = _count_occurrences(text, 'DELTC')
-    if total_deltc >= 1:
-        new_text, ok = _substitute_field_nth(
-            text, 'DELTC', f"{deltc_hot:.1f}", total_deltc)
-        if ok:
-            text = new_text
-        else:
-            print("  WARNING: could not substitute HOTFILE DELTC")
+    text = _substitute_timed_field(
+        text, 'HOTFILE', 'DELTC', f"{deltc_hot:.1f}")
 
     return text
 

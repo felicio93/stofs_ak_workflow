@@ -202,6 +202,43 @@ def _ndbc_token_filter(cfg: dict):
 # Model staout loader
 # ---------------------------------------------------------------------------
 
+# Variable of outputs/staout.nc for each ASCII staout_N. SCHISM writes all
+# station output to staout.nc since 2026-10-19 (a3e58bff, "code now directly
+# writes nc (no ascii intermediary)"); names from ar_name in schism_init.F90.
+# The SCHISM inside UFS-Coastal still writes the ASCII staout_N files.
+_STAOUT_NC_VARS = {
+    1: "elevation", 2: "airPressure", 3: "windx", 4: "windy",
+    5: "temperature", 6: "salinity", 7: "horizontalVelX",
+    8: "horizontalVelY", 9: "verticalVel",
+}
+
+
+def _read_staout(outdir, staout_num: int):
+    """(seconds, values[time, station]) of one station variable of one
+    run, from staout.nc or else the ASCII staout_N; None if neither has
+    data. Station j (1-based, station.in order) is column j-1."""
+    import numpy as np
+    nc = outdir / "staout.nc"
+    if (staout_num in _STAOUT_NC_VARS and nc.exists()
+            and nc.stat().st_size > 0):
+        import netCDF4 as nc4
+        with nc4.Dataset(str(nc)) as ds:
+            name = _STAOUT_NC_VARS[staout_num]
+            if (name in ds.variables and "time_in_sec" in ds.variables
+                    and len(ds.dimensions["time"]) > 0):
+                t = np.ma.filled(ds.variables["time_in_sec"][:], np.nan)
+                v = np.ma.filled(ds.variables[name][:], np.nan)
+                return (np.asarray(t, dtype="f8"),
+                        np.asarray(v, dtype="f8"))
+    f = outdir / f"staout_{staout_num}"
+    if f.exists() and f.stat().st_size > 0:
+        import pandas as pd
+        a = pd.read_csv(f, sep=r"\s+", header=None).apply(
+            pd.to_numeric, errors="coerce").to_numpy(dtype="f8")
+        return a[:, 0], a[:, 1:]
+    return None
+
+
 def _load_model_staout(cfg, staout_num: int,
                         all_stations: list,
                         start_str, end_str):
@@ -213,6 +250,7 @@ def _load_model_staout(cfg, staout_num: int,
     distinct columns and the caller selects the exact one by line_index.
     """
     import pandas as pd
+    import numpy as np
 
     pid  = cfg["project_id"]
     mdir = model_dir(cfg)
@@ -221,9 +259,9 @@ def _load_model_staout(cfg, staout_num: int,
     frames = []
 
     for gid in groups:
-        f = (mdir / f"R{pid}" / f"R{pid}_{gid}"
-             / "outputs" / f"staout_{staout_num}")
-        if not f.exists() or f.stat().st_size == 0:
+        got = _read_staout(mdir / f"R{pid}" / f"R{pid}_{gid}" / "outputs",
+                           staout_num)
+        if got is None:
             continue
 
         gstart, _ = group_date_range(cfg, gid)
@@ -251,15 +289,13 @@ def _load_model_staout(cfg, staout_num: int,
                             day=start_day,
                             hour=start_hour)
 
-        df = pd.read_csv(f, sep=r"\s+", header=None)
-        df = df.apply(pd.to_numeric, errors="coerce")
-        tvals = df[0].dropna()
-        if tvals.empty:
+        secs, vals = got
+        ok = ~np.isnan(secs)
+        if not ok.any():
             continue
-
-        df["datetime"] = (base
-                          + pd.to_timedelta(df[0], unit="s"))
-        df = df.drop(columns=[0])
+        df = pd.DataFrame(vals[ok],
+                          columns=range(1, vals.shape[1] + 1))
+        df["datetime"] = base + pd.to_timedelta(secs[ok], unit="s")
 
         # Columns stay labelled by staout column number (== line_index);
         # _assess_station selects the exact column for each

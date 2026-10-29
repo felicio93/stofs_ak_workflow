@@ -108,7 +108,7 @@
 ! Hotstart option. 0: cold start; 1: hotstart with time reset to 0; 2:
 ! continue from the step in hotstart.nc
 !-----------------------------------------------------------------------
-  ihot = 2
+  ihot = 1
 
 !-----------------------------------------------------------------------
 ! Equation of State type used

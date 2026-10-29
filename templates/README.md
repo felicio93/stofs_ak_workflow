@@ -46,7 +46,7 @@ looked up there).
 
 | File | Origin | Notes |
 |------|--------|-------|
-| `param.nml` | M11 (`schism`), M13 (`schism_wwm`), M12 (`ufs_schism*`; M14 is identical) | `ufs_*` differ from M11 in `nws = 4` (required by USE_ATMOS), `ihot = 1` (M11 has `ihot = 2`; both intentional) and fewer old-I/O outputs; M13 adds `icou_elfe_wwm = 1`, `nstep_wwm = 10` and the `iof_wwm` block. The workflow rewrites `start_*`, `rnday`, `nhot_write` and `ihot` per group (`gen_param`). |
+| `param.nml` | M11 (`schism`), M13 (`schism_wwm`), M12 (`ufs_schism*`; M14 is identical) | `ufs_*` differ from M11 in `nws = 4` (required by USE_ATMOS), `ihot = 1` (M11/M13 had `ihot = 2`; the standalone templates now use `ihot = 1` too, because SCHISM's `staout.nc` station output is only appended to with `ihot = 2` and a first group in a fresh run directory gets none) and fewer old-I/O outputs; M13 adds `icou_elfe_wwm = 1`, `nstep_wwm = 10` and the `iof_wwm` block. The workflow rewrites `start_*`, `rnday`, `nhot_write` and `ihot` per group (`gen_param`). |
 | `run_test`, `run_comb` | M11 to M14 | Job cards. `-J` and `-D` (and the WW3 `srun` executable, and the `combine_hotstart7 -i` step) are rewritten per run. `-N/-n` must match the partitioning (and the `*_petlist_bounds`). `@@MODULES:<kind>@@` is replaced by the `module load` lines of the build toolchain, so jobs run with the modules the executable was built with (the reference jobs sourced a personal `~/modules_schism.hercules`). `run_comb` uses account `nosofs` (intentional; `run_test` uses `nos-surge`). |
 | `wwminput.nml` | M13 | `gen_wwminput` sets dates, hotstart flag and stations. |
 | `datm_in`, `datm.streams`, `model_configure` | M12 (M14 identical) | Workflow placeholder style (`@[NAME]`); filled per group. |

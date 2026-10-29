@@ -180,6 +180,14 @@ def run_gen_param(cfg: dict):
     if ihot_str is not None and ihot_str.strip() not in ("0", "1", "2"):
         print(f"  WARNING: ihot = {ihot_str} in fix/param.nml — "
               f"unrecognised value.")
+    if ihot_str is not None and ihot_str.strip() == "2":
+        # schism_init.F90: with ihot=2 the station output is appended to an
+        # existing outputs/staout.nc (nf90_open, errors unchecked); the first
+        # group runs in a fresh run directory, so it gets no station output.
+        print("  WARNING: ihot = 2 in fix/param.nml: SCHISM (since 2026-10-19) "
+              "only appends station output to an existing outputs/staout.nc, "
+              "so the first group would have no station output. Use ihot = 1 "
+              "for a hotstart made by gen_hotstart.")
 
     # ------------------------------------------------------------------
     # Check nhot

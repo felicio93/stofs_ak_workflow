@@ -125,7 +125,7 @@ def validate_config(cfg: dict):
 # Step names per phase. Used to warn when steps of another phase are enabled
 # and to validate --only.
 PREPROCESS_STEPS = {
-    "inspect_mesh",
+    "replicate_fix", "inspect_mesh",
     "download_hycom", "download_era5", "download_glofas",
     "aggregate_hycom", "plot_hycom", "plot_sflux",
     "gen_datm", "plot_datm", "gen_esmf_mesh", "gen_datm_in",

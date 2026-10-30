@@ -19,6 +19,7 @@
 build_executables: true
 
 # Phase 0 — Mesh diagnostics (SLURM job, run before any other step):
+replicate_fix: false  # Once, for a new mesh of the same domain: property .gr3 files and tvd.prop interpolated from replicate_from (project.yaml)
 inspect_mesh: true   # Plot all fix/ input files + mesh resolution + vertical layers
 
 # Phase 1 — DTN only (requires internet access):

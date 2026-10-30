@@ -485,6 +485,7 @@ ufs_schism_ww3 (WW3). Steps not valid for a model print `[N/A]`.
 
 | Step | Context | Models | Description |
 |------|---------|--------|-------------|
+| `replicate_fix` | interactive | all | once, for a new mesh of the same domain: property `.gr3` files (linear; `watertype` nearest) and `tvd.prop` (nearest element) interpolated from `replicate_from`, `station.in`/`source_*.csv` linked, job files copied if still the starter templates; `replicate_depth: true` also takes the source mesh's depths (off by default). Never overwrites; QA in `fix/replicate_fix.txt` |
 | `inspect_mesh` | SLURM | all | plots of `fix/` inputs, resolution, layers -> `D{ID}/D{ID}_fix/` (JPEG) |
 | `download_hycom` | DTN | all | daily SSH/TS/UV via OPeNDAP; corrupt days (<=3 in a row) are interpolated |
 | `download_era5` | DTN | all | monthly ERA5 (CDS API) |

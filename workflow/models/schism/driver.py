@@ -64,7 +64,16 @@ class SchismDriver(ModelDriver):
         _slurm_jobs = []
         _download_failed = []
 
-        # ---- Phase 0: mesh diagnostics ----
+        # ---- Phase 0: property files from another project, mesh diagnostics ----
+        if en("replicate_fix"):
+            print("[STEP] replicate_fix")
+            from workflow.models.schism.preprocess.replicate_fix import (
+                run_replicate_fix,
+            )
+            run_replicate_fix(cfg)
+        else:
+            print("[SKIP] replicate_fix")
+
         if en("inspect_mesh"):
             print("[STEP] inspect_mesh")
             from workflow.diagnostics.submit_inspect_mesh import (

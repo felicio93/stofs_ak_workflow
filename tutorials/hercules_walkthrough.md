@@ -202,6 +202,29 @@ target delete `$SWF_PROJ/M01/build/<target>.done` (or change its block in
 
 ---
 
+## 3c. Optional — replicate an existing project on a new mesh
+
+For a new mesh of the **same domain** (e.g. M26 = M21 on another mesh), put the
+new `hgrid.gr3`, `hgrid.ll` (with the DEM bathymetry) and `vgrid.in` in `fix/`
+and set in `project.yaml`:
+
+```yaml
+replicate_from: /work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M21
+replicate_depth: false     # true: take the source mesh's depths instead
+```
+
+```bash
+stofs-ak --run --only replicate_fix --config $CFG
+```
+
+It writes the property `.gr3` files (linear inside the source mesh, nearest
+outside; `watertype` nearest) and `tvd.prop` (nearest element centroid), links
+`station.in` and the river CSVs, and copies `param.nml`/`run_test`/`run_comb`
+when they are still the starter templates. Files already in `fix/` are kept.
+Review `dt` (and `nspool`, `ihfskip`, `nspool_sta`) and the cores in
+`run_test`; make `partition.prop` for the new mesh. The distances, the points
+outside the source mesh and the value ranges are in `fix/replicate_fix.txt`.
+
 ## 4. Step 0 — Mesh diagnostics (SLURM, run before anything else)
 
 Diagnostic plots of all `fix/` input files, mesh resolution, and vertical

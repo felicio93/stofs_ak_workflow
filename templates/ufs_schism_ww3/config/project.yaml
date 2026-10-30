@@ -28,6 +28,13 @@ project_dir: /work2/noaa/nos-surge/felicioc/STOFS_3D_AK
 start_date: "2025-09-01"
 end_date:   "2025-09-08"
 
+# replicate_fix (steps.yaml): the project whose fix/ property files are carried
+# over to this project's new mesh of the same domain (e.g. .../M21).
+# replicate_depth: true also replaces this mesh's depths by the source mesh's
+# (off by default: the new mesh should come with its own DEM bathymetry).
+# replicate_from: /work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M21
+replicate_depth: false
+
 # =============================================================================
 # Time grouping
 # =============================================================================

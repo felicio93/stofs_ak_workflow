@@ -45,6 +45,15 @@ class UfsSchismDriver(ModelDriver):
         # =====================================================================
         # Phase 0
         # =====================================================================
+        if en("replicate_fix"):
+            print("[STEP] replicate_fix")
+            from workflow.models.schism.preprocess.replicate_fix import (
+                run_replicate_fix,
+            )
+            run_replicate_fix(cfg)
+        else:
+            print("[SKIP] replicate_fix")
+
         if en("inspect_mesh"):
             print("[STEP] inspect_mesh")
             from workflow.diagnostics.submit_inspect_mesh import (

@@ -8,7 +8,8 @@ Project scaffolding and the fix/ check.
                 <dir>/M{NN}/fix (the starter files of templates/<model>/fix)
 
   check_fix     stofs-ak --check-fix --config <dir>/M{NN}/config
-                reports which fix/ files the model needs are present
+                reports which fix/ files the model needs are present and
+                checks the mesh element orientation (core/mesh_check.py)
 
 The file lists come from the model's setup_run.py (FIX_LINKS, ww3 files) and
 from the steps that read fix/ (see FIX_SPEC), so there is one source of truth.
@@ -224,8 +225,14 @@ def check_fix(cfg: dict) -> bool:
         print("\n  Consistency warnings:")
         for w in warns:
             print(f"    - {w}")
-    print(f"\n  {'OK: all required files present.' if ok else 'MISSING required files.'}\n")
-    return ok
+    print("\n  Mesh element orientation:")
+    from workflow.core.mesh_check import check_mesh, print_mesh_errors
+    errors = check_mesh(fix)
+    if errors:
+        print_mesh_errors(errors)
+    print(f"\n  {'OK: all required files present.' if ok else 'MISSING required files.'}")
+    print(f"  {'Mesh: INVALID.' if errors else 'Mesh: ok.'}\n")
+    return ok and not errors
 
 
 def new_project(model: str, pid: str, root: Path) -> Path:

@@ -313,6 +313,13 @@ def run_workflow(cfg: dict, config_dir: Path, phase: str = "preprocess",
     """
     _phase_mismatch_warnings(cfg, phase, only)
 
+    # SCHISM aborts on clockwise elements only when the run starts; stop
+    # before preprocessing instead (downloads do not need the mesh).
+    if (phase in ("preprocess", "run", "all")
+            and not (only or "").startswith("download_")):
+        from workflow.core.mesh_check import require_valid_mesh
+        require_valid_mesh(cfg)
+
     driver = make_driver(cfg, config_dir)
     phases = (["build", "preprocess", "run", "postprocess"]
               if phase == "all" else [phase])

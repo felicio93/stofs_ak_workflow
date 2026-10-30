@@ -237,7 +237,7 @@ export CFG=<project_dir>/M14/config
 # edit $CFG/project.yaml, domain.yaml, steps.yaml (dates, domain box, SLURM account, steps)
 # put your mesh files in <project_dir>/M14/fix/   (hgrid.gr3, hgrid.ll, vgrid.in, partition.prop, ...)
 
-stofs-ak --check-fix --config $CFG   # which fix/ files are present / missing / edited
+stofs-ak --check-fix --config $CFG   # which fix/ files are present / missing / edited; mesh orientation
 stofs-ak --init      --config $CFG   # create the directory tree (safe to re-run; deletes nothing)
 stofs-ak --setup-envs --config $CFG  # on the DTN; creates/verifies the conda envs
 stofs-ak --run --phase all --config $CFG   # build -> preprocess -> run -> postprocess
@@ -553,7 +553,7 @@ the interactive config steps that read their output (only when no `--only`).
 
 ```bash
 stofs-ak --new-project --model <type> --id NN --dir <project_dir>  # scaffold config/ + fix/
-stofs-ak --check-fix --config $CFG                            # fix/ files: present / missing / edited
+stofs-ak --check-fix --config $CFG                            # fix/ files: present / missing / edited; mesh orientation
 stofs-ak --run --phase build --config $CFG                    # compile the executables (up-to-date targets skipped)
 stofs-ak --run --config $CFG                                  # preprocess (default)
 stofs-ak --run --only download_hycom --config $CFG            # one step, ignores flags
@@ -769,4 +769,5 @@ by `setup_run`.
 | Compile of `gen_*`/combiner crashes or the run job stops on `stack` | the utilities need `ulimit -s unlimited` (the templates set it) |
 | `plot_hycom_outputs` FAIL: `... constant (10)`/`(0)` | the boundary file holds the `outside_temp/sal` constants: every node was outside the HYCOM grid (longitude mismatch). Check the `Longitude check` lines printed before submitting `gen_3Dth`; fix `hycom_lon_shift` or the mesh/HYCOM convention, delete `gen_3Dth.done` and re-run |
 | `Longitude check ... ERROR: no mesh node falls inside the HYCOM longitude range` | `fix/hgrid.ll` and the HYCOM download use different longitude conventions or boxes (`lon_reference`, `lon_min/lon_max`) |
+| `ERROR: invalid mesh in fix/` (clockwise or zero-area elements), or SCHISM aborts with `Negative elem. areas` | regenerate the mesh with counter-clockwise elements (the workflow does not fix meshes), then redo `vgrid.in`, `partition.prop` and the property files; `python utils/check_mesh_orientation.py fix/hgrid.gr3 fix/hgrid.ll` checks a mesh by hand |
 | `--check-fix` warns that `run_test` runs a different executable or modulefile | edit `fix/run_test` (or `executables:`) so they agree with the build |

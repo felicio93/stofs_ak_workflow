@@ -233,10 +233,25 @@ def _nml_int(text: str, name: str):
     return int(m.group(1)) if m else None
 
 
+def _min_scribes(text: str) -> int:
+    """Lower bound of the scribes SCHISM needs for the iof_hydro outputs of
+    param.nml: one per 3D variable (vectors count 2) + 1 shared by all 2D
+    outputs (schism_init.F90 noutvars). SCHISM defaults: iof_hydro(1),
+    (25) and (26) on. Module outputs (WWM, GEN, ...) are not counted."""
+    iof = {1: 1, 25: 1, 26: 1}
+    for m in re.finditer(r"(?mi)^\s*iof_hydro\((\d+)\)\s*=\s*(\d+)", text):
+        iof[int(m.group(1))] = int(m.group(2))
+    on = lambda i: iof.get(i, 0) != 0
+    n3d = (sum(on(i) for i in range(17, 26)) + 2 * on(26) + 2 * on(27)
+           + sum(on(i) for i in range(28, 31)))
+    return n3d + 1
+
+
 def _consistency_2d(cfg: dict, fix: Path) -> list:
     """2D barotropic checks: one-layer vgrid.in, barotropic param.nml, an
     executable built without PREC_EVAP (it forces the evaporation model,
     which aborts with ihconsv = 0)."""
+    from workflow.core.partition import compute_cores
     warns = []
     vg = fix / "vgrid.in"
     if vg.exists():
@@ -262,6 +277,13 @@ def _consistency_2d(cfg: dict, fix: Path) -> list:
         if need and not (fix / need).exists() and need not in made:
             warns.append(f"param.nml nchi={nchi} reads {need}: not in fix/ "
                          f"and not in constant_gr3 (gen_constant_gr3)")
+        need = _min_scribes(text)
+        cores = compute_cores(fix / "run_test") if (fix / "run_test").exists() else None
+        if cores and cores[1] < need:
+            warns.append(f"run_test has {cores[1]} scribe(s) but param.nml "
+                         f"writes {need - 1} 3D output variable(s): SCHISM "
+                         f"needs at least {need} (zCoordinates, iof_hydro(25), "
+                         f"is on unless set to 0)")
     exe = (cfg.get("executables") or {}).get("schism_2d", "")
     if "PREC_EVAP" in exe:
         warns.append(f"executables.schism_2d {exe} is a PREC_EVAP build: "

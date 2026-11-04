@@ -43,6 +43,7 @@ def make_driver(cfg: dict, config_dir: Path) -> ModelDriver:
     # Imported lazily so that importing this module doesn't drag in every
     # model's dependencies.
     from workflow.models.schism.driver import SchismDriver
+    from workflow.models.schism_2d.driver import Schism2dDriver
     from workflow.models.schism_wwm.driver import SchismWwmDriver
     from workflow.models.schism_mice.driver import SchismMiceDriver
     from workflow.models.ufs_schism.driver import UfsSchismDriver
@@ -50,6 +51,7 @@ def make_driver(cfg: dict, config_dir: Path) -> ModelDriver:
 
     registry = {
         "schism":         SchismDriver,
+        "schism_2d":      Schism2dDriver,
         "schism_wwm":     SchismWwmDriver,
         "schism_mice":    SchismMiceDriver,
         "ufs_schism":     UfsSchismDriver,

@@ -30,6 +30,7 @@ import stat
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import NamedTuple
 
 from workflow.core.templating import unreplaced
 from workflow.core.config import (
@@ -74,6 +75,25 @@ OUTPUT_PLACEHOLDERS = (
 )
 
 
+class RunProfile(NamedTuple):
+    """What setup_run links and checks for one standalone SCHISM model."""
+    exe_key: str              # executables.<exe_key> in project.yaml
+    fix_links: tuple          # from fix/, missing ones skipped with a NOTE
+    input_links: tuple        # from I{ID}_{group_id}/, must exist
+    sentinels: tuple          # (file in I{ID}_{group_id}/, step) per group
+    first_hotstart: bool      # first group needs I{ID}_{first}/hotstart.nc
+
+
+SCHISM_PROFILE = RunProfile(
+    exe_key        = "schism",
+    fix_links      = tuple(FIX_LINKS),
+    input_links    = tuple(INPUT_LINKS),
+    sentinels      = (("gen_3Dth.done", "gen_3Dth"),
+                      ("gen_nudge.done", "gen_nudge")),
+    first_hotstart = True,
+)
+
+
 # =============================================================================
 # Freshness helpers
 # =============================================================================
@@ -93,7 +113,7 @@ def _fmt_mtime(p: Path) -> str:
 
 
 def check_fix_freshness(cfg: dict, mdir: Path,
-                        group_id: str) -> list:
+                        group_id: str, exe_key: str = "schism") -> list:
     """Compare fix/ source files against deployed counterparts."""
     pid  = cfg["project_id"]
     fix  = mdir / "fix"
@@ -123,7 +143,7 @@ def check_fix_freshness(cfg: dict, mdir: Path,
                 f"{dest_dir.name}/{dest_name} ({_fmt_mtime(dst)})."
             )
 
-    schism_exe = exes.get("schism")
+    schism_exe = exes.get(exe_key)
     if schism_exe:
         src_exe = bind / schism_exe
         dst_exe = rdir / schism_exe
@@ -267,7 +287,8 @@ def _link(src: Path, dst: Path) -> bool:
 
 def _setup_group(cfg: dict, mdir: Path, group_id: str,
                  group_index: int, next_group_id: str,
-                 is_last: bool, config_dir: Path) -> bool:
+                 is_last: bool, config_dir: Path,
+                 profile: RunProfile = SCHISM_PROFILE) -> bool:
     pid  = cfg["project_id"]
     fix  = mdir / "fix"
     bind = mdir / "bin"
@@ -292,10 +313,10 @@ def _setup_group(cfg: dict, mdir: Path, group_id: str,
 
     # --- validate executables ---
     exes        = cfg.get("executables", {})
-    schism_exe  = exes.get("schism")
+    schism_exe  = exes.get(profile.exe_key)
     combine_exe = exes.get("combine_hotstart")
     if not schism_exe or not combine_exe:
-        print("  ERROR: executables.schism and "
+        print(f"  ERROR: executables.{profile.exe_key} and "
               "executables.combine_hotstart must be set in "
               "project.yaml")
         return False
@@ -322,25 +343,24 @@ def _setup_group(cfg: dict, mdir: Path, group_id: str,
             return False
         return True
 
-    if not _check_sentinel(idir / "gen_3Dth.done",  "gen_3Dth"):
-        return False
-    if not _check_sentinel(idir / "gen_nudge.done", "gen_nudge"):
-        return False
+    for sentinel, step in profile.sentinels:
+        if not _check_sentinel(idir / sentinel, step):
+            return False
     if not _check_sentinel(
             idir / "sflux" / "gen_sflux.done", "gen_sflux"):
         return False
-    if group_index == 0:
+    if group_index == 0 and profile.first_hotstart:
         if not _check_sentinel(
                 idir / "gen_hotstart.done", "gen_hotstart"):
             return False
 
     # --- symlink static fix/ files ---
-    for name in FIX_LINKS:
+    for name in profile.fix_links:
         if not _link(fix / name, rdir / name):
             print(f"  NOTE: fix/{name} not found, skipped.")
 
     # --- symlink group inputs ---
-    for name in INPUT_LINKS:
+    for name in profile.input_links:
         if not _link(idir / name, rdir / name):
             print(f"  ERROR {group_id}: required input missing: "
                   f"{idir / name}")
@@ -353,7 +373,8 @@ def _setup_group(cfg: dict, mdir: Path, group_id: str,
         return False
 
     # --- first group: symlink hotstart from I{ID}_{first} ---
-    if group_index == 0:
+    # (a cold-start profile starts from rest: ihot = 0, no hotstart.nc)
+    if group_index == 0 and profile.first_hotstart:
         if not _link(idir / "hotstart.nc",
                      rdir / "hotstart.nc"):
             print(f"  ERROR {group_id}: first-group hotstart missing: "
@@ -448,7 +469,8 @@ def _setup_group(cfg: dict, mdir: Path, group_id: str,
 # Entry point
 # =============================================================================
 
-def run_setup_run(cfg: dict, config_dir=None):
+def run_setup_run(cfg: dict, config_dir=None,
+                  profile: RunProfile = SCHISM_PROFILE):
     from pathlib import Path as _Path
     pid        = cfg["project_id"]
     mdir       = model_dir(cfg)
@@ -471,7 +493,8 @@ def run_setup_run(cfg: dict, config_dir=None):
     # Freshness summary before processing any groups
     all_stale = []
     for group_id in groups:
-        for w in check_fix_freshness(cfg, mdir, group_id):
+        for w in check_fix_freshness(cfg, mdir, group_id,
+                                     profile.exe_key):
             all_stale.append(f"  [{group_id}] {w.strip()}")
     if all_stale:
         print(f"\n  {'!'*58}")
@@ -486,7 +509,8 @@ def run_setup_run(cfg: dict, config_dir=None):
         next_group_id = groups[i + 1] if i + 1 < len(groups) else None
         is_last       = (i + 1 == len(groups))
         if not _setup_group(cfg, mdir, group_id, i,
-                            next_group_id, is_last, config_dir):
+                            next_group_id, is_last, config_dir,
+                            profile):
             failed.append(group_id)
 
     print(f"\n{'='*60}")

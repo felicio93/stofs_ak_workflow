@@ -1,0 +1,45 @@
+# =============================================================================
+# schism_2d.yaml — SCHISM 2D (barotropic, one layer) model parameters
+# =============================================================================
+# Copied into your project's config/ directory when model_type: schism_2d.
+# Loaded automatically by workflow.core.config.load_config.
+#
+# 2D in SCHISM = vgrid.in with one layer (fix/vgrid.in, shipped by
+# --new-project) + param.nml ibc = 1, ibtp = 0 (no T/S transport). The run
+# starts from rest (ihot = 0) and is forced by tides at the open boundaries,
+# sflux_air (wind, pressure) and, with if_source /= 0, river volume
+# (source.nc from GloFAS). No HYCOM input is used.
+
+# Open boundary condition flags for each open boundary in hgrid.gr3 (in order).
+# Format: [[iettype, ifltype, itetype, isatype], ...]
+#   iettype: elevation   (0=none, 1=elev.th, 2=constant, 3=tidal, 4=th.nc, 5=tidal+th.nc)
+#   ifltype: velocity    (0=none, 1=flux.th, 2=constant, 3=tidal, 4=th.nc, 5=tidal+th.nc)
+#   itetype / isatype: must be 0 (no T/S in a barotropic model)
+# Tides only: TPXO elevation, no velocity condition (param.nml indvel = 1).
+open_boundary_flags: [[3, 0, 0, 0]]
+
+# Tidal constituents for bctides.in.
+#   'major' : 8 major constituents  [Q1, O1, P1, K1, N2, M2, S2, K2]
+#   'all'   : all 15 available in TPXO9
+#   list    : explicit subset, e.g. [M2, S2, K1, O1, N2, P1, Q1, K2, Mm, Mf]
+tidal_constituents: major
+
+# Cutoff depth for applying earth tidal potential (metres).
+tidal_cutoff_depth: 50.0
+
+# Property files written by gen_constant_gr3 (from fix/hgrid.gr3, one value
+# everywhere). Files already in fix/ are kept, so a hand-made spatially
+# varying file can replace one of these.
+#   manning.gr3          Manning's n (param.nml nchi = -1, hmin_man)
+#   windrot_geo2proj.gr3 wind rotation angle [deg]; 0 for a lon/lat mesh
+#                        (read by SCHISM when nws = 2)
+constant_gr3:
+  manning.gr3: 0.025
+  windrot_geo2proj.gr3: 0.0
+
+# =============================================================================
+# Run management (Phase 4)
+# =============================================================================
+# With more than one group: chain each group's end-of-group hotstart into the
+# next group and launch it (true), or stop after the first group (false).
+chain_hotstart: true

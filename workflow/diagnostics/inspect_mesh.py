@@ -100,8 +100,10 @@ def read_vgrid_layers(vgrid_path: Path, np_nodes: int):
     """
     print(f"  Reading {vgrid_path.name} (first 3 lines only) ...")
     with open(vgrid_path) as f:
-        ivcor = int(f.readline().strip())
-        nvrt  = int(f.readline().strip())
+        # first token only: lines carry comments ("2 !ivcor"), and the SZ
+        # second line is "nvrt kz h_s"
+        ivcor = int(f.readline().split()[0])
+        nvrt  = int(f.readline().split()[0])
         if ivcor == 1:    # LSC2
             kbp_line = f.readline()
             kbp      = np.fromstring(kbp_line, dtype=int, sep=' ')

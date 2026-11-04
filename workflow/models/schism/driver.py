@@ -51,6 +51,17 @@ class SchismDriver(ModelDriver):
     # True in drivers that implement the SCHISM+WWM-only steps
     # (gen_wwmbnd / gen_wwminput); others report them as [N/A].
     supports_wwm_steps = False
+    # Steps of this driver that do not apply to a derived model
+    # ({step: reason}); reported as [N/A] when enabled, never run.
+    na_steps: dict = {}
+
+    def enabled(self, step: str, only: Optional[str] = None) -> bool:
+        return step not in self.na_steps and super().enabled(step, only)
+
+    def _skip(self, step: str):
+        """[SKIP] line for a disabled step (none for an N/A step)."""
+        if step not in self.na_steps:
+            print(f"[SKIP] {step}")
 
     # -------------------------------------------------------------------------
     # Phase 0-3 — Pre-processing
@@ -59,12 +70,17 @@ class SchismDriver(ModelDriver):
         cfg, config_dir = self.cfg, self.config_dir
         en = lambda step: self.enabled(step, only)
 
+        for step, reason in self.na_steps.items():
+            if super().enabled(step, only):
+                _na(step, reason)
+
         self._preprocess_compat_warning(only)
 
         _slurm_jobs = []
         _download_failed = []
 
-        # ---- Phase 0: property files from another project, mesh diagnostics ----
+        # ---- Phase 0: property files from another project, partition,
+        #      mesh diagnostics ----
         if en("replicate_fix"):
             print("[STEP] replicate_fix")
             from workflow.models.schism.preprocess.replicate_fix import (
@@ -72,7 +88,16 @@ class SchismDriver(ModelDriver):
             )
             run_replicate_fix(cfg)
         else:
-            print("[SKIP] replicate_fix")
+            self._skip("replicate_fix")
+
+        if en("gen_partition"):
+            print("[STEP] gen_partition")
+            from workflow.models.schism.preprocess.gen_partition import (
+                run_gen_partition,
+            )
+            run_gen_partition(cfg)
+        else:
+            self._skip("gen_partition")
 
         if en("inspect_mesh"):
             print("[STEP] inspect_mesh")
@@ -83,7 +108,7 @@ class SchismDriver(ModelDriver):
             if jid:
                 _slurm_jobs.append(jid)
         else:
-            print("[SKIP] inspect_mesh")
+            self._skip("inspect_mesh")
 
         # ---- Phase 1: downloads (DTN only) ----
         # Catch DtnRequiredError so --phase all on a login node
@@ -102,7 +127,7 @@ class SchismDriver(ModelDriver):
                     f"DTN required — run separately on the "
                     f"DTN.\n         {exc}")
         else:
-            print("[SKIP] download_hycom")
+            self._skip("download_hycom")
 
         if en("download_era5"):
             try:
@@ -117,7 +142,7 @@ class SchismDriver(ModelDriver):
                     f"DTN required — run separately on the "
                     f"DTN.\n         {exc}")
         else:
-            print("[SKIP] download_era5")
+            self._skip("download_era5")
 
         if en("download_glofas"):
             try:
@@ -132,7 +157,7 @@ class SchismDriver(ModelDriver):
                     f"DTN required — run separately on the "
                     f"DTN.\n         {exc}")
         else:
-            print("[SKIP] download_glofas")
+            self._skip("download_glofas")
 
         if _download_failed:
             print(f"\n{'='*60}")
@@ -169,7 +194,7 @@ class SchismDriver(ModelDriver):
             )
             run_aggregate(cfg)
         else:
-            print("[SKIP] aggregate_hycom")
+            self._skip("aggregate_hycom")
 
         if en("plot_hycom"):
             print("[STEP] plot_hycom")
@@ -180,7 +205,7 @@ class SchismDriver(ModelDriver):
             if jid:
                 _slurm_jobs.append(jid)
         else:
-            print("[SKIP] plot_hycom")
+            self._skip("plot_hycom")
 
         if en("gen_sflux"):
             print("[STEP] gen_sflux")
@@ -192,7 +217,7 @@ class SchismDriver(ModelDriver):
             if _gen_sflux_jobid:
                 _slurm_jobs.append(_gen_sflux_jobid)
         else:
-            print("[SKIP] gen_sflux")
+            self._skip("gen_sflux")
             _gen_sflux_jobid = ""
 
         if en("plot_sflux"):
@@ -206,7 +231,7 @@ class SchismDriver(ModelDriver):
             if jid:
                 _slurm_jobs.append(jid)
         else:
-            print("[SKIP] plot_sflux")
+            self._skip("plot_sflux")
 
         # ---- Phase 3: SCHISM preprocessing ----
         if en("gen_estuary"):
@@ -216,7 +241,7 @@ class SchismDriver(ModelDriver):
             )
             run_gen_estuary(cfg)
         else:
-            print("[SKIP] gen_estuary")
+            self._skip("gen_estuary")
 
         if en("gen_bctides"):
             print("[STEP] gen_bctides")
@@ -225,7 +250,7 @@ class SchismDriver(ModelDriver):
             )
             run_gen_bctides(cfg)
         else:
-            print("[SKIP] gen_bctides")
+            self._skip("gen_bctides")
 
         if en("gen_source"):
             print("[STEP] gen_source")
@@ -234,7 +259,7 @@ class SchismDriver(ModelDriver):
             )
             run_gen_source(cfg)
         else:
-            print("[SKIP] gen_source")
+            self._skip("gen_source")
 
         if en("gen_param"):
             print("[STEP] gen_param")
@@ -243,7 +268,7 @@ class SchismDriver(ModelDriver):
             )
             run_gen_param(cfg)
         else:
-            print("[SKIP] gen_param")
+            self._skip("gen_param")
 
         _gen_hycom_jobs = []
         if en("gen_hotstart"):
@@ -256,7 +281,7 @@ class SchismDriver(ModelDriver):
                 _slurm_jobs.append(jid)
                 _gen_hycom_jobs.append(jid)
         else:
-            print("[SKIP] gen_hotstart")
+            self._skip("gen_hotstart")
 
         if en("gen_3Dth"):
             print("[STEP] gen_3Dth")
@@ -268,7 +293,7 @@ class SchismDriver(ModelDriver):
                 _slurm_jobs.append(jid)
                 _gen_hycom_jobs.append(jid)
         else:
-            print("[SKIP] gen_3Dth")
+            self._skip("gen_3Dth")
 
         if en("gen_nudge"):
             print("[STEP] gen_nudge")
@@ -280,7 +305,7 @@ class SchismDriver(ModelDriver):
                 _slurm_jobs.append(jid)
                 _gen_hycom_jobs.append(jid)
         else:
-            print("[SKIP] gen_nudge")
+            self._skip("gen_nudge")
 
         if en("plot_hycom_outputs"):
             print("[STEP] plot_hycom_outputs")
@@ -292,7 +317,7 @@ class SchismDriver(ModelDriver):
             if jid:
                 _slurm_jobs.append(jid)
         else:
-            print("[SKIP] plot_hycom_outputs")
+            self._skip("plot_hycom_outputs")
 
         return _slurm_jobs
 

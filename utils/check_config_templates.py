@@ -18,7 +18,8 @@ For every model folder it verifies that:
   * known dead/removed config keys are absent;
   * the keys the model needs are present (executables, model yaml keys);
   * domain.yaml is identical in all folders and the SCHISM keys repeated in
-    each model yaml have the same values (drift check).
+    each model yaml have the same values (drift check; schism_2d has its own
+    domain and keys: Norton Sound, tides only, no HYCOM).
 
 Usage (needs pyyaml + python-dateutil, e.g. the swf_main env):
     python utils/check_config_templates.py
@@ -42,7 +43,7 @@ from workflow.core.scaffold import (  # noqa: E402
 )
 
 TEMPLATES = ROOT / "templates"
-MODELS = ("schism", "schism_wwm", "ufs_schism", "ufs_schism_ww3")
+MODELS = ("schism", "schism_2d", "schism_wwm", "ufs_schism", "ufs_schism_ww3")
 
 UFS = {"ufs_schism", "ufs_schism_ww3"}
 WAVES = {"schism_wwm", "ufs_schism_ww3"}
@@ -57,6 +58,11 @@ WW3_STEPS = {"gen_ww3_mesh", "gen_ww3_points", "gen_ww3_shel", "gen_ww3_ounp",
              "plot_outputs_ww3"}
 WAVE_STEPS = {"wave_skill", "download_altimetry", "collocate_altimetry",
               "plot_altimetry"}
+# Steps a 2D barotropic model does not have (Schism2dDriver reports them N/A).
+NOT_2D_STEPS = {"replicate_fix", "download_hycom", "aggregate_hycom",
+                "plot_hycom", "gen_estuary", "gen_hotstart", "gen_3Dth",
+                "gen_nudge", "plot_hycom_outputs", "download_sst",
+                "compare_sst", "download_argo", "collocate_argo", "plot_argo"}
 
 DEAD_KEYS = {
     "combine_diag_nranks", "combine_diag_walltime", "compare_sst_max_ntasks",
@@ -71,8 +77,12 @@ SCHISM_KEYS = {
     "nudge_stride",
     "nbin", "mne_bin", "chain_hotstart",
 }
+# schism_2d.yaml keys (it does not repeat the HYCOM/T-S SCHISM keys)
+SCHISM_2D_KEYS = {"open_boundary_flags", "tidal_constituents",
+                  "tidal_cutoff_depth", "chain_hotstart", "constant_gr3"}
 MODEL_KEYS = {
     "schism": set(),
+    "schism_2d": set(),
     "schism_wwm": {"wwm_cutoff_freq", "wwm_outstyle_station", "wwm_lsp1d",
                    "wwm_lsp2d", "wwm_deltc_hotfile", "wwm_procname"},
     "ufs_schism": {"datm_subdir", "datm_filename_template", "dt_atmos",
@@ -91,13 +101,15 @@ MODEL_KEYS["ufs_schism_ww3"] = MODEL_KEYS["ufs_schism"] | {
 }
 BUILD_KINDS = {
     "schism": {"schism", "hycom_utils", "combine_hotstart", "partition_tools"},
+    "schism_2d": {"schism", "combine_hotstart", "partition_tools"},
     "schism_wwm": {"schism", "hycom_utils", "combine_hotstart", "partition_tools"},
     "ufs_schism": {"ufs", "hycom_utils", "combine_hotstart",
                    "combine_output_mpi", "partition_tools"},
     "ufs_schism_ww3": {"ufs", "hycom_utils", "combine_hotstart",
                        "combine_output_mpi", "partition_tools"},
 }
-EXE_KEY = {"schism": "schism", "schism_wwm": "schism_wwm",
+EXE_KEY = {"schism": "schism", "schism_2d": "schism_2d",
+           "schism_wwm": "schism_wwm",
            "ufs_schism": "ufs_schism", "ufs_schism_ww3": "ufs_schism_ww3"}
 
 ALL_STEPS = (orch.BUILD_STEPS | orch.PREPROCESS_STEPS | orch.RUN_PHASE_STEPS
@@ -105,6 +117,12 @@ ALL_STEPS = (orch.BUILD_STEPS | orch.PREPROCESS_STEPS | orch.RUN_PHASE_STEPS
 
 
 def step_applies(step: str, model: str) -> bool:
+    if model == "schism_2d" and step in NOT_2D_STEPS:
+        return False
+    if step == "gen_constant_gr3":
+        return model == "schism_2d"
+    if step == "gen_partition":
+        return model not in UFS
     if step in UFS_STEPS:
         return model in UFS
     if step in WWM_STEPS:
@@ -114,7 +132,7 @@ def step_applies(step: str, model: str) -> bool:
     if step in WAVE_STEPS:
         return model in WAVES
     if step == "diag_run_plots":
-        return model == "schism"
+        return model in ("schism", "schism_2d")
     return True
 
 
@@ -161,12 +179,14 @@ def check_model(model: str, errors: list) -> dict:
     for k in sorted(DEAD_KEYS & set(cfg)):
         err(f"dead key present: {k}")
 
-    for k in sorted((SCHISM_KEYS | MODEL_KEYS[model]) - set(cfg)):
+    base_keys = SCHISM_2D_KEYS if model == "schism_2d" else SCHISM_KEYS
+    for k in sorted((base_keys | MODEL_KEYS[model]) - set(cfg)):
         err(f"{model}.yaml: missing key {k}")
 
     exes = cfg.get("executables") or {}
-    needed = {EXE_KEY[model], "combine_hotstart",
-              "gen_hotstart", "gen_3Dth", "gen_nudge"}
+    needed = {EXE_KEY[model], "combine_hotstart"}
+    if model != "schism_2d":
+        needed |= {"gen_hotstart", "gen_3Dth", "gen_nudge"}
     if model in UFS:
         needed.add("combine_output")
     for k in sorted(needed - set(exes)):
@@ -202,13 +222,15 @@ def main() -> int:
     cfgs = {m: check_model(m, errors) for m in MODELS}
 
     doms = {m: (TEMPLATES / m / "config" / "domain.yaml").read_text()
-            for m in MODELS
+            for m in MODELS if m != "schism_2d"
             if (TEMPLATES / m / "config" / "domain.yaml").exists()}
     if len(set(doms.values())) > 1:
         errors.append("domain.yaml differs between model folders")
 
     ref = None
     for m in MODELS:
+        if m == "schism_2d":
+            continue
         c = cfgs.get(m) or {}
         vals = {k: c.get(k) for k in SCHISM_KEYS}
         if ref is None:

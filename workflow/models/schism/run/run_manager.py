@@ -16,7 +16,9 @@ Works for all grouping modes (monthly, ndays/weekly/daily).
 from typing import Optional
 
 
-def run_phase(cfg: dict, config_dir, only: Optional[str] = None):
+def run_phase(cfg: dict, config_dir, only: Optional[str] = None,
+              profile=None):
+    """profile: setup_run.RunProfile of the model (default: SCHISM)."""
     def enabled(step: str) -> bool:
         if only is not None:
             return step == only
@@ -27,7 +29,10 @@ def run_phase(cfg: dict, config_dir, only: Optional[str] = None):
         from workflow.models.schism.run.setup_run import (
             run_setup_run,
         )
-        run_setup_run(cfg, config_dir)
+        if profile is None:
+            run_setup_run(cfg, config_dir)
+        else:
+            run_setup_run(cfg, config_dir, profile=profile)
     else:
         print("[SKIP] setup_run")
 

@@ -1,0 +1,178 @@
+# =============================================================================
+# postprocess.yaml — Phase 5 post-processing settings
+# =============================================================================
+# Copied into your project's config/ directory. Loaded automatically by
+# workflow.core.config.load_config (optional file).
+
+# Depth isobaths (metres) overlaid on ALL plots (diagnostics, field GIFs,
+# SST comparison). Extracted from the mesh 'depth' in out2d/hgrid.
+isobaths: [-5, 0, 5, 10, 20]   # hgrid depth, positive down: -5 = 5 m above datum
+
+# =============================================================================
+# diag_run_plots — per-output-stack diagnostic frames DURING the run
+# =============================================================================
+# Static images (no GIF), one per timestep per variable, written to
+# D{ID}/D{ID}_YYYYMM/diag/ as each SCHISM output stack completes. Dispatched
+# by auto_hotstart.py from the Phase-4 monitoring loop. Enable BEFORE setup_run
+# so the hook is baked into the run directories.
+#
+# Variable entry fields (shared by diag_run_vars and plot_outputs_vars):
+#   file_prefix : NetCDF filename prefix without _{N}.nc
+#                 New I/O: e.g. out2d, temperature, salinity
+#                 Old I/O (UFS-SCHISM): ignored — all vars are in schout_N.nc
+#   var_name    : variable name (use New I/O names — old I/O is mapped
+#                 automatically; see variable name mapping table below)
+#   label       : colorbar / title text (include units)
+#   cmap        : matplotlib colormap
+#   vmin / vmax : color limits (null = robust 2nd/98th percentile)
+#   is_3d       : true if the variable has a vertical (sigma) dimension
+#   layer       : "surface" | "bottom" | integer index (only used if is_3d)
+#   loc         : "node" (default) or "elem" (element-centered)
+#
+# diag_run_vars: the quick health-check subset plotted live during the run.
+diag_run_vars:
+  - {file_prefix: out2d, var_name: elevation,         label: "Water Level (m)",  cmap: RdBu_r, vmin: -2, vmax: 2, is_3d: false}
+  - {file_prefix: out2d, var_name: depthAverageVelX,  label: "Depth-avg U (m/s)", cmap: RdBu_r, vmin: -1, vmax: 1, is_3d: false}
+  - {file_prefix: out2d, var_name: depthAverageVelY,  label: "Depth-avg V (m/s)", cmap: RdBu_r, vmin: -1, vmax: 1, is_3d: false}
+diag_run_dpi: 150
+
+# =============================================================================
+# plot_outputs — full-run field GIFs (after the run completes)
+# =============================================================================
+#
+# OUTPUT FORMAT NOTE
+# ------------------
+# Works for BOTH output formats automatically:
+#
+#   New I/O (SCHISM standalone): separate per-variable files
+#     (out2d_N.nc, temperature_N.nc, etc.). file_prefix is used to locate
+#     the correct file.
+#
+#   Old I/O (UFS-SCHISM): all variables in schout_N.nc.
+#     file_prefix is IGNORED. Variable names are translated automatically
+#     using the mapping table below.
+#
+# VARIABLE NAME MAPPING (old I/O -> new I/O)
+# ------------------------------------------
+# Use the var_name column (New I/O names) in all configurations.
+# The adapter maps them to old I/O names automatically at runtime.
+#
+#   New I/O var_name        Old I/O variable    Dimensions
+#   ----------------        ----------------    ----------
+#   elevation               elev                2D node
+#   temperature             temp                3D node
+#   salinity                salt                3D node
+#   horizontalVelX          hvel                3D node vector (component 0, eastward)
+#   horizontalVelY          hvel                3D node vector (component 1, northward)
+#   verticalVelocity        vertical_velocity   3D node
+#   waterDensity            water_density       3D node
+#   turbulentKineticEner    TKE                 3D node
+#   mixingLength            mixing_length       3D node
+#   diffusivity             diffusivity         3D node
+#   viscosity               viscosity           3D node
+#   airPressure             air_pressure        2D node
+#   airTemperature          air_temperature     2D node
+#   specificHumidity        specific_humidity   2D node
+#   solarRadiation          solar_radiation     2D node
+#   sensibleHeat            sensible_flux       2D node
+#   latentHeat              latent_heat         2D node
+#   upwardLongwave          upward_longwave     2D node
+#   downwardLongwave        downward_longwave   2D node
+#   totalHeat               total_heat_flux     2D node
+#   evaporationRate         evaporation         2D node
+#   precipitationRate       precipitation       2D node
+#   windSpeedX              wind_speed          2D node vector (component 0)
+#   windSpeedY              wind_speed          2D node vector (component 1)
+#   windStressX             wind_stress         2D node vector (component 0)
+#   windStressY             wind_stress         2D node vector (component 1)
+#
+plot_outputs_vars:
+  # 2D model: every output is in out2d_N.nc (param.nml iof_hydro 1, 2, 14-16)
+  - {file_prefix: out2d, var_name: elevation,        label: "Water Level (m)",         cmap: RdBu_r,  vmin: -2,    vmax: 2,      is_3d: false}
+  - {file_prefix: out2d, var_name: depthAverageVelX, label: "Depth-avg Vel X (m/s)",   cmap: RdBu_r,  vmin: -1,    vmax: 1,      is_3d: false}
+  - {file_prefix: out2d, var_name: depthAverageVelY, label: "Depth-avg Vel Y (m/s)",   cmap: RdBu_r,  vmin: -1,    vmax: 1,      is_3d: false}
+  - {file_prefix: out2d, var_name: airPressure,      label: "Air Pressure (Pa)",       cmap: viridis, vmin: 96000, vmax: 104000, is_3d: false}
+  - {file_prefix: out2d, var_name: windSpeedX,       label: "Wind U (m/s)",            cmap: RdBu_r,  vmin: -25,   vmax: 25,     is_3d: false}
+  - {file_prefix: out2d, var_name: windSpeedY,       label: "Wind V (m/s)",            cmap: RdBu_r,  vmin: -25,   vmax: 25,     is_3d: false}
+  - {file_prefix: out2d, var_name: windStressX,      label: "Wind Stress X (Pa)",      cmap: RdBu_r,  vmin: -0.01, vmax: 0.01,   is_3d: false}
+  - {file_prefix: out2d, var_name: windStressY,      label: "Wind Stress Y (Pa)",      cmap: RdBu_r,  vmin: -0.01, vmax: 0.01,   is_3d: false}
+
+# Date range for the GIF (null = whole run). Format YYYY-MM-DD.
+plot_outputs_start: null
+plot_outputs_end:   null
+
+# Temporal cadence in HOURS. Only timesteps landing on this cadence
+# (from 00:00Z) are plotted. e.g. 6 = 4 frames/day.
+plot_outputs_every_hours: 6
+
+# GIF frames per second and per-frame DPI.
+plot_outputs_fps: 4
+plot_outputs_dpi: 150
+
+# =============================================================================
+# Frame retention
+# =============================================================================
+# true  = keep individual JPEG frames after building the GIF
+# false = delete frames once the GIF is written
+keep_frames: true
+
+# =============================================================================
+# CO-OPS station observations (download_coops + station_skill)
+# =============================================================================
+# download_coops (DTN): downloads observations for CO-OPS stations listed in
+# fix/station.in with source=CO-OPS. Downloads only the products in
+# coops_variables. One CSV per station/product/month into M{ID}/obs/coops/.
+#
+# Supported variable tokens for CO-OPS:
+#   WL / ELEV      water level        (tide gauge water level)
+#   T / TEMP       water temperature
+#   AIR_PRESSURE / AIRPRESSURE / PATM / PRESSURE   barometric pressure
+#   WIND / WINDX / WINDY               wind speed + direction (-> u,v)
+#
+# These tokens must appear in each station's VARS bracket in station.in
+# e.g.: ![WL,T,AIR_PRESSURE,WIND],9462620,CO-OPS,Unalaska
+
+# Water-level datum for CO-OPS water_level product.
+# Common choices: MSL, MLLW, MHHW, NAVD, STND.
+coops_datum: MSL
+
+# Which CO-OPS products to download. Only products listed here are fetched.
+# (2D: no water temperature is computed, so no T)
+coops_variables: [WL, air_pressure, wind]
+
+# =============================================================================
+# NDBC buoy observations (download_ndbc + station_skill)
+# =============================================================================
+# download_ndbc (DTN): downloads observations for NDBC stations listed in
+# fix/station.in with source=NDBC. Always downloads the FULL stdmet table
+# regardless of VARS tokens — the stdmet format is not split by variable.
+# One CSV per station/year into M{ID}/obs/ndbc/.
+#
+# Supported variable tokens for NDBC (stdmet column mapping):
+#   T / TEMP       water temperature  -> WTMP column
+#   AIR_PRESSURE / AIRPRESSURE / PATM / PRESSURE  -> PRES column
+#   WIND / WINDX / WINDY  wind speed+direction -> WSPD + WDIR columns (-> u,v)
+#
+# Note: NDBC has NO water level. WL/ELEV tokens are silently skipped for NDBC.
+#
+# ndbc_variables: optional filter restricting which NDBC variables are
+# ASSESSED in station_skill (does NOT affect what is downloaded).
+# null = assess all variables listed in each station's VARS bracket.
+ndbc_variables: [WIND, PRESSURE]   # 2D: no water temperature
+
+# =============================================================================
+# station_skill — obs vs model time-series plots + skill CSV
+# =============================================================================
+# Reads obs/coops/ + obs/ndbc/ and model R{ID}/R{ID}_YYYYMM/outputs/staout_*
+# Produces obs-vs-model time-series plots (with bias/RMSE/R² in the legend)
+# and a skill_metrics.csv under P{ID}/P{ID}_station_skill/.
+#
+# Re-run for any sub-period by setting station_skill_start/end and deleting
+# the station_skill.done sentinel — no re-download needed.
+
+# Skill-assessment comparison window (null = use the run's start_date/end_date).
+station_skill_start: null
+station_skill_end:   null
+
+# Resample interval for skill metrics.
+station_skill_resample: "1h"

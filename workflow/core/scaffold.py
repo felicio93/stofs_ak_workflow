@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "templates"
-MODELS = ("schism", "schism_wwm", "ufs_schism", "ufs_schism_ww3")
+MODELS = ("schism", "schism_2d", "schism_wwm", "ufs_schism", "ufs_schism_ww3")
 
 # Files made by a step (absence before that step is not an error).
 GENERATED = {
@@ -36,12 +36,19 @@ GENERATED = {
     "ST4TABUHF2.bin":  "gen_ww3_mesh",
     "ww3_ESMFmesh.nc": "gen_ww3_mesh",
 }
+# Files made by a step of one model only (in addition to GENERATED).
+GENERATED_BY_MODEL = {
+    "schism_2d": {"partition.prop":       "gen_partition",
+                  "manning.gr3":          "gen_constant_gr3",
+                  "windrot_geo2proj.gr3": "gen_constant_gr3"},
+}
 
 # Starter copies shipped in templates/<model>/fix/ (they encode choices, so
 # they must be reviewed for every project).
 _JOB_CARDS = ["param.nml", "run_test", "run_comb"]
 TEMPLATE_FILES = {
     "schism":     _JOB_CARDS,
+    "schism_2d":  _JOB_CARDS + ["vgrid.in"],
     "schism_wwm": _JOB_CARDS + ["wwminput.nml"],
     "ufs_schism": _JOB_CARDS + ["datm_in", "datm.streams", "fd_ufs.yaml",
                                 "noahmptable.tbl", "model_configure"],
@@ -58,6 +65,8 @@ _REQUIRED_BASE = ["hgrid.gr3", "hgrid.ll", "vgrid.in", "partition.prop",
                   "param.nml", "run_test", "run_comb"]
 REQUIRED = {
     "schism":     _REQUIRED_BASE,
+    # partition.prop is made by gen_partition (listed under "made by a step")
+    "schism_2d":  [n for n in _REQUIRED_BASE if n != "partition.prop"],
     "schism_wwm": _REQUIRED_BASE + ["wwminput.nml", "station.in"],
     "ufs_schism": _REQUIRED_BASE + ["datm_in", "datm.streams", "fd_ufs.yaml",
                                     "noahmptable.tbl", "model_configure"],
@@ -107,6 +116,8 @@ def _linked_files(model: str, cfg: dict = None) -> list:
     """Static files setup_run links from fix/ (the model's own list)."""
     if model == "schism":
         from workflow.models.schism.run.setup_run import FIX_LINKS as f
+    elif model == "schism_2d":
+        from workflow.models.schism_2d.run.setup_run import FIX_LINKS as f
     elif model == "schism_wwm":
         from workflow.models.schism_wwm.run.setup_run import FIX_LINKS as f
     elif model == "ufs_schism":
@@ -125,7 +136,8 @@ def fix_spec(model: str, cfg: dict = None) -> dict:
     'generated': {name: step}} for a model, in display order."""
     required = list(REQUIRED[model])
     templ    = TEMPLATE_FILES[model]
-    seen     = set(required) | set(GENERATED)
+    made     = {**GENERATED, **GENERATED_BY_MODEL.get(model, {})}
+    seen     = set(required) | set(made)
     expected = []
     for name in _linked_files(model, cfg) + _SOURCE_CSV + [
             n for n in templ]:
@@ -133,8 +145,9 @@ def fix_spec(model: str, cfg: dict = None) -> dict:
             expected.append(name)
     return {"required": required, "expected": expected,
             "template": list(templ),
-            "generated": {k: v for k, v in GENERATED.items()
-                          if k in _linked_files(model, cfg)}}
+            "generated": {k: v for k, v in made.items()
+                          if k in _linked_files(model, cfg)
+                          and k not in required}}
 
 
 def _norm(text: str) -> str:
@@ -165,6 +178,11 @@ def _consistency(model: str, cfg: dict, fix: Path) -> list:
             if mm and want_mod and mm.group(1) != want_mod:
                 warns.append(f"run_test loads {mm.group(1)} but the "
                              f"executable goes with {want_mod}")
+    if rt.exists() and not model.startswith("ufs"):
+        # (UFS: the SCHISM cores are ocn_petlist_bounds, not run_test -n)
+        from workflow.core.partition import check_partition, compute_cores
+        cores = compute_cores(rt)
+        warns += check_partition(fix, cores[2] if cores else None)
     pn = fix / "param.nml"
     if pn.exists():
         m = re.search(r"(?m)^\s*nws\s*=\s*(-?\d+)", pn.read_text())
@@ -176,6 +194,101 @@ def _consistency(model: str, cfg: dict, fix: Path) -> list:
             if not model.startswith("ufs") and nws == 4:
                 warns.append("param.nml nws=4 needs an ATM-coupled (UFS) "
                              "build; standalone SCHISM reads sflux with nws=2")
+    warns += _domain_covers_mesh(cfg, fix)
+    if model == "schism_2d":
+        warns += _consistency_2d(cfg, fix)
+    return warns
+
+
+def _domain_covers_mesh(cfg: dict, fix: Path) -> list:
+    """The download box of domain.yaml (ERA5/sflux, GloFAS, HYCOM) must
+    contain hgrid.ll in the same longitude convention, or the forcing does
+    not cover the mesh."""
+    ll = fix / "hgrid.ll"
+    try:
+        box = [float(cfg[k]) for k in ("lon_min", "lon_max",
+                                       "lat_min", "lat_max")]
+    except (KeyError, TypeError, ValueError):
+        return []
+    if not ll.exists():
+        return []
+    import pandas as pd
+    with open(ll) as f:
+        f.readline()
+        np_ = int(f.readline().split()[1])
+    xy = pd.read_csv(ll, sep=r"\s+", skiprows=2, nrows=np_, header=None,
+                     usecols=[1, 2], engine="c").to_numpy(dtype="f8")
+    x0, x1 = xy[:, 0].min(), xy[:, 0].max()
+    y0, y1 = xy[:, 1].min(), xy[:, 1].max()
+    if x0 >= box[0] and x1 <= box[1] and y0 >= box[2] and y1 <= box[3]:
+        return []
+    return [f"hgrid.ll spans lon [{x0:.3f}, {x1:.3f}] lat [{y0:.3f}, "
+            f"{y1:.3f}], not inside the domain.yaml box lon [{box[0]}, "
+            f"{box[1]}] lat [{box[2]}, {box[3]}] (same longitude convention "
+            f"as hgrid.ll: -180..180 or 0..360)"]
+
+
+def _nml_int(text: str, name: str):
+    m = re.search(rf"(?mi)^\s*{re.escape(name)}\s*=\s*(-?\d+)", text)
+    return int(m.group(1)) if m else None
+
+
+def _min_scribes(text: str) -> int:
+    """Lower bound of the scribes SCHISM needs for the iof_hydro outputs of
+    param.nml: one per 3D variable (vectors count 2) + 1 shared by all 2D
+    outputs (schism_init.F90 noutvars). SCHISM defaults: iof_hydro(1),
+    (25) and (26) on. Module outputs (WWM, GEN, ...) are not counted."""
+    iof = {1: 1, 25: 1, 26: 1}
+    for m in re.finditer(r"(?mi)^\s*iof_hydro\((\d+)\)\s*=\s*(\d+)", text):
+        iof[int(m.group(1))] = int(m.group(2))
+    on = lambda i: iof.get(i, 0) != 0
+    n3d = (sum(on(i) for i in range(17, 26)) + 2 * on(26) + 2 * on(27)
+           + sum(on(i) for i in range(28, 31)))
+    return n3d + 1
+
+
+def _consistency_2d(cfg: dict, fix: Path) -> list:
+    """2D barotropic checks: one-layer vgrid.in, barotropic param.nml, an
+    executable built without PREC_EVAP (it forces the evaporation model,
+    which aborts with ihconsv = 0)."""
+    from workflow.core.partition import compute_cores
+    warns = []
+    vg = fix / "vgrid.in"
+    if vg.exists():
+        with open(vg) as f:
+            ivcor = f.readline().split()[0]
+            nvrt = f.readline().split()[0]
+        if nvrt != "2":
+            warns.append(f"vgrid.in has nvrt={nvrt} (ivcor={ivcor}); a 2D "
+                         f"model has one layer (nvrt=2)")
+    pn = fix / "param.nml"
+    if pn.exists():
+        text = pn.read_text()
+        want = {"ibc": 1, "ibtp": 0, "ihconsv": 0, "ihot": 0}
+        for name, v in want.items():
+            have = _nml_int(text, name)
+            if have is not None and have != v:
+                warns.append(f"param.nml {name}={have}; the 2D barotropic "
+                             f"cold start expects {name}={v}")
+        friction = {-1: "manning.gr3", 0: "drag.gr3", 1: "rough.gr3"}
+        nchi = _nml_int(text, "nchi")
+        need = friction.get(nchi)
+        made = (cfg.get("constant_gr3") or {})
+        if need and not (fix / need).exists() and need not in made:
+            warns.append(f"param.nml nchi={nchi} reads {need}: not in fix/ "
+                         f"and not in constant_gr3 (gen_constant_gr3)")
+        need = _min_scribes(text)
+        cores = compute_cores(fix / "run_test") if (fix / "run_test").exists() else None
+        if cores and cores[1] < need:
+            warns.append(f"run_test has {cores[1]} scribe(s) but param.nml "
+                         f"writes {need - 1} 3D output variable(s): SCHISM "
+                         f"needs at least {need} (zCoordinates, iof_hydro(25), "
+                         f"is on unless set to 0)")
+    exe = (cfg.get("executables") or {}).get("schism_2d", "")
+    if "PREC_EVAP" in exe:
+        warns.append(f"executables.schism_2d {exe} is a PREC_EVAP build: "
+                     f"with ihconsv=0 SCHISM aborts ('Evap/precip model "
+                     f"must be used with heat exchange model')")
     return warns
 
 

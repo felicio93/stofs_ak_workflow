@@ -125,7 +125,7 @@ def validate_config(cfg: dict):
 # Step names per phase. Used to warn when steps of another phase are enabled
 # and to validate --only.
 PREPROCESS_STEPS = {
-    "replicate_fix", "inspect_mesh",
+    "replicate_fix", "gen_partition", "gen_constant_gr3", "inspect_mesh",
     "download_hycom", "download_era5", "download_glofas",
     "aggregate_hycom", "plot_hycom", "plot_sflux",
     "gen_datm", "plot_datm", "gen_esmf_mesh", "gen_datm_in",
@@ -556,7 +556,8 @@ def main():
         )
     )
     parser.add_argument("--model", help="--new-project: model_type "
-                        "(schism, schism_wwm, ufs_schism, ufs_schism_ww3)")
+                        "(schism, schism_2d, schism_wwm, ufs_schism, "
+                        "ufs_schism_ww3)")
     parser.add_argument("--id", dest="project_id",
                         help="--new-project: two-digit project id")
     parser.add_argument("--dir", dest="project_root",

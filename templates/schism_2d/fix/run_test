@@ -1,0 +1,32 @@
+#!/bin/bash --login
+#
+# stofs_ak_workflow starter job card. For every run directory the workflow rewrites
+# -J (job name) and -D (run directory). Review before use:
+#   -N / -n  compute cores + scribe cores; 80 cores per Hercules node. M31: 500 compute cores
+#            (~1000 mesh nodes each for ~500k nodes) + 1 scribe = 501 tasks on 7 nodes. gen_partition makes
+#            partition.prop for -n minus the scribes: re-run it after changing -n or the scribes
+#   -t       wall time of ONE group (here the whole 92-day 2D run)
+#   the executable on the srun line must match executables.schism_2d in project.yaml (--check-fix compares them);
+#            the last argument (1) is the number of scribe cores: a 2D run writes only 2D
+#            outputs, which share one scribe (SCHISM needs 3D output variables + 1)
+
+#SBATCH -D .
+#SBATCH -J R31
+#SBATCH -A nos-surge
+#SBATCH --partition=hercules-2
+#SBATCH -N 7
+#SBATCH -n 501
+#SBATCH --exclusive
+#SBATCH -t 08:00:00
+#SBATCH -o myout
+#SBATCH -e err2.out
+#SBATCH --mail-user=felicio.cassalho@noaa.gov
+#SBATCH --mail-type=END,FAIL
+
+set -e
+ulimit -s unlimited
+
+# modules the executable was built with (from the machine profile of build.yaml)
+@@MODULES:schism@@
+
+srun ./pschism_HERCULES_NO_PARMETIS_BLD_STANDALONE_SH_MEM_COMM_TVD-VL 1

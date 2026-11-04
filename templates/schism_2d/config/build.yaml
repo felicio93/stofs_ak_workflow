@@ -1,0 +1,43 @@
+# =============================================================================
+# Build recipe: what to compile, from which sources, with which toolchain.
+# Used by the `build` steps (executables are installed into M{id}/bin/ under
+# the names in `executables:` of project.yaml, with a BUILD_INFO record).
+#
+#   machine      machine profile: workflow/build/machines/<name>.yaml (or a
+#                path to your own .yaml). Holds modules, compilers, UFS modulefile.
+#   source_root  where the sources are cloned and built (outside the repo and M*).
+#   sources      one checkout per source: repo + ref (branch, tag or commit).
+#                "master" tracks upstream; the resolved commit is recorded in
+#                BUILD_INFO. Pin a commit/tag here to freeze a version.
+#   targets      what to build; `source` and `toolchain` refer to the entries above.
+# =============================================================================
+build:
+  machine: hercules
+  source_root: /work2/noaa/nos-surge/felicioc/STOFS_3D_AK/src
+
+  sources:
+    schism:
+      repo: https://github.com/schism-dev/schism.git
+      ref: master
+
+  targets:
+    # No PREC_EVAP: it forces the evaporation/precipitation model, which
+    # needs the heat budget (ihconsv = 1); a barotropic 2D run has
+    # ihconsv = 0 and SCHISM would abort at startup.
+    schism_2d:
+      kind: schism
+      source: schism
+      toolchain: schism_intel
+      exe_key: schism_2d
+      options: {NO_PARMETIS: true, BLD_STANDALONE: true, SH_MEM_COMM: true, OLDIO: false, TVD_LIM: VL}
+
+    combine_hotstart:
+      kind: combine_hotstart
+      source: schism
+      toolchain: schism_intel
+
+    # metis_prep + gpmetis + partition_offline.pl, for making partition.prop
+    partition_tools:
+      kind: partition_tools
+      source: schism
+      toolchain: schism_intel

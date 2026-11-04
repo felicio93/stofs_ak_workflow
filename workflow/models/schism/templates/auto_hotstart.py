@@ -687,6 +687,17 @@ def release_finished_job():
 
 # =============================================================================
 # Main
+def _param_ihot():
+    """ihot of this run's param.nml (None if unreadable): a cold start
+    (ihot = 0) needs no hotstart.nc."""
+    try:
+        text = (Path(RUNDIR) / "param.nml").read_text()
+    except OSError:
+        return None
+    m = re.search(r"(?mi)^\s*ihot\s*=\s*(\d+)", text)
+    return int(m.group(1)) if m else None
+
+
 # =============================================================================
 
 def main():
@@ -698,7 +709,8 @@ def main():
         log("run.done already present; nothing to do.")
         return
 
-    if not (Path(RUNDIR) / "hotstart.nc").exists():
+    if (_param_ihot() != 0
+            and not (Path(RUNDIR) / "hotstart.nc").exists()):
         log("ERROR: hotstart.nc not found in run directory.")
         sys.exit(1)
 

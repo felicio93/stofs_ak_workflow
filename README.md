@@ -67,12 +67,40 @@ Preprocessing steps run in different execution contexts:
 | `model_type` | Description | Driver | Status |
 |--------------|-------------|--------|--------|
 | `schism` | SCHISM standalone | `SchismDriver` | implemented |
+| `schism_2d` | SCHISM standalone, 2D barotropic (one layer; tides, wind/pressure, rivers) | `Schism2dDriver(SchismDriver)` | implemented, first test M31 (Norton Sound) |
 | `schism_wwm` | SCHISM + WWM (internally coupled waves) | `SchismWwmDriver(SchismDriver)` | implemented |
 | `ufs_schism` | UFS-Coastal: DATM + CMEPS + SCHISM (old I/O) | `UfsSchismDriver` | implemented |
 | `ufs_schism_ww3` | UFS-Coastal: DATM + CMEPS + SCHISM + WW3 | `UfsSchismWw3Driver(UfsSchismDriver)` | implemented |
 | `schism_mice` | SCHISM + MICE (sea ice) | `SchismMiceDriver(SchismDriver)` | placeholder: all phases raise `NotImplementedError` |
 
 Which steps apply to which model is listed in [Steps by phase](#steps-by-phase).
+
+### SCHISM 2D (`schism_2d`)
+
+SCHISM has no separate 2D code: a `vgrid.in` with one layer (SZ, `nvrt = 2`,
+shipped by `--new-project` from the SCHISM manual) makes it depth-averaged, and
+`ibc = 1`, `ibtp = 0` make it barotropic (no T/S transport; SCHISM sets T = 10,
+S = 0 on a cold start). The template `param.nml` follows the manual's 2D advice
+(`indvel = 1`, `ihorcon = ishapiro = 0`, Manning friction `nchi = -1`,
+`itur = 0`, `ihconsv = 0`, no nudging) and cold-starts from rest (`ihot = 0`,
+tides and wind ramped in over 1 day). Forcing: TPXO tides on the open
+boundaries (`open_boundary_flags: [[3, 0, 0, 0]]`), `sflux_air` (`nws = 2`) and
+GloFAS river volume (`if_source = -1`; set `if_source = 0` and
+`gen_source: false` for none). No HYCOM input is used, so the HYCOM steps, the
+hotstart/boundary/nudging steps and the SST/Argo comparisons print `[N/A]`.
+
+- The executable is built **without `PREC_EVAP`** (`executables.schism_2d`):
+  `PREC_EVAP` forces the evaporation/precipitation model, and SCHISM aborts
+  ("Evap/precip model must be used with heat exchange model") when the heat
+  budget is off.
+- `gen_constant_gr3` writes `fix/manning.gr3` and `fix/windrot_geo2proj.gr3`
+  from `constant_gr3` in `schism_2d.yaml` (files already in `fix/` are kept).
+- `gen_partition` makes `partition.prop` with the one-layer `vgrid.in`
+  (`metis_prep` weights elements by their level count). Only 2D outputs are
+  written, so one scribe is enough (`srun ./<exe> 1`).
+- `--check-fix` also warns about a `vgrid.in` with more than one layer, a
+  non-barotropic `param.nml`, a missing friction file and a `PREC_EVAP`
+  executable.
 
 ---
 
@@ -106,7 +134,10 @@ Key ideas:
 
 - A **driver** (`ModelDriver` subclass) owns everything about one model.
   `schism_wwm` and `ufs_schism_ww3` inherit their parent driver and only add
-  or override what is wave-specific.
+  or override what is wave-specific; `schism_2d` inherits `SchismDriver`,
+  marks the 3D/HYCOM steps N/A (`na_steps`) and runs `setup_run` with its own
+  run profile (`RunProfile`: executable key, linked files, no first-group
+  hotstart).
 - **`workflow.core`** holds the shared plumbing: config loading and group
   enumeration, `.gr3` and `station.in` parsing, plotting style,
   `SlurmSubmitter` (render `{{KEY}}` templates + `sbatch`), environment
@@ -131,7 +162,7 @@ stofs_ak_workflow/                      <- git repo (clone this to Hercules)
 ├── tutorials/hercules_walkthrough.md   <- copy-paste steps for the real Hercules case
 ├── utils/                              <- helper notebooks (GloFAS shapefile -> csv, shape -> station.in)
 ├── templates/                          <- one folder per model, mirroring M{ID}/
-│   ├── schism/  schism_wwm/  ufs_schism/  ufs_schism_ww3/
+│   ├── schism/  schism_2d/  schism_wwm/  ufs_schism/  ufs_schism_ww3/
 │   │     config/  project.yaml domain.yaml steps.yaml envs.yaml <model>.yaml
 │   │              postprocess.yaml build.yaml
 │   │     fix/     starter files (param.nml, run_test, run_comb, ...)
@@ -141,7 +172,8 @@ stofs_ak_workflow/                      <- git repo (clone this to Hercules)
     │                    hycom_patches.py, machines/<hpc>.yaml (+ UFS modulefile),
     │                    templates/build_*.sbatch
     ├── core/            config.py, mesh_parser.py, station_parser.py, scaffold.py,
-    │                    plot_style.py, slurm.py, templating.py, environment.py
+    │                    partition.py, plot_style.py, slurm.py, templating.py,
+    │                    environment.py
     ├── downloaders/     hycom.py, era5.py, glofas.py
     ├── diagnostics/     inspect_mesh.py, plot_hycom.py, plot_sflux.py,
     │                    plot_datm.py, submit_*.py
@@ -150,6 +182,8 @@ stofs_ak_workflow/                      <- git repo (clone this to Hercules)
         ├── base.py                     ModelDriver ABC + make_driver()
         ├── schism/                     driver, preprocess/, run/, postprocess/,
         │                               templates/{slurm,config,auto_hotstart.py}
+        ├── schism_2d/                  driver, preprocess/ (gen_constant_gr3),
+        │                               run/setup_run.py (2D run profile)
         ├── schism_wwm/                 driver, preprocess/ (gen_wwmbnd, gen_wwminput),
         │                               run/setup_run.py, postprocess/ (wave_skill,
         │                               altimetry), templates/
@@ -230,7 +264,7 @@ Running the tool never writes into `$WF`; all generated data goes under
 ## Starting a new project
 
 ```bash
-# one of: schism | schism_wwm | ufs_schism | ufs_schism_ww3
+# one of: schism | schism_2d | schism_wwm | ufs_schism | ufs_schism_ww3
 stofs-ak --new-project --model ufs_schism_ww3 --id 14 --dir <project_dir>
 export CFG=<project_dir>/M14/config
 
@@ -261,8 +295,8 @@ the step flags for your own project; see `templates/README.md`.
 `fix/` is the single source of truth for static inputs. Three kinds of files:
 
 - **Starter files** copied by `--new-project` from `templates/<model>/fix/`:
-  `param.nml`, `run_test`, `run_comb` (all models), `wwminput.nml`
-  (`schism_wwm`), `datm_in`, `datm.streams`, `fd_ufs.yaml`, `noahmptable.tbl`,
+  `param.nml`, `run_test`, `run_comb` (all models), `vgrid.in` (`schism_2d`,
+  one layer), `wwminput.nml` (`schism_wwm`), `datm_in`, `datm.streams`, `fd_ufs.yaml`, `noahmptable.tbl`,
   `model_configure` (UFS), `ww3_shel.nml`, `ww3_ounp.inp`, `namelists.nml`
   (UFS+WW3). They encode choices and must be reviewed for every project;
   `--check-fix` shows which ones you edited. In the job cards
@@ -280,7 +314,9 @@ the step flags for your own project; see `templates/README.md`.
   `ST4TABUHF2.bin`, `ww3_ESMFmesh.nc`, `mesh.msh` (the last four except `ww3_points.list` are made by `gen_ww3_mesh` when absent). Missing optional files are
   skipped with a NOTE by `setup_run`; `--check-fix` marks which are required.
 - **Generated by a step:** `estuary.gr3` (`gen_estuary`), `wwmbnd.gr3`
-  (`gen_wwmbnd`).
+  (`gen_wwmbnd`), `partition.prop` (`gen_partition`, any standalone SCHISM
+  model; off in the 3D templates, whose meshes come with one), `manning.gr3`
+  and `windrot_geo2proj.gr3` (`gen_constant_gr3`, `schism_2d`).
 
 `bin/` is filled by the build phase (next section). The HYCOM utilities
 expect **unpacked** float data (the downloader unpacks with `ncpdq -U`), so
@@ -417,13 +453,13 @@ the ones you want to change into your `<model_type>.yaml`.
 | Field | Description |
 |-------|-------------|
 | `project_id` | two-digit string (`"01"`) -> `M01`, `I01`, ... |
-| `model_type` | `schism`, `schism_wwm`, `ufs_schism`, `ufs_schism_ww3` (`schism_mice` = placeholder) |
+| `model_type` | `schism`, `schism_2d`, `schism_wwm`, `ufs_schism`, `ufs_schism_ww3` (`schism_mice` = placeholder) |
 | `project_dir` | absolute parent directory on HPC |
 | `start_date` / `end_date` | inclusive, `YYYY-MM-DD` |
 | `grouping` | `monthly` (default), `ndays`, or alias `daily` / `weekly` / `biweekly` |
 | `group_ndays` | required with `grouping: ndays`; ignored (with a warning) when an alias is used |
 | `slurm:` | account, partition, mail_user, per-step walltime/mem (see template), `build_cpus/mem/walltime` (+ `build_ufs_mem/walltime`) for the build jobs |
-| `executables:` | executable names in `M{id}/bin/` (`gen_hotstart`, `gen_3Dth`, `gen_nudge`, and per model `schism` / `schism_wwm` / `ufs_schism` / `ufs_schism_ww3`, `combine_hotstart`, `combine_output`, `ww3_ounp`) |
+| `executables:` | executable names in `M{id}/bin/` (`gen_hotstart`, `gen_3Dth`, `gen_nudge`, and per model `schism` / `schism_2d` / `schism_wwm` / `ufs_schism` / `ufs_schism_ww3`, `combine_hotstart`, `combine_output`, `ww3_ounp`) |
 
 With monthly grouping use a `start_date` on the 1st; a warning is printed
 otherwise. SLURM site defaults (`nos-surge`, `hercules-2`, mail user) are
@@ -453,6 +489,7 @@ on mismatch); SLURM steps call the env interpreter by full path.
 | File | Main keys |
 |------|-----------|
 | `schism.yaml` | `estuary_temp/sal`, `outside_temp/sal`, `open_boundary_flags`, `tobc`, `sobc`, `tidal_constituents`, `tidal_cutoff_depth`, `open_boundaries`, `hycom_dt`, `hycom_lon_shift`, `nudge_stride`, `nbin`, `mne_bin`, `chain_hotstart` |
+| `schism_2d.yaml` | `open_boundary_flags` (`[[3, 0, 0, 0]]`: tides only), `tidal_constituents`, `tidal_cutoff_depth`, `constant_gr3` (file: value, for `gen_constant_gr3`), `chain_hotstart` |
 | `schism_wwm.yaml` | `wwm_cutoff_freq`, `wwm_outstyle_station`, `wwm_lsp1d`, `wwm_lsp2d`, `wwm_deltc_hotfile`, `wwm_procname` |
 | `ufs_schism.yaml` | DATM (`datm_subdir`, `datm_filename_template`, `dt_atmos`), coupling (`coupling_dt`, `*_model`, `cpl_mode`, `coupling_config`, `case_name`), PET lists (`med/atm/ocn_petlist_bounds`), OMP threads |
 | `ufs_schism_ww3.yaml` | all of the above (self-contained) + `wav_model`, `wav_petlist_bounds`, `wav_omp_num_threads`, `med_pio_*`, `wav_mesh_file`, `wav_pio_*`, `ww3_point_output_dt`, `ww3_fix_files`, `chain_ww3_restart` |
@@ -472,8 +509,9 @@ are still chained). Configs copied from an older template that contain
 
 ## Steps by phase
 
-Legend: **S** = schism, **W** = schism_wwm, **U** = ufs_schism, **R** =
-ufs_schism_ww3 (WW3). Steps not valid for a model print `[N/A]`.
+Legend: **S** = schism, **2** = schism_2d, **W** = schism_wwm, **U** =
+ufs_schism, **R** = ufs_schism_ww3 (WW3); "all" includes 2D unless noted.
+Steps not valid for a model print `[N/A]`.
 
 ### Phase B: build (`--phase build`, first in `--phase all`)
 
@@ -485,21 +523,23 @@ ufs_schism_ww3 (WW3). Steps not valid for a model print `[N/A]`.
 
 | Step | Context | Models | Description |
 |------|---------|--------|-------------|
-| `replicate_fix` | interactive | all | once, for a new mesh of the same domain: property `.gr3` files (linear; `watertype` nearest) and `tvd.prop` (nearest element) interpolated from `replicate_from`, `station.in`/`source_*.csv` linked, job files copied if still the starter templates; `replicate_depth: true` also takes the source mesh's depths (off by default). Never overwrites; QA in `fix/replicate_fix.txt` |
+| `replicate_fix` | interactive | all but 2 | once, for a new mesh of the same domain: property `.gr3` files (linear; `watertype` nearest) and `tvd.prop` (nearest element) interpolated from `replicate_from`, `station.in`/`source_*.csv` linked, job files copied if still the starter templates; `replicate_depth: true` also takes the source mesh's depths (off by default). Never overwrites; QA in `fix/replicate_fix.txt` |
+| `gen_constant_gr3` | interactive | 2 | `fix/manning.gr3`, `fix/windrot_geo2proj.gr3` (constant values from `constant_gr3`); existing files kept |
+| `gen_partition` | interactive | S, 2, W | `fix/partition.prop` for `run_test`'s compute cores (`-n` minus the scribes, the last `srun` argument) with `bin/partition_offline.pl` in `M{ID}/partition_work/`; a matching file is kept, a stale one renamed `partition.prop.replaced_<time>`. `--check-fix` reports a `partition.prop` that does not match the mesh or the core count |
 | `inspect_mesh` | SLURM | all | plots of `fix/` inputs, resolution, layers -> `D{ID}/D{ID}_fix/` (JPEG) |
-| `download_hycom` | DTN | all | daily SSH/TS/UV via OPeNDAP; corrupt days (<=3 in a row) are interpolated |
+| `download_hycom` | DTN | all but 2 | daily SSH/TS/UV via OPeNDAP; corrupt days (<=3 in a row) are interpolated |
 | `download_era5` | DTN | all | monthly ERA5 (CDS API) |
 | `download_glofas` | DTN | all | annual GloFAS discharge (EWDS) |
-| `aggregate_hycom` | any | all | daily -> `SSH_1/TS_1/UV_1` stacks per group; missing days inside a group are interpolated (<=3 in a row), otherwise that stack fails |
-| `plot_hycom`, `plot_sflux` | SLURM array | all | debug GIFs |
+| `aggregate_hycom` | any | all but 2 | daily -> `SSH_1/TS_1/UV_1` stacks per group; missing days inside a group are interpolated (<=3 in a row), otherwise that stack fails |
+| `plot_hycom`, `plot_sflux` | SLURM array | all (`plot_hycom` not 2) | debug GIFs |
 | `gen_sflux` | SLURM array | all | ERA5 -> sflux files per group |
-| `gen_estuary` | interactive | all | `estuary.gr3` + `gen_*_from_nc.in` (once) |
+| `gen_estuary` | interactive | all but 2 | `estuary.gr3` + `gen_*_from_nc.in` (once) |
 | `gen_bctides` | interactive | all | `bctides.in` from TPXO9 |
 | `gen_source` | interactive | all | `source.nc` from GloFAS |
 | `gen_param` | interactive | all | `param.nml` per group (dates, `rnday`, `nhot_write`, `ihot`) |
-| `gen_hotstart` | SLURM | all | `hotstart.nc` (first group only) |
-| `gen_3Dth`, `gen_nudge` | SLURM array | all | `*.th.nc`, `TEM/SAL_nu.nc` |
-| `plot_hycom_outputs` | SLURM array (after the three above, `afterany`) | all | verifies the HYCOM-derived inputs and plots them (below) |
+| `gen_hotstart` | SLURM | all but 2 (cold start) | `hotstart.nc` (first group only) |
+| `gen_3Dth`, `gen_nudge` | SLURM array | all but 2 | `*.th.nc`, `TEM/SAL_nu.nc` |
+| `plot_hycom_outputs` | SLURM array (after the three above, `afterany`) | all but 2 | verifies the HYCOM-derived inputs and plots them (below) |
 | `gen_wwmbnd` | interactive | W | `fix/wwmbnd.gr3` (once) |
 | `gen_wwminput` | interactive | W | `wwminput.nml` per group (`BEGTC/ENDTC` from `param.nml`) |
 | `gen_datm`, `plot_datm` | SLURM | U, R | sflux -> CDEPS DATM forcing; debug GIFs |
@@ -538,11 +578,11 @@ the interactive config steps that read their output (only when no `--only`).
 
 | Step | Context | Models |
 |------|---------|--------|
-| `diag_run_plots` (enable **before** `setup_run`) | during run | S only (not W, not UFS) |
-| `download_sst`, `compare_sst` | DTN / SLURM | all |
+| `diag_run_plots` (enable **before** `setup_run`) | during run | S, 2 (not W, not UFS) |
+| `download_sst`, `compare_sst` | DTN / SLURM | all but 2 |
 | `plot_outputs` | SLURM (frames + GIF) | all |
 | `download_coops`, `download_ndbc`, `station_skill` | DTN / interactive | all |
-| `download_argo`, `collocate_argo`, `plot_argo` | DTN / SLURM / interactive | all |
+| `download_argo`, `collocate_argo`, `plot_argo` | DTN / SLURM / interactive | all but 2 |
 | `wave_skill` | interactive | W, R |
 | `download_altimetry`, `collocate_altimetry`, `plot_altimetry` | DTN / SLURM / interactive | W, R |
 | `plot_outputs_ww3` | SLURM | R |

@@ -1,0 +1,51 @@
+# =============================================================================
+# steps.yaml — Step execution flags
+# =============================================================================
+# Set a step to true to enable it, false to skip it.
+# This template is for model_type: schism_2d (2D barotropic SCHISM: tides,
+# sflux_air and rivers; no HYCOM). It lists only the steps that apply to this
+# model. Run the workflow one step at a time when testing: enable one step,
+# test it, then disable it and enable the next.
+#
+#     stofs-ak --run --config <config_dir>                     (preprocess)
+#     stofs-ak --run --phase run         --config <config_dir>
+#     stofs-ak --run --phase postprocess --config <config_dir>
+#
+# Phase B — Build (SLURM): compile the executables of build.yaml into M{ID}/bin/
+# (schism_2d without PREC_EVAP, combine_hotstart, partition tools).
+build_executables: true
+
+# Phase 0 — mesh files (interactive) and diagnostics (SLURM):
+gen_constant_gr3: true  # fix/manning.gr3 + fix/windrot_geo2proj.gr3 from constant_gr3 (schism_2d.yaml)
+gen_partition:    true  # fix/partition.prop for run_test's compute cores (-n minus scribes),
+                        # made with the one-layer fix/vgrid.in (needs build target partition_tools)
+inspect_mesh:     true  # Plot the fix/ input files + mesh resolution
+
+# Phase 1 — DTN only (requires internet access):
+download_era5:   true   # ERA5 monthly raw files (wind, pressure -> sflux_air)
+download_glofas: true   # GloFAS discharge (only needed with if_source /= 0 in param.nml)
+
+# Phase 2 — Any node:
+plot_sflux:      true   # ERA5/sflux debug GIFs
+
+# Phase 3 — SCHISM preprocessing:
+gen_bctides:  true   # bctides.in per group: TPXO tides, open_boundary_flags (schism_2d.yaml)
+gen_source:   true   # GloFAS -> source.nc per group (needs fix/source_glofas.csv + source_schism.csv);
+                     # set false together with if_source = 0 in param.nml for no rivers
+gen_param:    true   # fix/param.nml -> I{ID}_{group}/param.nml with the group dates
+gen_sflux:    true   # ERA5 -> sflux per group (SLURM); SCHISM reads only sflux_air here
+
+# =============================================================================
+# Phase 4 — Run management
+# =============================================================================
+setup_run:  true   # R{ID}_{group}/: links, executable, job cards, auto_hotstart.py
+submit_run: true   # Run auto_hotstart.py (blocking; first group cold-starts, ihot = 0)
+
+# =============================================================================
+# Phase 5 — Post-processing (postprocess.yaml)
+# =============================================================================
+diag_run_plots:  true   # Per-stack frames of out2d variables -> D{ID} during the run
+download_coops:  true   # DTN: CO-OPS obs (water level, pressure, wind) for fix/station.in
+download_ndbc:   true   # DTN: NDBC obs (pressure, wind) for fix/station.in
+plot_outputs:    true   # Field GIFs (water level, depth-averaged velocity, wind) -> P{ID}
+station_skill:   true   # Obs vs model staout time series + skill_metrics.csv -> P{ID}

@@ -354,9 +354,10 @@ def render_frame(triang, values, title, out_path, cbar_label,
                  cmap="jet", vmin=None, vmax=None,
                  depth=None, isobaths=(200, 2000),
                  dpi=150, quality=90, boundaries=None, is_elem=False,
-                 padding=None):
+                 padding=None, extent=None):
     """Render one JPEG frame using the shared workflow style plus isobaths.
-    padding: (lon, lat) margin in degrees (None = shared default)."""
+    padding: (lon, lat) margin in degrees (None = shared default).
+    extent:  [lon_min, lon_max, lat_min, lat_max] zoom (None = whole mesh)."""
     import numpy as np
     from workflow.core.plot_style import (
         make_frame_tripcolor, PADDING_LON, PADDING_LAT,
@@ -368,8 +369,24 @@ def render_frame(triang, values, title, out_path, cbar_label,
         cbar_label=cbar_label, cmap=cmap, vmin=vmin, vmax=vmax,
         dpi=dpi, quality=quality, boundaries=boundaries,
         depth=depth, isobaths=isobaths, is_elem=is_elem,
-        padding_lon=pad_lon, padding_lat=pad_lat,
+        padding_lon=pad_lon, padding_lat=pad_lat, extent=extent,
     )
+
+
+def plot_zooms(cfg: dict, var_name: str) -> list:
+    """postprocess.yaml plot_zooms entries that apply to var_name, as
+    (name, [lon_min, lon_max, lat_min, lat_max]). An entry without 'vars'
+    applies to every plot_outputs variable."""
+    zooms = []
+    for z in cfg.get("plot_zooms") or []:
+        names = z.get("vars")
+        if names and var_name not in names:
+            continue
+        lon, lat = z["lon"], z["lat"]
+        zooms.append((str(z["name"]),
+                      [float(min(lon)), float(max(lon)),
+                       float(min(lat)), float(max(lat))]))
+    return zooms
 
 
 def robust_limits(values, vmin, vmax):

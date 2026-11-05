@@ -168,6 +168,18 @@ def _render_file_newio(cfg, ym, nc_path, x, y, depth, triang, is_tri,
                 dpi=dpi, boundaries=boundaries, is_elem=is_elem,
                 padding=pc.plot_padding(cfg),
             )
+            for zname, zext in pc.plot_zooms(cfg, name):
+                zdir = fdir / f"zoom_{zname}"
+                zdir.mkdir(parents=True, exist_ok=True)
+                pc.render_frame(
+                    triang, vals, title=f"{title} ({zname})",
+                    out_path=zdir / fp.name,
+                    cbar_label=vc["label"], cmap=vc["cmap"],
+                    vmin=vmin, vmax=vmax,
+                    depth=depth, isobaths=isobaths,
+                    dpi=dpi, boundaries=boundaries, is_elem=is_elem,
+                    extent=zext,
+                )
         gc.collect()
 
     ds.close()
@@ -230,6 +242,18 @@ def _render_file_oldio(cfg, ym, nc_path, x, y, depth, triang, is_tri,
                 dpi=dpi, boundaries=boundaries, is_elem=is_elem,
                 padding=pc.plot_padding(cfg),
             )
+            for zname, zext in pc.plot_zooms(cfg, name):
+                zdir = fdir / f"zoom_{zname}"
+                zdir.mkdir(parents=True, exist_ok=True)
+                pc.render_frame(
+                    triang, vals, title=f"{title} ({zname})",
+                    out_path=zdir / fp.name,
+                    cbar_label=vc["label"], cmap=vc["cmap"],
+                    vmin=vmin, vmax=vmax,
+                    depth=depth, isobaths=isobaths,
+                    dpi=dpi, boundaries=boundaries, is_elem=is_elem,
+                    extent=zext,
+                )
         gc.collect()
 
     ds.close()
@@ -370,6 +394,20 @@ def assemble(cfg):
         gif = gdir / f"{name}_{layer_tag}.gif"
         pc.assemble_gif(frames, gif, fps=fps, keep_frames=keep_frames)
         made += 1
+        for zname, _ in pc.plot_zooms(cfg, name):
+            zdir = fdir / f"zoom_{zname}"
+            zframes = sorted(zdir.glob(f"{name}__*.jpg"))
+            if not zframes:
+                print(f"  {name} ({zname}): no frames found, skipping GIF.")
+                continue
+            pc.assemble_gif(zframes, gdir / f"{name}_{layer_tag}_{zname}.gif",
+                            fps=fps, keep_frames=keep_frames)
+            made += 1
+            if not keep_frames:
+                try:
+                    zdir.rmdir()
+                except OSError:
+                    pass
 
     if not keep_frames:
         try:

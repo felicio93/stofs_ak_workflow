@@ -168,7 +168,7 @@ def make_frame_tripcolor(triangulation, values, title, out_path,
                          cbar_ticks=None, cbar_extend_minmax=False,
                          padding_lon=5.0, padding_lat=2.0,
                          dpi=300, quality=92, boundaries=None,
-                         depth=None, isobaths=None):
+                         depth=None, isobaths=None, extent=None):
     """
     Save one JPEG frame using tripcolor (for mesh/unstructured grids).
     Same style as make_frame: vertical colorbar on the right.
@@ -179,13 +179,30 @@ def make_frame_tripcolor(triangulation, values, title, out_path,
         If both are provided, node-based `depth` (same length as the mesh
         nodes) is contoured at the given `isobaths` levels (e.g. [200, 2000])
         and drawn as thin black lines on top of the field.
+
+    extent:
+        [lon_min, lon_max, lat_min, lat_max] to show instead of the mesh
+        bounds + padding (a zoom on part of the mesh).
     """
-    mesh_lon_min = float(triangulation.x.min())
-    mesh_lon_max = float(triangulation.x.max())
-    mesh_lat_min = float(triangulation.y.min())
-    mesh_lat_max = float(triangulation.y.max())
-    fw, fh = _aspect_figsize(mesh_lon_min, mesh_lon_max,
-                              mesh_lat_min, mesh_lat_max)
+    if extent is not None:
+        mesh_lon_min, mesh_lon_max, mesh_lat_min, mesh_lat_max = (
+            float(v) for v in extent)
+        padding_lon = padding_lat = 0.0
+        lon_span = max(mesh_lon_max - mesh_lon_min, 1e-6)
+        lat_span = max(mesh_lat_max - mesh_lat_min, 1e-6)
+        if lon_span >= lat_span:
+            fh = float(np.clip(8.0 * lat_span / lon_span, 2.5, 5.0))
+            fw = 9.0
+        else:
+            fw, fh = _aspect_figsize(mesh_lon_min, mesh_lon_max,
+                                     mesh_lat_min, mesh_lat_max)
+    else:
+        mesh_lon_min = float(triangulation.x.min())
+        mesh_lon_max = float(triangulation.x.max())
+        mesh_lat_min = float(triangulation.y.min())
+        mesh_lat_max = float(triangulation.y.max())
+        fw, fh = _aspect_figsize(mesh_lon_min, mesh_lon_max,
+                                 mesh_lat_min, mesh_lat_max)
 
     fig, ax = plt.subplots(figsize=(fw, fh), constrained_layout=True)
 

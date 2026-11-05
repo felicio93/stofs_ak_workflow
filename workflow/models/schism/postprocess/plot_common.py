@@ -49,6 +49,13 @@ SAFE_DROP = [
     "dryFlagElement", "dryFlagSide", "dryFlagNode",
 ]
 
+
+def safe_drop(keep=()):
+    """SAFE_DROP without the variables a config entry asks for (e.g. the
+    dry flags, plotted as wet/dry maps in the 2D model)."""
+    keep = set(keep)
+    return [v for v in SAFE_DROP if v not in keep]
+
 # =============================================================================
 # Old I/O variable name mapping
 # =============================================================================
@@ -331,20 +338,55 @@ def extract_oldio_var(ds, new_varname: str, layer_spec):
 # Frame rendering
 # =============================================================================
 
+def plot_padding(cfg: dict):
+    """(lon, lat) map margin in degrees around the mesh for field frames:
+    postprocess.yaml plot_padding_deg, default the shared 5.0 / 2.0."""
+    from workflow.core.plot_style import PADDING_LON, PADDING_LAT
+    pad = cfg.get("plot_padding_deg")
+    if pad is None:
+        return (PADDING_LON, PADDING_LAT)
+    if isinstance(pad, (int, float)):
+        return (float(pad), float(pad))
+    return (float(pad[0]), float(pad[1]))
+
+
 def render_frame(triang, values, title, out_path, cbar_label,
                  cmap="jet", vmin=None, vmax=None,
                  depth=None, isobaths=(200, 2000),
-                 dpi=150, quality=90, boundaries=None, is_elem=False):
-    """Render one JPEG frame using the shared workflow style plus isobaths."""
+                 dpi=150, quality=90, boundaries=None, is_elem=False,
+                 padding=None, extent=None):
+    """Render one JPEG frame using the shared workflow style plus isobaths.
+    padding: (lon, lat) margin in degrees (None = shared default).
+    extent:  [lon_min, lon_max, lat_min, lat_max] zoom (None = whole mesh)."""
     import numpy as np
-    from workflow.core.plot_style import make_frame_tripcolor
+    from workflow.core.plot_style import (
+        make_frame_tripcolor, PADDING_LON, PADDING_LAT,
+    )
 
+    pad_lon, pad_lat = padding or (PADDING_LON, PADDING_LAT)
     return make_frame_tripcolor(
         triang, np.asarray(values), title=title, out_path=Path(out_path),
         cbar_label=cbar_label, cmap=cmap, vmin=vmin, vmax=vmax,
         dpi=dpi, quality=quality, boundaries=boundaries,
         depth=depth, isobaths=isobaths, is_elem=is_elem,
+        padding_lon=pad_lon, padding_lat=pad_lat, extent=extent,
     )
+
+
+def plot_zooms(cfg: dict, var_name: str) -> list:
+    """postprocess.yaml plot_zooms entries that apply to var_name, as
+    (name, [lon_min, lon_max, lat_min, lat_max]). An entry without 'vars'
+    applies to every plot_outputs variable."""
+    zooms = []
+    for z in cfg.get("plot_zooms") or []:
+        names = z.get("vars")
+        if names and var_name not in names:
+            continue
+        lon, lat = z["lon"], z["lat"]
+        zooms.append((str(z["name"]),
+                      [float(min(lon)), float(max(lon)),
+                       float(min(lat)), float(max(lat))]))
+    return zooms
 
 
 def robust_limits(values, vmin, vmax):

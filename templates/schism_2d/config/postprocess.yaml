@@ -37,8 +37,8 @@ plot_padding_deg: [0.1, 0.1]
 # diag_run_vars: the quick health-check subset plotted live during the run.
 diag_run_vars:
   - {file_prefix: out2d, var_name: elevation,         label: "Water Level (m)",  cmap: RdBu_r, vmin: -1.5, vmax: 1.5, is_3d: false}
-  - {file_prefix: out2d, var_name: depthAverageVelX,  label: "Depth-avg U (m/s)", cmap: RdBu_r, vmin: -1, vmax: 1, is_3d: false}
-  - {file_prefix: out2d, var_name: depthAverageVelY,  label: "Depth-avg V (m/s)", cmap: RdBu_r, vmin: -1, vmax: 1, is_3d: false}
+  - {file_prefix: out2d, var_name: depthAverageVelX,  label: "Depth-avg U (m/s)", cmap: RdBu_r, vmin: -0.5, vmax: 0.5, is_3d: false}
+  - {file_prefix: out2d, var_name: depthAverageVelY,  label: "Depth-avg V (m/s)", cmap: RdBu_r, vmin: -0.5, vmax: 0.5, is_3d: false}
 diag_run_dpi: 150
 
 # =============================================================================
@@ -94,8 +94,8 @@ diag_run_dpi: 150
 plot_outputs_vars:
   # 2D model: every output is in out2d_N.nc (param.nml iof_hydro 1, 2, 14-16)
   - {file_prefix: out2d, var_name: elevation,        label: "Water Level (m)",         cmap: RdBu_r,  vmin: -1.5,  vmax: 1.5,    is_3d: false}
-  - {file_prefix: out2d, var_name: depthAverageVelX, label: "Depth-avg Vel X (m/s)",   cmap: RdBu_r,  vmin: -1,    vmax: 1,      is_3d: false}
-  - {file_prefix: out2d, var_name: depthAverageVelY, label: "Depth-avg Vel Y (m/s)",   cmap: RdBu_r,  vmin: -1,    vmax: 1,      is_3d: false}
+  - {file_prefix: out2d, var_name: depthAverageVelX, label: "Depth-avg Vel X (m/s)",   cmap: RdBu_r,  vmin: -0.5,  vmax: 0.5,    is_3d: false}
+  - {file_prefix: out2d, var_name: depthAverageVelY, label: "Depth-avg Vel Y (m/s)",   cmap: RdBu_r,  vmin: -0.5,  vmax: 0.5,    is_3d: false}
   - {file_prefix: out2d, var_name: airPressure,      label: "Air Pressure (Pa)",       cmap: viridis, vmin: 96000, vmax: 104000, is_3d: false}
   - {file_prefix: out2d, var_name: windSpeedX,       label: "Wind U (m/s)",            cmap: RdBu_r,  vmin: -25,   vmax: 25,     is_3d: false}
   - {file_prefix: out2d, var_name: windSpeedY,       label: "Wind V (m/s)",            cmap: RdBu_r,  vmin: -25,   vmax: 25,     is_3d: false}

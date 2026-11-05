@@ -11,7 +11,7 @@ isobaths: [-5, 0, 5, 10, 20]   # hgrid depth, positive down: -5 = 5 m above datu
 # Map margin around the mesh for the field frames (diag_run_plots,
 # plot_outputs), degrees [lon, lat]. Default (key absent) is [5.0, 2.0],
 # sized for the large Alaska meshes; a small domain needs a small margin.
-plot_padding_deg: [0.5, 0.5]
+plot_padding_deg: [0.1, 0.1]
 
 # =============================================================================
 # diag_run_plots — per-output-stack diagnostic frames DURING the run

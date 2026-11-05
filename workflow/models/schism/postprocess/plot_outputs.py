@@ -129,7 +129,9 @@ def _render_file_newio(cfg, ym, nc_path, x, y, depth, triang, is_tri,
     if not relevant:
         return
 
-    ds    = xr.open_dataset(str(nc_path), drop_variables=pc.SAFE_DROP)
+    ds    = xr.open_dataset(
+        str(nc_path),
+        drop_variables=pc.safe_drop(v["var_name"] for v in relevant))
     times = ds["time"].values
 
     for vc in relevant:
@@ -164,6 +166,7 @@ def _render_file_newio(cfg, ym, nc_path, x, y, depth, triang, is_tri,
                 vmin=vmin, vmax=vmax,
                 depth=depth, isobaths=isobaths,
                 dpi=dpi, boundaries=boundaries, is_elem=is_elem,
+                padding=pc.plot_padding(cfg),
             )
         gc.collect()
 
@@ -225,6 +228,7 @@ def _render_file_oldio(cfg, ym, nc_path, x, y, depth, triang, is_tri,
                 vmin=vmin, vmax=vmax,
                 depth=depth, isobaths=isobaths,
                 dpi=dpi, boundaries=boundaries, is_elem=is_elem,
+                padding=pc.plot_padding(cfg),
             )
         gc.collect()
 

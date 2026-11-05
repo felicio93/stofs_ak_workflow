@@ -8,6 +8,11 @@
 # SST comparison). Extracted from the mesh 'depth' in out2d/hgrid.
 isobaths: [-5, 0, 5, 10, 20]   # hgrid depth, positive down: -5 = 5 m above datum
 
+# Map margin around the mesh for the field frames (diag_run_plots,
+# plot_outputs), degrees [lon, lat]. Default (key absent) is [5.0, 2.0],
+# sized for the large Alaska meshes; a small domain needs a small margin.
+plot_padding_deg: [0.5, 0.5]
+
 # =============================================================================
 # diag_run_plots — per-output-stack diagnostic frames DURING the run
 # =============================================================================
@@ -96,6 +101,9 @@ plot_outputs_vars:
   - {file_prefix: out2d, var_name: windSpeedY,       label: "Wind V (m/s)",            cmap: RdBu_r,  vmin: -25,   vmax: 25,     is_3d: false}
   - {file_prefix: out2d, var_name: windStressX,      label: "Wind Stress X (Pa)",      cmap: RdBu_r,  vmin: -0.01, vmax: 0.01,   is_3d: false}
   - {file_prefix: out2d, var_name: windStressY,      label: "Wind Stress Y (Pa)",      cmap: RdBu_r,  vmin: -0.01, vmax: 0.01,   is_3d: false}
+  # Wetting and drying: SCHISM's element dry flag (0 = wet, 1 = dry), always
+  # in out2d. Element-centred, so each element is drawn wet or dry.
+  - {file_prefix: out2d, var_name: dryFlagElement,   label: "Dry flag (0 wet, 1 dry)", cmap: BrBG_r,  vmin: 0,     vmax: 1,      is_3d: false, loc: elem}
 
 # Date range for the GIF (null = whole run). Format YYYY-MM-DD.
 plot_outputs_start: null

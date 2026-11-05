@@ -100,7 +100,7 @@ def diag_stack_var(cfg, ym: str, stack: int, varname: str):
 
     is_elem = (vc["loc"] == "elem")
 
-    ds  = xr.open_dataset(str(nc_path), drop_variables=pc.SAFE_DROP)
+    ds  = xr.open_dataset(str(nc_path), drop_variables=pc.safe_drop([varname]))
     if name not in ds:
         ds.close()
         print(f"    WARNING: '{name}' not in {nc_path.name}, skipping.")
@@ -134,6 +134,7 @@ def diag_stack_var(cfg, ym: str, stack: int, varname: str):
             vmin=vmin, vmax=vmax,
             depth=depth, isobaths=isobaths,
             dpi=dpi, boundaries=boundaries, is_elem=is_elem,
+            padding=pc.plot_padding(cfg),
         )
         made += 1
     ds.close()

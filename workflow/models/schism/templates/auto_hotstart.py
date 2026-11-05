@@ -159,6 +159,38 @@ def _clean_outputs():
         log(f"Cleaned {len(deleted)} stale file(s) from outputs/ before submission.")
     else:
         log("outputs/ is clean (no stale stacks or mirror.out to remove).")
+    _move_stale_newio(outdir)
+
+
+# New I/O stacks (out2d_N.nc, temperature_N.nc, ...; one-word prefix, so
+# per-rank hotstart_RRRRRR_N.nc does not match), station outputs and the
+# combined end-of-group hotstart of an earlier attempt.
+_STALE_NEWIO = re.compile(r"^(?!schout_)[A-Za-z][A-Za-z0-9]*_\d+\.nc$")
+_STALE_STAOUT = re.compile(r"^staout_\d+$")
+
+
+def _move_stale_newio(outdir: Path):
+    """Move an earlier attempt's outputs to outputs/stale_<timestamp>/.
+
+    Left in outputs/, they are wrong in two ways: dispatch_diag_plots
+    queues a diag job for every stack but the newest, and those jobs hold
+    the old files open, so SCHISM cannot recreate them (scribe abort
+    'fill_header_static: time dim'); and a stale hotstart_it=N.nc would
+    be chained instead of the new run's hotstart.
+    """
+    combined = f"hotstart_it={NHOT_WRITE}.nc"
+    stale = [f for f in sorted(outdir.iterdir())
+             if f.is_file() and (_STALE_NEWIO.match(f.name)
+                                 or _STALE_STAOUT.match(f.name)
+                                 or f.name == combined)]
+    if not stale:
+        return
+    dest = outdir / f"stale_{datetime.now():%Y%m%d_%H%M%S}"
+    dest.mkdir()
+    for f in stale:
+        f.rename(dest / f.name)
+    log(f"Moved {len(stale)} output file(s) of an earlier attempt "
+        f"(output stacks, staout, {combined}) to {dest}")
 
 
 def submit(script):

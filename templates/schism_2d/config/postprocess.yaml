@@ -112,7 +112,7 @@ plot_outputs_vars:
 plot_zooms:
   - name: unalakleet
     lon: [-160.815, -160.290]
-    lat: [63.816, 63.910]
+    lat: [63.816, 63.938]
     vars: [elevation, depthAverageVelX, depthAverageVelY, dryFlagElement]
 
 # Date range for the GIF (null = whole run). Format YYYY-MM-DD.

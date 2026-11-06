@@ -52,8 +52,9 @@ class SchismDriver(ModelDriver):
     # True in drivers that implement the SCHISM+WWM-only steps
     # (gen_wwmbnd / gen_wwminput); others report them as [N/A].
     supports_wwm_steps = False
-    setup_steps = frozenset({"gen_vgrid", "gen_partition", "replicate_fix",
-                             "gen_estuary", "inspect_mesh"})
+    setup_steps = frozenset({"gen_vgrid", "gen_partition", "gen_constant_gr3",
+                             "replicate_fix", "gen_nudge_gr3", "gen_estuary",
+                             "inspect_mesh"})
     # Steps of this driver that do not apply to a derived model
     # ({step: reason}); reported as [N/A] when enabled, never run.
     na_steps: dict = {}

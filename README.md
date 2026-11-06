@@ -489,9 +489,10 @@ error naming the file if one of these keys is found elsewhere):
 | Key | Step | Meaning |
 |-----|------|---------|
 | `vgrid:` | `gen_vgrid` | vertical grid (below) |
-| `replicate_from`, `replicate_depth` | `replicate_fix` | project whose property files are interpolated onto this mesh; also take its depths |
+| `replicate_from`, `replicate_depth` | `replicate_fix` | project, or folder of fix files (e.g. STOFS-3D-Atlantic), whose property files are interpolated onto this mesh; also take its depths |
+| `nudge_gr3` | `gen_nudge_gr3` | `rlmax` (zone width, degrees), `rnu_day` (relaxation time on the boundary, days), optional `boundaries` |
 | `estuary_depth_threshold` | `gen_estuary` | nodes this shallow or shallower are estuary in `estuary.gr3` |
-| `constant_gr3` | `gen_constant_gr3` | `{file: value}` constant property files (`schism_2d`) |
+| `constant_gr3` | `gen_constant_gr3` | `{file: value}` constant property files |
 
 `gen_vgrid` writes `fix/vgrid.in` (`ivcor = 1`, localized sigma / VQS) in
 the layout SCHISM reads since Oct 2021 (bottom level index of every node,
@@ -576,8 +577,9 @@ Once per project, in this order; settings in `modelsetup.yaml`.
 |------|---------|--------|-------------|
 | `gen_vgrid` | interactive | all but 2 | `fix/vgrid.in` from `hgrid.gr3` and the `vgrid:` block (see [modelsetup.yaml](#modelsetupyaml)); an existing file is kept |
 | `gen_partition` | interactive | S, 2, W | `fix/partition.prop` for `run_test`'s compute cores (`-n` minus the scribes, the last `srun` argument) with `bin/partition_offline.pl` in `M{ID}/partition_work/`; a matching file is kept, a stale one renamed `partition.prop.replaced_<time>`. `--check-fix` reports a `partition.prop` that does not match the mesh or the core count |
-| `gen_constant_gr3` | interactive | 2 | `fix/manning.gr3`, `fix/windrot_geo2proj.gr3` (constant values from `constant_gr3`); existing files kept |
-| `replicate_fix` | interactive | all but 2 | once, for a new mesh of the same domain: property `.gr3` files (linear; `watertype` nearest) and `tvd.prop` (nearest element) interpolated from `replicate_from`, `station.in`/`source_*.csv` linked, job files copied if still the starter templates; `replicate_depth: true` also takes the source mesh's depths (off by default). Never overwrites; QA in `fix/replicate_fix.txt` |
+| `gen_constant_gr3` | interactive | S, 2, W | one-value property files from `constant_gr3` (2D: `manning.gr3`, `windrot_geo2proj.gr3`); existing files kept |
+| `replicate_fix` | interactive | all but 2 | property files from another project or a folder of fix files covering this domain (e.g. STOFS-3D-Atlantic; mesh from `hgrid.ll`, `hgrid.gr3` or a property `.gr3`): property `.gr3` files (linear, incl. `drag`/`manning`/`rough`; `watertype` and `estuary` nearest) and `tvd.prop` (nearest element) interpolated from `replicate_from`, `station.in`/`source_*.csv` linked, job files copied if still the starter templates; `replicate_depth: true` also takes the source mesh's depths (off by default). Never overwrites; QA in `fix/replicate_fix.txt` |
+| `gen_nudge_gr3` | interactive | all but 2 | `fix/TEM_nudge.gr3` + `SAL_nudge.gr3`: STOFS-3D-Atlantic linear ramp from `1/(rnu_day*86400)` on the open boundary to 0 at `rlmax` degrees (`nudge_gr3`); existing files kept |
 | `gen_estuary` | interactive | all but 2 | `fix/estuary.gr3` + `bin/gen_*_from_nc.in` |
 | `gen_wwmbnd` | interactive | W | `fix/wwmbnd.gr3` |
 | `gen_ww3_mesh` | interactive + 1 SLURM job | R | once per project: `mesh.msh` (from `hgrid.ll`, same numbering), `mod_def.ww3` + `ST4TABUHF2.bin` (`ww3_grid` from the UFS build), `ww3_ESMFmesh.nc` (`ESMF_Scrip2Unstruct`). Files already in `fix/` are kept and checked, never overwritten |

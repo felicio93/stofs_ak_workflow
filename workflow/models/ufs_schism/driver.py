@@ -31,8 +31,8 @@ def _na(step: str, reason: str):
 
 class UfsSchismDriver(ModelDriver):
     name = "UFS_SCHISM"
-    setup_steps = frozenset({"gen_vgrid", "replicate_fix", "gen_estuary",
-                             "inspect_mesh"})
+    setup_steps = frozenset({"gen_vgrid", "replicate_fix", "gen_nudge_gr3",
+                             "gen_estuary", "inspect_mesh"})
     na_steps = {
         "gen_partition": "UFS: the SCHISM cores are ocn_petlist_bounds, not "
                          "run_test -n; supply fix/partition.prop",

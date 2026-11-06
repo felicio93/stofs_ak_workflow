@@ -22,11 +22,13 @@ build_executables: true
 # Setup — fix/ files made from the mesh, once per project (settings in
 # modelsetup.yaml). Runs after the build in --phase all, or alone with:
 #     stofs-ak --run --phase setup --config <config_dir>      (--only <step> for one)
-gen_vgrid:     false  # fix/vgrid.in from fix/hgrid.gr3 and the vgrid: block (kept if present)
-replicate_fix: false  # new mesh of an existing domain: property .gr3 files and tvd.prop
-                      # interpolated from replicate_from
-gen_estuary:   true   # fix/estuary.gr3 + bin/*.in files for the HYCOM utilities
-inspect_mesh:  true   # Plot all fix/ input files + mesh resolution + vertical layers (SLURM)
+gen_vgrid:     false # fix/vgrid.in from fix/hgrid.gr3 and the vgrid: block (kept if present)
+replicate_fix: false # property .gr3 files, tvd.prop, estuary.gr3 interpolated from
+                     # replicate_from (a project or fix folder covering this domain)
+gen_nudge_gr3: false # fix/TEM_nudge.gr3 + SAL_nudge.gr3 along the open boundaries
+                     # (nudge_gr3; kept if present)
+gen_estuary:   true  # fix/estuary.gr3 + bin/*.in files for the HYCOM utilities
+inspect_mesh:  true  # Plot all fix/ input files + mesh resolution + vertical layers (SLURM)
 
 # Phase 1 — DTN only (requires internet access):
 download_hycom:  true

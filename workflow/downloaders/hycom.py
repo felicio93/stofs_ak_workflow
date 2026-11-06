@@ -206,11 +206,16 @@ def _fetch_subset(date_str, url, variables, lon_min, lon_max,
     _dbg(f"Attempt A failed for [{variables}] from {url}: {err_a}")
     _dbg("trying opposite-longitude-convention fallback...")
 
-    tmp_global = tmp_dir / f"{prefix}_global_{date_str.replace('-','')}.nc"
-    tmp_shift  = tmp_dir / f"{prefix}_shift_{date_str.replace('-','')}.nc"
-    cmd_b = ["ncks", "-O", "-d", f"lat,{lat_min},{lat_max}"]
+    # The server uses the other convention: request the same box shifted by
+    # 360 deg and relabel the subset back to lon_reference. (A box that
+    # straddles the server's seam is not supported.)
+    off = 360.0 if lon_ref == "180" else -360.0
+    tmp_sub = tmp_dir / f"{prefix}_sub_{date_str.replace('-','')}.nc"
+    cmd_b = ["ncks", "-O",
+             "-d", f"lon,{lon_min + off},{lon_max + off}",
+             "-d", f"lat,{lat_min},{lat_max}"]
     cmd_b += time_args
-    cmd_b += ["-v", variables, url, str(tmp_global)]
+    cmd_b += ["-v", variables, url, str(tmp_sub)]
     _dbg("CMD: " + " ".join(cmd_b))
     result = subprocess.run(cmd_b, capture_output=True, text=True)
     if result.stderr.strip():
@@ -219,18 +224,15 @@ def _fetch_subset(date_str, url, variables, lon_min, lon_max,
         err_b = result.stderr.strip().splitlines()
         err_b = err_b[-1] if err_b else "(no stderr)"
         print(f"       both fetch attempts failed for [{variables}] from {url}")
-        print(f"         {err_b}")
-        tmp_global.unlink(missing_ok=True)
+        print(f"         direct:  {err_a}")
+        print(f"         shifted: {err_b}")
+        tmp_sub.unlink(missing_ok=True)
         return False
 
-    shift_expr = ("where(lon<0) lon=lon+360" if lon_ref == "360"
-                  else "where(lon>180) lon=lon-360")
-    run(["ncap2", "-O", "-s", shift_expr, str(tmp_global), str(tmp_shift)])
-    run(["ncks", "-O", "--msa", "-d", f"lon,{lon_min},{lon_max}",
-         str(tmp_shift), str(out_file)])
-    tmp_global.unlink(missing_ok=True)
-    tmp_shift.unlink(missing_ok=True)
-    _dbg(f"fetched [{variables}] from {url} (lon-shifted)")
+    run(["ncap2", "-O", "-s", f"lon=lon-({off})", str(tmp_sub), str(out_file)])
+    tmp_sub.unlink(missing_ok=True)
+    _dbg(f"fetched [{variables}] from {url} (lon {lon_min + off}..{lon_max + off}"
+         f" relabelled by {-off:+g})")
     return True
 
 

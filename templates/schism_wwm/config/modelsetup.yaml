@@ -1,0 +1,111 @@
+# =============================================================================
+# modelsetup.yaml — settings of --phase setup
+# =============================================================================
+# The setup phase builds the fix/ files that depend only on the mesh, once per
+# project, after the build phase and before preprocessing:
+#     stofs-ak --run --phase setup --config <config_dir>
+# (also part of --phase all). Its steps are switched on in steps.yaml
+# (# Setup section) and run in this order:
+#     gen_vgrid -> gen_partition -> replicate_fix -> gen_estuary -> gen_wwmbnd -> inspect_mesh
+# A file a step makes is kept when it is already in fix/ (move it aside to make
+# a new one). These keys are read from this file only.
+
+# -----------------------------------------------------------------------------
+# gen_vgrid: fix/vgrid.in (ivcor = 1, localized sigma / VQS) from fix/hgrid.gr3
+# -----------------------------------------------------------------------------
+# One master grid ("class") per depth range, depths increasing. A node deeper
+# than class m-1 and at most as deep as class m interpolates between the two;
+# a node at most as deep as class 1 gets class 1's levels as plain sigma.
+#   classes:       [max depth m, levels, theta_f] for an S-coordinate grid
+#                  (theta_f > 0: larger = more levels near the surface), or
+#                  {depth, extend: <class number>, z: [...]} for a grid made of
+#                  that class's levels plus the fixed depths z [m] below them
+#   dz_bot_min:    minimum bottom layer thickness [m]
+#   a_vqs0:        bias of class 1 (-1 surface, 0 none, 1 bottom)
+#   theta_b:       S-coordinate bottom parameter (0..1)
+#   downward_fix:  classes forced to step down from the class before them
+# The mesh's deepest node must not be deeper than the last class. Outputs:
+# fix/vgrid.in, and M{ID}/vgrid_work/ nlev.gr3 (levels per node, for plots),
+# vgrid_master.out and gen_vgrid.log (nvrt, prisms, average layers).
+# Uncomment one example below (or copy it and edit the values).
+#
+# ---- Alaska (M26, M27; gen_vqs_1.f90): 10 classes, up to 51 levels ----
+# vgrid:
+#   dz_bot_min: 0.5
+#   a_vqs0: 0.0
+#   theta_b: 0.0
+#   downward_fix: []
+#   classes:            # [max depth m, levels, theta_f]
+#     - [1.0,       2, 2.0]
+#     - [40.0,     15, 2.0]
+#     - [100.0,    23, 2.5]
+#     - [300.0,    31, 3.7]
+#     - [500.0,    35, 4.2]
+#     - [700.0,    38, 4.42]
+#     - [1000.0,   40, 4.9]
+#     - [1500.0,   40, 5.45]
+#     - [2000.0,   41, 5.8]
+#     - [10000.0,  51, 7.5]
+#
+# ---- STOFS-3D-Atlantic (SCHISM STOFS-3D-Atl-Setup Vgrid/gen_vqs.f90):
+#      22 classes, up to 49 levels ----
+# vgrid:
+#   dz_bot_min: 0.1
+#   a_vqs0: 0.0
+#   theta_b: 0.0
+#   downward_fix: [2, 3, 4, 5, 6]
+#   classes:            # [max depth m, levels, theta_f]
+#     - [1.0,     2, 0.0001]
+#     - [2.0,     3, 0.0001]
+#     - [3.0,     5, 0.0001]
+#     - [4.0,     7, 0.0001]
+#     - [6.0,     9, 0.0001]
+#     - [8.0,    11, 0.0001]
+#     - [12.0,   13, 0.0001]
+#     - [18.0,   15, 1.2]
+#     - [25.0,   17, 1.5]
+#     - [33.0,   17, 1.8]
+#     - [42.0,   18, 2.1]
+#     - [52.0,   18, 2.4]
+#     - [67.0,   19, 2.7]
+#     - [83.0,   20, 2.9]
+#     - [100.0,  21, 3.1]
+#     - [150.0,  22, 3.55]
+#     - [230.0,  24, 3.97]
+#     - [350.0,  26, 4.4]
+#     # deep classes: class 18's 26 levels plus these fixed depths
+#     - {depth: 1050.0, extend: 18, z: [-400, -460, -520, -590, -660, -740, -830, -930, -1050]}
+#     - {depth: 2000.0, extend: 18, z: [-400, -460, -520, -590, -660, -740, -830, -930, -1050, -1200, -1400, -1600, -1800, -2000]}
+#     - {depth: 5000.0, extend: 18, z: [-400, -460, -520, -590, -660, -740, -830, -930, -1050, -1200, -1400, -1600, -1800, -2000, -2400, -2900, -3500, -4200, -5001]}
+#     - {depth: 8500.0, extend: 18, z: [-400, -460, -520, -590, -660, -740, -830, -930, -1050, -1200, -1400, -1600, -1800, -2000, -2400, -2900, -3500, -4200, -5001, -6000, -7000, -8000, -9000]}
+
+# -----------------------------------------------------------------------------
+# gen_partition: fix/partition.prop
+# -----------------------------------------------------------------------------
+# No settings here: the number of parts is the compute cores of fix/run_test
+# (#SBATCH -n minus the scribes, the last argument of the srun line), and the
+# partition is made with fix/vgrid.in (so it runs after gen_vgrid).
+
+# -----------------------------------------------------------------------------
+# replicate_fix: property files carried over from another project
+# -----------------------------------------------------------------------------
+# The project whose fix/ property .gr3 files and tvd.prop are interpolated onto
+# this project's new mesh of the same domain (e.g. .../M21).
+# replicate_depth: true also replaces this mesh's depths by the source mesh's
+# (off by default: the new mesh should come with its own DEM bathymetry).
+# replicate_from: /work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M21
+replicate_depth: false
+
+# -----------------------------------------------------------------------------
+# gen_estuary: fix/estuary.gr3
+# -----------------------------------------------------------------------------
+# Depth threshold (meters) for estuary.gr3 generation.
+# Nodes with depth <= this value are marked as estuary (value=1); all others
+# are open ocean (value=0, interpolated from HYCOM).
+# Set to a large negative number (e.g. -10) to mark NO nodes as estuary —
+# HYCOM interpolation is used everywhere (appropriate for all-ocean domains
+# like the Bering Sea where there are no estuaries to exclude).
+# Set to a small positive number (e.g. 3.0) to mark shallow coastal nodes.
+# (estuary_temp/sal and outside_temp/sal stay in the model yaml: the HYCOM
+# utilities of each group read them too.)
+estuary_depth_threshold: -10.0

@@ -164,7 +164,9 @@ def _clean_outputs():
 
 # New I/O stacks (out2d_N.nc, temperature_N.nc, ...; one-word prefix, so
 # per-rank hotstart_RRRRRR_N.nc does not match), station outputs and the
-# combined end-of-group hotstart of an earlier attempt.
+# combined end-of-group hotstart of an earlier attempt. Empty files (the
+# staout placeholders of setup_run) stay; combine_hotstart7.exe and the
+# other files of outputs/ are not touched.
 _STALE_NEWIO = re.compile(r"^(?!schout_)[A-Za-z][A-Za-z0-9]*_\d+\.nc$")
 _STALE_STAOUT = re.compile(r"^staout_\d+$")
 
@@ -180,9 +182,10 @@ def _move_stale_newio(outdir: Path):
     """
     combined = f"hotstart_it={NHOT_WRITE}.nc"
     stale = [f for f in sorted(outdir.iterdir())
-             if f.is_file() and (_STALE_NEWIO.match(f.name)
-                                 or _STALE_STAOUT.match(f.name)
-                                 or f.name == combined)]
+             if f.is_file() and f.stat().st_size > 0
+             and (_STALE_NEWIO.match(f.name)
+                  or _STALE_STAOUT.match(f.name)
+                  or f.name == combined)]
     if not stale:
         return
     dest = outdir / f"stale_{datetime.now():%Y%m%d_%H%M%S}"

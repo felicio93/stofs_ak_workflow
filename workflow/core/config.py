@@ -38,6 +38,11 @@ from dateutil.relativedelta import relativedelta
 # ---------------------------------------------------------------------------
 
 BASE_CONFIG_FILES = ("project.yaml", "domain.yaml", "steps.yaml", "envs.yaml")
+# Settings of the --phase setup steps (fix/ made from the mesh). They are
+# read from modelsetup.yaml only.
+SETUP_CONFIG_FILE = "modelsetup.yaml"
+SETUP_KEYS = ("vgrid", "replicate_from", "replicate_depth", "constant_gr3",
+              "estuary_depth_threshold")
 KNOWN_MODEL_TYPES = ("schism", "schism_2d", "schism_wwm", "schism_mice", "ufs_schism", "ufs_schism_ww3")
 
 # Canonical grouping values accepted in project.yaml.
@@ -303,15 +308,20 @@ def load_config(config_dir: Path) -> dict:
 
     Base files (project / domain / steps / envs) are required.
     The model-specific file matching cfg['model_type'] (e.g. schism.yaml)
-    is merged if present.  postprocess.yaml and build.yaml are optional.
+    is merged if present.  modelsetup.yaml, postprocess.yaml and build.yaml
+    are optional; the setup settings (SETUP_KEYS) are accepted only in
+    modelsetup.yaml.
 
     Grouping aliases are normalised before returning so all downstream
     code sees only 'monthly' or 'ndays'.
     """
     cfg = {}
     nested_from = {}    # nested-block key -> file that defined it
+    misplaced = []      # (key, file): setup keys outside modelsetup.yaml
 
     def _merge(data, fname):
+        if fname != SETUP_CONFIG_FILE:
+            misplaced.extend((k, fname) for k in data if k in SETUP_KEYS)
         # dict.update() replaces nested blocks (slurm:, executables:, ...)
         # wholesale, so warn when two files define the same block.
         for key, val in data.items():
@@ -347,6 +357,14 @@ def load_config(config_dir: Path) -> dict:
               f"{config_dir}; model-specific defaults will be used. "
               f"(Check model_type: '{model_type}'.)")
 
+    # Optional --phase setup settings (vgrid, replicate_from, ...)
+    ms_fpath = config_dir / SETUP_CONFIG_FILE
+    if ms_fpath.exists():
+        with open(ms_fpath) as f:
+            data = yaml.safe_load(f)
+            if data:
+                _merge(data, ms_fpath.name)
+
     # Optional Phase-5 settings
     pp_fpath = config_dir / "postprocess.yaml"
     if pp_fpath.exists():
@@ -362,6 +380,15 @@ def load_config(config_dir: Path) -> dict:
             data = yaml.safe_load(f)
             if data:
                 _merge(data, build_fpath.name)
+
+    if misplaced:
+        print(f"ERROR: setup settings must be in {SETUP_CONFIG_FILE} "
+              f"(--phase setup):")
+        for key, fname in misplaced:
+            print(f"    {key}: found in {fname}")
+        print(f"  Move them to {config_dir / SETUP_CONFIG_FILE} (see "
+              f"templates/<model>/config/{SETUP_CONFIG_FILE}).")
+        sys.exit(1)
 
     # YAML parses an unquoted 2025-09-01 as a date object; the rest of the
     # code expects ISO strings.

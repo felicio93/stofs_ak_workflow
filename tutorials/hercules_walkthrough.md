@@ -143,7 +143,7 @@ ls $SWF_PROJ/M01/I01 | head
 ```bash
 cp /path/to/hgrid.gr3              $SWF_PROJ/M01/fix/
 cp /path/to/hgrid.ll               $SWF_PROJ/M01/fix/
-cp /path/to/vgrid.in               $SWF_PROJ/M01/fix/
+cp /path/to/vgrid.in               $SWF_PROJ/M01/fix/   # or let gen_vgrid make it (section 4)
 cp /path/to/TEM_nudge.gr3          $SWF_PROJ/M01/fix/
 cp /path/to/SAL_nudge.gr3          $SWF_PROJ/M01/fix/
 cp /path/to/albedo.gr3             $SWF_PROJ/M01/fix/
@@ -205,8 +205,8 @@ target delete `$SWF_PROJ/M01/build/<target>.done` (or change its block in
 ## 3c. Optional — replicate an existing project on a new mesh
 
 For a new mesh of the **same domain** (e.g. M26 = M21 on another mesh), put the
-new `hgrid.gr3`, `hgrid.ll` (with the DEM bathymetry) and `vgrid.in` in `fix/`
-and set in `project.yaml`:
+new `hgrid.gr3`, `hgrid.ll` (with the DEM bathymetry) and `vgrid.in` (or
+`gen_vgrid`, section 4) in `fix/` and set in `modelsetup.yaml`:
 
 ```yaml
 replicate_from: /work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M21
@@ -214,7 +214,7 @@ replicate_depth: false     # true: take the source mesh's depths instead
 ```
 
 ```bash
-stofs-ak --run --only replicate_fix --config $CFG
+stofs-ak --run --phase setup --only replicate_fix --config $CFG
 ```
 
 It writes the property `.gr3` files (linear inside the source mesh, nearest
@@ -225,16 +225,60 @@ Review `dt` (and `nspool`, `ihfskip`, `nspool_sta`) and the cores in
 `run_test`; make `partition.prop` for the new mesh. The distances, the points
 outside the source mesh and the value ranges are in `fix/replicate_fix.txt`.
 
-## 4. Step 0 — Mesh diagnostics (SLURM, run before anything else)
+## 4. Setup phase — fix/ files from the mesh (once per project)
+
+The setup phase makes the `fix/` files that depend only on the mesh, in this
+order: `gen_vgrid`, `gen_partition`, `replicate_fix`, `gen_estuary` (plus
+`gen_wwmbnd` / `gen_ww3_mesh` / `gen_ww3_points` for the wave models), then
+`inspect_mesh`. Their settings are in `$CFG/modelsetup.yaml`, their flags in
+the `# Setup` section of `$CFG/steps.yaml`. A file already in `fix/` is kept.
+`--phase all` runs the setup phase after the build; alone:
+
+```bash
+conda activate swf_main
+stofs-ak --run --phase setup --config $CFG 2>&1 | tee $SWF_PROJ/M01/logs/setup.log
+```
+
+### Step 4A — gen_vgrid (optional)
+
+Makes `fix/vgrid.in` (localized sigma) from `fix/hgrid.gr3` when you do not
+supply one. Uncomment one of the two examples in `modelsetup.yaml` (Alaska:
+up to 51 levels; STOFS-3D-Atlantic: up to 49) or copy one and edit it, then
+set `gen_vgrid: true`:
+
+```bash
+stofs-ak --run --phase setup --only gen_vgrid --config $CFG
+cat $SWF_PROJ/M01/vgrid_work/gen_vgrid.log    # nvrt, prisms, average layers
+head -c 300 $SWF_PROJ/M01/fix/vgrid.in; echo
+```
+
+It stops with a message if the mesh is deeper than the last class, or if a
+node would get fewer than 2 levels. `vgrid_work/nlev.gr3` holds the number of
+levels at each node (plot it like a `.gr3`). If you change the classes, move
+`fix/vgrid.in` aside first and remake `partition.prop` afterwards
+(`gen_partition`), since the partition is weighted by the levels.
+
+### Step 4B — gen_estuary (once, interactive)
+
+Creates `fix/estuary.gr3` and the three Fortran `.in` control files in `bin/`.
+```bash
+stofs-ak --run --phase setup --only gen_estuary --config $CFG
+```
+
+Verify:
+```bash
+wc -l $SWF_PROJ/M01/fix/estuary.gr3
+wc -l $SWF_PROJ/M01/fix/hgrid.gr3   # node counts should match
+ls -lh $SWF_PROJ/M01/bin/*.in
+```
+
+### Step 4C — inspect_mesh (SLURM)
 
 Diagnostic plots of all `fix/` input files, mesh resolution, and vertical
 layers → `D01/D01_fix/`.
 
-Edit `$CFG/steps.yaml` — set only `inspect_mesh: true`.
-
 ```bash
-conda activate swf_main
-stofs-ak --run --config $CFG
+stofs-ak --run --phase setup --only inspect_mesh --config $CFG
 ```
 
 Monitor and verify:
@@ -400,24 +444,6 @@ If OOM: increase `plot_mem` / `plot_sflux_mem` in `$CFG/project.yaml`.
 ---
 
 ## 8. Phase 3 — SCHISM preprocessing
-
-### Step 3A — gen_estuary (once, interactive)
-
-Creates `fix/estuary.gr3` and the three Fortran `.in` control files in `bin/`.
-Edit `$CFG/steps.yaml` — set only `gen_estuary: true`.
-
-```bash
-conda activate swf_main
-stofs-ak --run --config $CFG \
-    2>&1 | tee $SWF_PROJ/M01/logs/gen_estuary.log
-```
-
-Verify:
-```bash
-wc -l $SWF_PROJ/M01/fix/estuary.gr3
-wc -l $SWF_PROJ/M01/fix/hgrid.gr3   # node counts should match
-ls -lh $SWF_PROJ/M01/bin/*.in
-```
 
 ### Step 3B — gen_bctides (interactive, once per month)
 
@@ -908,11 +934,11 @@ This set already includes the self-contained `schism_wwm.yaml` (SCHISM keys
   from `schism.yaml` into `schism_wwm.yaml`.
 - In `project.yaml`: `model_type: schism_wwm` and
   `executables.schism_wwm: <WWM-enabled SCHISM executable>`.
-- Extra preprocessing steps (after `gen_param`):
+- Extra steps (`gen_wwmbnd` in the setup phase, `gen_wwminput` after `gen_param`):
 
 ```bash
 # steps.yaml: gen_wwmbnd: true  (once)  then  gen_wwminput: true
-stofs-ak --run --only gen_wwmbnd   --config $CFG   # fix/wwmbnd.gr3 from hgrid.gr3
+stofs-ak --run --phase setup --only gen_wwmbnd --config $CFG   # fix/wwmbnd.gr3 from hgrid.gr3
 stofs-ak --run --only gen_wwminput --config $CFG   # I01_<g>/wwminput.nml per group
 ```
 
@@ -1004,7 +1030,7 @@ python $WF/orchestrator.py --new-project --model ufs_schism_ww3 --id 01 --dir $S
   build's `ww3_grid` in `bin/`, and runs one SLURM job):
 
 ```bash
-stofs-ak --run --only gen_ww3_mesh --config $CFG
+stofs-ak --run --phase setup --only gen_ww3_mesh --config $CFG
 ```
 
   `mesh.msh` is written with the hgrid's node and element numbering. WW3
@@ -1122,8 +1148,9 @@ stofs-ak --run --phase all --config $CFG
 |------|-------|------|-----|----------|
 | `--setup-envs` | — | DTN | swf_main | yes |
 | `--init` | — | any | swf_main | no |
-| `inspect_mesh` (submit) | 0 | login | swf_main | no |
-| inspect_mesh job | 0 | compute | swf_plot (auto) | no |
+| `gen_vgrid` / `gen_partition` / `replicate_fix` / `gen_estuary` | setup | any | swf_main | no |
+| `inspect_mesh` (submit) | setup | login | swf_main | no |
+| inspect_mesh job | setup | compute | swf_plot (auto) | no |
 | `download_hycom` | 1 | DTN | swf_main | yes |
 | `download_era5` | 1 | DTN | swf_main | yes |
 | `download_glofas` | 1 | DTN | swf_main | yes |
@@ -1132,7 +1159,7 @@ stofs-ak --run --phase all --config $CFG
 | gen_sflux jobs | 2 | compute | swf_main (auto) | no |
 | `plot_hycom` / `plot_sflux` (submit) | 2 | login | swf_main | no |
 | plotting jobs | 2 | compute | swf_plot (auto) | no |
-| `gen_estuary` / `gen_bctides` / `gen_source` / `gen_param` | 3 | any | swf_main | no |
+| `gen_bctides` / `gen_source` / `gen_param` | 3 | any | swf_main | no |
 | `gen_hotstart` / `gen_3Dth` / `gen_nudge` (submit) | 3 | login | swf_main | no |
 | gen_* SLURM jobs | 3 | compute | none (Fortran) | no |
 | `setup_run` | 4 | login | swf_main | no |

@@ -31,6 +31,12 @@ def _na(step: str, reason: str):
 
 class UfsSchismDriver(ModelDriver):
     name = "UFS_SCHISM"
+    setup_steps = frozenset({"gen_vgrid", "replicate_fix", "gen_estuary",
+                             "inspect_mesh"})
+    na_steps = {
+        "gen_partition": "UFS: the SCHISM cores are ocn_petlist_bounds, not "
+                         "run_test -n; supply fix/partition.prop",
+    }
 
     def preprocess(self, only: Optional[str] = None):
         from workflow.core.config import list_groups
@@ -41,29 +47,6 @@ class UfsSchismDriver(ModelDriver):
 
         _slurm_jobs = []
         _download_failed = []
-
-        # =====================================================================
-        # Phase 0
-        # =====================================================================
-        if en("replicate_fix"):
-            print("[STEP] replicate_fix")
-            from workflow.models.schism.preprocess.replicate_fix import (
-                run_replicate_fix,
-            )
-            run_replicate_fix(cfg)
-        else:
-            print("[SKIP] replicate_fix")
-
-        if en("inspect_mesh"):
-            print("[STEP] inspect_mesh")
-            from workflow.diagnostics.submit_inspect_mesh import (
-                submit_inspect_mesh,
-            )
-            jid = submit_inspect_mesh(cfg, config_dir)
-            if jid:
-                _slurm_jobs.append(jid)
-        else:
-            print("[SKIP] inspect_mesh")
 
         # =====================================================================
         # Phase 1: downloads (DTN only)
@@ -310,15 +293,6 @@ class UfsSchismDriver(ModelDriver):
         # =====================================================================
         # Phase 3: SCHISM preprocessing
         # =====================================================================
-        if en("gen_estuary"):
-            print("[STEP] gen_estuary")
-            from workflow.models.schism.preprocess.gen_estuary import (
-                run_gen_estuary,
-            )
-            run_gen_estuary(cfg)
-        else:
-            print("[SKIP] gen_estuary")
-
         if en("gen_bctides"):
             print("[STEP] gen_bctides")
             from workflow.models.schism.preprocess.gen_bctides import (
@@ -396,7 +370,7 @@ class UfsSchismDriver(ModelDriver):
             print("[SKIP] plot_hycom_outputs")
 
         # WWM-only steps: skip silently for UFS-SCHISM
-        for step in ("gen_wwmbnd", "gen_wwminput"):
+        for step in ("gen_wwminput",):
             if en(step):
                 _na(step,
                     f"SCHISM+WWM only, skipped for "

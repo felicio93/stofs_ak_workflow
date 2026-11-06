@@ -12,7 +12,8 @@ optionally, river volume sources (source.nc).
 
 Inherits the SCHISM steps and adds:
   - gen_constant_gr3 : constant property files in fix/ (manning.gr3,
-                       windrot_geo2proj.gr3) from schism_2d.yaml
+                       windrot_geo2proj.gr3) from modelsetup.yaml
+                       (--phase setup)
 
 Steps that need HYCOM or a 3D baroclinic model are reported as [N/A]:
   no hotstart, boundary T/S/velocity, nudging or estuary files are made,
@@ -30,7 +31,10 @@ _NO_TS    = "2D barotropic: no temperature/salinity computed"
 
 class Schism2dDriver(SchismDriver):
     name = "SCHISM 2D"
+    setup_steps = SchismDriver.setup_steps | {"gen_constant_gr3"}
     na_steps = {
+        "gen_vgrid":          "2D uses the one-layer vgrid.in of the "
+                              "template (ivcor=2)",
         "replicate_fix":      "copies 3D property files; 2D uses "
                               "gen_constant_gr3",
         "download_hycom":     _NO_HYCOM,
@@ -49,17 +53,6 @@ class Schism2dDriver(SchismDriver):
         "collocate_argo":     _NO_TS,
         "plot_argo":          _NO_TS,
     }
-
-    def preprocess(self, only: Optional[str] = None):
-        if self.enabled("gen_constant_gr3", only):
-            print("[STEP] gen_constant_gr3")
-            from workflow.models.schism_2d.preprocess.gen_constant_gr3 import (
-                run_gen_constant_gr3,
-            )
-            run_gen_constant_gr3(self.cfg)
-        else:
-            print("[SKIP] gen_constant_gr3")
-        return super().preprocess(only=only)
 
     def run(self, only: Optional[str] = None):
         from workflow.models.schism.run.run_manager import run_phase

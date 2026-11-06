@@ -38,10 +38,12 @@ GENERATED = {
 }
 # Files made by a step of one model only (in addition to GENERATED).
 GENERATED_BY_MODEL = {
-    "schism_2d": {"partition.prop":       "gen_partition",
-                  "manning.gr3":          "gen_constant_gr3",
+    "schism_2d": {"manning.gr3":          "gen_constant_gr3",
                   "windrot_geo2proj.gr3": "gen_constant_gr3"},
 }
+# Required files a setup step makes when it is enabled in steps.yaml (they
+# are then listed as "made by a step" instead of required).
+MADE_WHEN_ENABLED = {"vgrid.in": "gen_vgrid", "partition.prop": "gen_partition"}
 
 # Starter copies shipped in templates/<model>/fix/ (they encode choices, so
 # they must be reviewed for every project).
@@ -65,8 +67,7 @@ _REQUIRED_BASE = ["hgrid.gr3", "hgrid.ll", "vgrid.in", "partition.prop",
                   "param.nml", "run_test", "run_comb"]
 REQUIRED = {
     "schism":     _REQUIRED_BASE,
-    # partition.prop is made by gen_partition (listed under "made by a step")
-    "schism_2d":  [n for n in _REQUIRED_BASE if n != "partition.prop"],
+    "schism_2d":  _REQUIRED_BASE,
     "schism_wwm": _REQUIRED_BASE + ["wwminput.nml", "station.in"],
     "ufs_schism": _REQUIRED_BASE + ["datm_in", "datm.streams", "fd_ufs.yaml",
                                     "noahmptable.tbl", "model_configure"],
@@ -134,9 +135,18 @@ def _linked_files(model: str, cfg: dict = None) -> list:
 def fix_spec(model: str, cfg: dict = None) -> dict:
     """{'required': [...], 'expected': [...], 'template': [...],
     'generated': {name: step}} for a model, in display order."""
-    required = list(REQUIRED[model])
+    from workflow.models.base import make_driver
     templ    = TEMPLATE_FILES[model]
     made     = {**GENERATED, **GENERATED_BY_MODEL.get(model, {})}
+    steps_of = set()
+    if cfg is not None:
+        drv = make_driver({**cfg, "model_type": model}, Path("."))
+        na = getattr(drv, "na_steps", {}) or {}
+        steps_of = {s for s in drv.setup_steps if s not in na}
+    for name, step in MADE_WHEN_ENABLED.items():
+        if step in steps_of and (cfg or {}).get(step):
+            made[name] = step
+    required = [n for n in REQUIRED[model] if n not in made]
     seen     = set(required) | set(made)
     expected = []
     for name in _linked_files(model, cfg) + _SOURCE_CSV + [
@@ -399,10 +409,12 @@ def new_project(model: str, pid: str, root: Path) -> Path:
   Project M{pid} ({model}) created under {root}
 
   Next steps
-    1. Edit {cfgd}/project.yaml, domain.yaml and steps.yaml
-       (dates, grouping, domain box, SLURM account, steps to enable).
-    2. Put your mesh files in {fixd}  (hgrid.gr3, hgrid.ll, vgrid.in,
-       partition.prop, ...) and review the template files copied there.
+    1. Edit {cfgd}/project.yaml, domain.yaml, modelsetup.yaml and
+       steps.yaml (dates, grouping, domain box, SLURM account, vertical
+       grid, steps to enable).
+    2. Put your mesh in {fixd}  (hgrid.gr3, hgrid.ll; vgrid.in and
+       partition.prop too unless gen_vgrid / gen_partition make them) and
+       review the template files copied there.
     3. stofs-ak --check-fix --config {cfgd}
     4. stofs-ak --init --config {cfgd}
     5. stofs-ak --run --phase all --config {cfgd}   (builds the executables first)

@@ -8,7 +8,7 @@ templates/<model>/config/.
 For every model folder it verifies that:
   * the fix/ starter files of the model exist (templates/<model>/fix) and
     their @@MODULES:<kind>@@ placeholders match a build target;
-  * the seven expected files exist (and no stray yaml, e.g. a separate
+  * the eight expected files exist (and no stray yaml, e.g. a separate
     schism.yaml in a derived-model folder, which would be ignored);
   * the folder loads through workflow.core.config.load_config and passes
     orchestrator.validate_config, and project.yaml model_type matches the
@@ -17,6 +17,8 @@ For every model folder it verifies that:
     model (e.g. no UFS steps in schism, diag_run_plots only for schism);
   * known dead/removed config keys are absent;
   * the keys the model needs are present (executables, model yaml keys);
+  * the vgrid: examples commented in modelsetup.yaml parse and build
+    master grids (gen_vgrid);
   * domain.yaml is identical in all folders and the SCHISM keys repeated in
     each model yaml have the same values (drift check; schism_2d has its own
     domain and keys: Norton Sound, tides only, no HYCOM).
@@ -59,7 +61,7 @@ WW3_STEPS = {"gen_ww3_mesh", "gen_ww3_points", "gen_ww3_shel", "gen_ww3_ounp",
 WAVE_STEPS = {"wave_skill", "download_altimetry", "collocate_altimetry",
               "plot_altimetry"}
 # Steps a 2D barotropic model does not have (Schism2dDriver reports them N/A).
-NOT_2D_STEPS = {"replicate_fix", "download_hycom", "aggregate_hycom",
+NOT_2D_STEPS = {"gen_vgrid", "replicate_fix", "download_hycom", "aggregate_hycom",
                 "plot_hycom", "gen_estuary", "gen_hotstart", "gen_3Dth",
                 "gen_nudge", "plot_hycom_outputs", "download_sst",
                 "compare_sst", "download_argo", "collocate_argo", "plot_argo"}
@@ -112,8 +114,8 @@ EXE_KEY = {"schism": "schism", "schism_2d": "schism_2d",
            "schism_wwm": "schism_wwm",
            "ufs_schism": "ufs_schism", "ufs_schism_ww3": "ufs_schism_ww3"}
 
-ALL_STEPS = (orch.BUILD_STEPS | orch.PREPROCESS_STEPS | orch.RUN_PHASE_STEPS
-             | orch.POSTPROCESS_STEPS)
+ALL_STEPS = (orch.BUILD_STEPS | orch.SETUP_STEPS | orch.PREPROCESS_STEPS
+             | orch.RUN_PHASE_STEPS | orch.POSTPROCESS_STEPS)
 
 
 def step_applies(step: str, model: str) -> bool:
@@ -136,6 +138,34 @@ def step_applies(step: str, model: str) -> bool:
     return True
 
 
+def check_vgrid_examples(path: Path) -> list:
+    """Uncomment each '# vgrid:' example of modelsetup.yaml and build its
+    master grids; return error strings."""
+    import yaml
+    from workflow.core.vgrid import master_grid
+    lines = path.read_text().split("\n")
+    starts = [i for i, l in enumerate(lines) if l.startswith("# vgrid:")]
+    if len(starts) < 2:
+        return [f"expected 2 commented vgrid: examples, found {len(starts)}"]
+    errs = []
+    for i in starts:
+        block = []
+        for l in lines[i:]:
+            if not l.startswith("# ") and l != "#":
+                break
+            if l == "#" or l.startswith("# ----"):
+                if block:
+                    break
+            block.append(l[2:])
+        try:
+            vcfg = yaml.safe_load("\n".join(block))["vgrid"]
+            master_grid(vcfg)
+        except (Exception, SystemExit) as exc:
+            errs.append(f"vgrid example at line {i + 1} does not build: "
+                        f"{exc}")
+    return errs
+
+
 def check_model(model: str, errors: list) -> dict:
     d = TEMPLATES / model / "config"
 
@@ -143,7 +173,8 @@ def check_model(model: str, errors: list) -> dict:
         errors.append(f"[{model}] {msg}")
 
     expected = {"project.yaml", "domain.yaml", "steps.yaml", "envs.yaml",
-                "postprocess.yaml", "build.yaml", f"{model}.yaml"}
+                "postprocess.yaml", "build.yaml", "modelsetup.yaml",
+                f"{model}.yaml"}
     present = {p.name for p in d.glob("*.yaml")} if d.is_dir() else set()
     for name in sorted(expected - present):
         err(f"missing file {name}")
@@ -182,6 +213,10 @@ def check_model(model: str, errors: list) -> dict:
     base_keys = SCHISM_2D_KEYS if model == "schism_2d" else SCHISM_KEYS
     for k in sorted((base_keys | MODEL_KEYS[model]) - set(cfg)):
         err(f"{model}.yaml: missing key {k}")
+
+    if model != "schism_2d":
+        for e in check_vgrid_examples(d / "modelsetup.yaml"):
+            err(f"modelsetup.yaml: {e}")
 
     exes = cfg.get("executables") or {}
     needed = {EXE_KEY[model], "combine_hotstart"}

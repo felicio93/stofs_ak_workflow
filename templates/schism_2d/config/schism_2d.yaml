@@ -27,16 +27,6 @@ tidal_constituents: major
 # Cutoff depth for applying earth tidal potential (metres).
 tidal_cutoff_depth: 50.0
 
-# Property files written by gen_constant_gr3 (from fix/hgrid.gr3, one value
-# everywhere). Files already in fix/ are kept, so a hand-made spatially
-# varying file can replace one of these.
-#   manning.gr3          Manning's n (param.nml nchi = -1, hmin_man)
-#   windrot_geo2proj.gr3 wind rotation angle [deg]; 0 for a lon/lat mesh
-#                        (read by SCHISM when nws = 2)
-constant_gr3:
-  manning.gr3: 0.025
-  windrot_geo2proj.gr3: 0.0
-
 # =============================================================================
 # Run management (Phase 4)
 # =============================================================================

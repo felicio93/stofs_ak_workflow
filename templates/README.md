@@ -6,11 +6,11 @@ code:
 
 | Folder | model_type | Reference run | Files |
 |--------|------------|---------------|-------|
-| `schism/config/` | `schism` | M11 | project, domain, steps, envs, `schism.yaml`, postprocess, build |
-| `schism_2d/config/` | `schism_2d` | M31 (Norton Sound, 2024-07-01 .. 09-30, one 92-day group; not yet run) | project, domain, steps, envs, `schism_2d.yaml`, postprocess, build |
-| `ufs_schism/config/` | `ufs_schism` | M12 | project, domain, steps, envs, `ufs_schism.yaml`, postprocess, build |
-| `schism_wwm/config/` | `schism_wwm` | M13 | project, domain, steps, envs, `schism_wwm.yaml`, postprocess, build |
-| `ufs_schism_ww3/config/` | `ufs_schism_ww3` | M14 | project, domain, steps, envs, `ufs_schism_ww3.yaml`, postprocess, build |
+| `schism/config/` | `schism` | M11 | project, domain, steps, envs, `schism.yaml`, modelsetup, postprocess, build |
+| `schism_2d/config/` | `schism_2d` | M31 (Norton Sound, 2024-07-01 .. 09-30, one 92-day group) | project, domain, steps, envs, `schism_2d.yaml`, modelsetup, postprocess, build |
+| `ufs_schism/config/` | `ufs_schism` | M12 | project, domain, steps, envs, `ufs_schism.yaml`, modelsetup, postprocess, build |
+| `schism_wwm/config/` | `schism_wwm` | M13 | project, domain, steps, envs, `schism_wwm.yaml`, modelsetup, postprocess, build |
+| `ufs_schism_ww3/config/` | `ufs_schism_ww3` | M14 | project, domain, steps, envs, `ufs_schism_ww3.yaml`, modelsetup, postprocess, build |
 
 ```bash
 export CFG=<project_dir>/M11/config            # M12/M13/M14 for the other models
@@ -35,7 +35,12 @@ Notes
   combine old-I/O output stacks).
 - `chain_ww3_restart` (UFS+WW3) is `true`: WW3, DATM and mediator restarts are
   chained between groups.
-- Run `python utils/check_config_templates.py` after editing a template.
+- `modelsetup.yaml` holds the settings of the setup phase (`vgrid:`,
+  `replicate_from`/`replicate_depth`, `estuary_depth_threshold`,
+  `constant_gr3`) and only there. The `vgrid:` block is commented out, with
+  two complete examples (Alaska and STOFS-3D-Atlantic); `gen_vgrid` is off.
+- Run `python utils/check_config_templates.py` after editing a template (it
+  also builds the master grids of both `vgrid:` examples).
 
 ## fix/ starter files
 

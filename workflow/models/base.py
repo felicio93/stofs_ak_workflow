@@ -13,6 +13,8 @@ class ModelDriver(ABC):
     """Common interface for every model configuration."""
 
     name: str = "base"
+    # Steps of --phase setup this model has (see core/setup_phase.py).
+    setup_steps: frozenset = frozenset()
 
     def __init__(self, cfg: dict, config_dir: Path):
         self.cfg = cfg
@@ -22,6 +24,12 @@ class ModelDriver(ABC):
         if only is not None:
             return step == only
         return bool(self.cfg.get(step, False))
+
+    def setup(self, only: Optional[str] = None) -> list:
+        """--phase setup: build fix/ from the mesh (once per project).
+        Returns the SLURM job ids submitted."""
+        from workflow.core.setup_phase import run_setup
+        return run_setup(self, only)
 
     @abstractmethod
     def preprocess(self, only: Optional[str] = None):

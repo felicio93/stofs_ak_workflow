@@ -4,7 +4,7 @@ orchestrator.py
 Main entry point / CLI for the STOFS-AK modeling workflow.
 
 Selects a model driver from project.yaml `model_type` and dispatches one or
-more phases (preprocess / run / postprocess / all). Model-specific step logic
+more phases (build / setup / preprocess / run / postprocess / all). Model-specific step logic
 lives in the driver (workflow/models/<model>/driver.py), not here.
 
 Usage
@@ -15,6 +15,10 @@ Usage
   # Create/verify conda environments (run on the DTN)
   stofs-ak --setup-envs --config /path/to/M01/config
 
+  # Build fix/ from the mesh, once per project (vgrid.in, partition.prop,
+  # property files; modelsetup.yaml)
+  stofs-ak --run --phase setup --config /path/to/M01/config
+
   # Run enabled preprocessing steps (default phase)
   stofs-ak --run --config /path/to/M01/config
 
@@ -24,7 +28,8 @@ Usage
   # Run Phase 4 (populate run dirs)
   stofs-ak --run --phase run --config /path/to/M01/config
 
-  # Run ALL phases in sequence (preprocess -> run -> postprocess)
+  # Run ALL phases in sequence (build -> setup -> preprocess -> run ->
+  # postprocess)
   stofs-ak --run --phase all --config /path/to/M01/config
 
 If installed via `pip install -e .`, the `stofs-ak` console script is
@@ -47,6 +52,7 @@ from workflow.core.config import (
     model_dir,
 )
 from workflow.models.base import make_driver
+from workflow.core.setup_phase import SETUP_STEPS as _SETUP_ORDER
 from typing import Optional
 
 # =============================================================================
@@ -124,8 +130,8 @@ def validate_config(cfg: dict):
 
 # Step names per phase. Used to warn when steps of another phase are enabled
 # and to validate --only.
+SETUP_STEPS = set(_SETUP_ORDER)
 PREPROCESS_STEPS = {
-    "replicate_fix", "gen_partition", "gen_constant_gr3", "inspect_mesh",
     "download_hycom", "download_era5", "download_glofas",
     "aggregate_hycom", "plot_hycom", "plot_sflux",
     "gen_datm", "plot_datm", "gen_esmf_mesh", "gen_datm_in",
@@ -134,7 +140,7 @@ PREPROCESS_STEPS = {
     "gen_estuary", "gen_bctides", "gen_source", "gen_param",
     "gen_sflux", "gen_hotstart", "gen_3Dth", "gen_nudge",
     "plot_hycom_outputs",
-    "gen_wwmbnd", "gen_wwminput", "gen_ww3_mesh", "gen_ww3_points", "gen_ww3_shel", "gen_ww3_ounp",
+    "gen_wwminput", "gen_ww3_shel", "gen_ww3_ounp",
 }
 BUILD_STEPS       = {"build_executables"}
 RUN_PHASE_STEPS   = {"setup_run", "submit_run"}
@@ -147,11 +153,12 @@ POSTPROCESS_STEPS = {
 }
 _STEPS_BY_PHASE = {
     "build":       BUILD_STEPS,
+    "setup":       SETUP_STEPS,
     "preprocess":  PREPROCESS_STEPS,
     "run":         RUN_PHASE_STEPS,
     "postprocess": POSTPROCESS_STEPS,
-    "all":         (BUILD_STEPS | PREPROCESS_STEPS | RUN_PHASE_STEPS
-                    | POSTPROCESS_STEPS),
+    "all":         (BUILD_STEPS | SETUP_STEPS | PREPROCESS_STEPS
+                    | RUN_PHASE_STEPS | POSTPROCESS_STEPS),
 }
 
 
@@ -165,7 +172,8 @@ def validate_only(phase: str, only: str, cfg: Optional[dict] = None):
     if phase == "build" and cfg and only in (
             (cfg.get("build") or {}).get("targets") or {}):
         return
-    owner = [ph for ph in ("build", "preprocess", "run", "postprocess")
+    owner = [ph for ph in ("build", "setup", "preprocess", "run",
+                           "postprocess")
              if only in _STEPS_BY_PHASE[ph]]
     print(f"ERROR: '{only}' is not a step of --phase {phase}.")
     if owner:
@@ -187,12 +195,18 @@ def _phase_mismatch_warnings(cfg: dict, phase: str, only: str):
         return
 
     if phase == "preprocess":
-        run_on  = [s for s in RUN_PHASE_STEPS   if cfg.get(s, False)]
-        post_on = [s for s in POSTPROCESS_STEPS if cfg.get(s, False)]
-        if run_on or post_on:
+        setup_on = [s for s in SETUP_STEPS      if cfg.get(s, False)]
+        run_on   = [s for s in RUN_PHASE_STEPS   if cfg.get(s, False)]
+        post_on  = [s for s in POSTPROCESS_STEPS if cfg.get(s, False)]
+        if setup_on or run_on or post_on:
             print(f"\n  {'!'*58}")
             print("  WARNING: some steps in your steps.yaml belong to a")
             print("  different phase and will NOT run with the current command.")
+            if setup_on:
+                print(f"    Setup steps enabled but ignored: "
+                      f"{', '.join(sorted(setup_on))}")
+                print("    Run them with:  "
+                      "stofs-ak --run --phase setup --config <cfg>")
             if run_on:
                 print(f"    Phase 4 steps enabled but ignored: "
                       f"{', '.join(sorted(run_on))}")
@@ -287,8 +301,8 @@ def init_project(cfg: dict):
 
     print(f"\n  Init complete. Next steps:")
     print(f"    1. Copy your mesh and fixed files into:  {mdir}/fix/")
-    print(f"    2. Copy compiled Fortran executables into: {mdir}/bin/")
-    print(f"    3. Run:  stofs-ak --run --config <config_dir>")
+    print("    2. Run:  stofs-ak --run --phase all --config <config_dir>")
+    print("       (build -> setup -> preprocess -> run -> postprocess)")
     print()
 
 
@@ -303,25 +317,28 @@ def run_workflow(cfg: dict, config_dir: Path, phase: str = "preprocess",
     phase is one of:
       build                 — compile the executables of build.yaml (skipped
                               when up to date)
-      preprocess  (default) — data downloads + model input generation
+      setup                 — fix/ files made from the mesh, once per
+                              project (vgrid.in, partition.prop, ...)
+      preprocess  (default) — data downloads + per-group model inputs
       run                   — populate run dirs + launch monthly runs
       postprocess           — output plots, validation, skill metrics
-      all                   — build -> preprocess -> run -> postprocess
+      all                   — build -> setup -> preprocess -> run ->
+                              postprocess
 
-    When phase='all', the orchestrator inserts a wait barrier between the
-    preprocess and run phases.
+    When phase='all', the orchestrator waits for the SLURM jobs of the
+    setup and preprocess phases before the run phase.
     """
     _phase_mismatch_warnings(cfg, phase, only)
 
     # SCHISM aborts on clockwise elements only when the run starts; stop
     # before preprocessing instead (downloads do not need the mesh).
-    if (phase in ("preprocess", "run", "all")
+    if (phase in ("setup", "preprocess", "run", "all")
             and not (only or "").startswith("download_")):
         from workflow.core.mesh_check import require_valid_mesh
         require_valid_mesh(cfg)
 
     driver = make_driver(cfg, config_dir)
-    phases = (["build", "preprocess", "run", "postprocess"]
+    phases = (["build", "setup", "preprocess", "run", "postprocess"]
               if phase == "all" else [phase])
 
     _preprocess_slurm_jobs = []
@@ -344,10 +361,15 @@ def run_workflow(cfg: dict, config_dir: Path, phase: str = "preprocess",
             from workflow.build.runner import run_build_phase
             run_build_phase(cfg, config_dir, only=only)
 
+        elif ph == "setup":
+            result = driver.setup(only=only)
+            if isinstance(result, list):
+                _preprocess_slurm_jobs += [j for j in result if j]
+
         elif ph == "preprocess":
             result = driver.preprocess(only=only)
             if isinstance(result, list):
-                _preprocess_slurm_jobs = [j for j in result if j]
+                _preprocess_slurm_jobs += [j for j in result if j]
 
         elif ph == "run":
             if phase == "all" and _preprocess_slurm_jobs:
@@ -355,8 +377,8 @@ def run_workflow(cfg: dict, config_dir: Path, phase: str = "preprocess",
                 wait_for_slurm_jobs(
                     _preprocess_slurm_jobs,
                     poll_seconds=30,
-                    label="Phase 3 SLURM jobs "
-                          "(gen_hotstart/gen_3Dth/gen_nudge/gen_sflux/...)"
+                    label="setup + preprocess SLURM jobs "
+                          "(inspect_mesh/gen_hotstart/gen_3Dth/gen_sflux/...)"
                 )
                 print("  Waiting 15 s for filesystem metadata propagation ...")
                 time.sleep(15)
@@ -503,7 +525,8 @@ def reset_sentinels(cfg: dict):
 def main():
     parser = argparse.ArgumentParser(
         description="STOFS-AK modeling workflow orchestrator "
-                    "(preprocess / run / postprocess; model selected via "
+                    "(build / setup / preprocess / run / postprocess; "
+                    "model selected via "
                     "project.yaml model_type)"
     )
     parser.add_argument(
@@ -544,15 +567,19 @@ def main():
     )
     parser.add_argument(
         "--phase", default="preprocess",
-        choices=("build", "preprocess", "run", "postprocess", "all"),
+        choices=("build", "setup", "preprocess", "run", "postprocess",
+                 "all"),
         help=(
             "Which phase to run with --run (default: preprocess). "
             "build = compile the executables of build.yaml "
             "(skipped when up to date); "
-            "preprocess = download + model inputs; "
+            "setup = fix/ files made from the mesh, once per project "
+            "(vgrid.in, partition.prop, property files); "
+            "preprocess = downloads + per-group model inputs; "
             "run = populate run dirs + launch monthly runs; "
             "postprocess = output plots + validation; "
-            "all = build -> preprocess -> run -> postprocess in sequence"
+            "all = build -> setup -> preprocess -> run -> postprocess "
+            "in sequence"
         )
     )
     parser.add_argument("--model", help="--new-project: model_type "

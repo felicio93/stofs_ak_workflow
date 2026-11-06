@@ -14,6 +14,11 @@ from typing import Optional
 class SchismMiceDriver(SchismDriver):
     name = "SCHISM+MICE"
 
+    def setup(self, only: Optional[str] = None):
+        raise NotImplementedError(
+            "SCHISM+MICE setup is not implemented yet."
+        )
+
     def preprocess(self, only: Optional[str] = None):
         raise NotImplementedError(
             "SCHISM+MICE preprocessing is not implemented yet. Extend "

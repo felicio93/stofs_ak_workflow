@@ -22,6 +22,7 @@ import sys
 
 from workflow.models.base import ModelDriver
 from workflow.core.environment import DtnRequiredError
+from workflow.core.setup_phase import SETUP_STEPS
 from typing import Optional
 
 # Steps that belong to UFS-SCHISM only.
@@ -37,7 +38,7 @@ _UFS_ONLY_STEPS = {
 # Steps that belong to SCHISM+WWM only.
 # Silently skipped when model_type is schism (standalone).
 _WWM_ONLY_STEPS = {
-    "gen_wwmbnd", "gen_wwminput",
+    "gen_wwminput",
 }
 
 
@@ -51,6 +52,8 @@ class SchismDriver(ModelDriver):
     # True in drivers that implement the SCHISM+WWM-only steps
     # (gen_wwmbnd / gen_wwminput); others report them as [N/A].
     supports_wwm_steps = False
+    setup_steps = frozenset({"gen_vgrid", "gen_partition", "replicate_fix",
+                             "gen_estuary", "inspect_mesh"})
     # Steps of this driver that do not apply to a derived model
     # ({step: reason}); reported as [N/A] when enabled, never run.
     na_steps: dict = {}
@@ -64,51 +67,20 @@ class SchismDriver(ModelDriver):
             print(f"[SKIP] {step}")
 
     # -------------------------------------------------------------------------
-    # Phase 0-3 — Pre-processing
+    # Phase 1-3 — Pre-processing (the mesh steps are --phase setup)
     # -------------------------------------------------------------------------
     def preprocess(self, only: Optional[str] = None):
         cfg, config_dir = self.cfg, self.config_dir
         en = lambda step: self.enabled(step, only)
 
         for step, reason in self.na_steps.items():
-            if super().enabled(step, only):
+            if step not in SETUP_STEPS and super().enabled(step, only):
                 _na(step, reason)
 
         self._preprocess_compat_warning(only)
 
         _slurm_jobs = []
         _download_failed = []
-
-        # ---- Phase 0: property files from another project, partition,
-        #      mesh diagnostics ----
-        if en("replicate_fix"):
-            print("[STEP] replicate_fix")
-            from workflow.models.schism.preprocess.replicate_fix import (
-                run_replicate_fix,
-            )
-            run_replicate_fix(cfg)
-        else:
-            self._skip("replicate_fix")
-
-        if en("gen_partition"):
-            print("[STEP] gen_partition")
-            from workflow.models.schism.preprocess.gen_partition import (
-                run_gen_partition,
-            )
-            run_gen_partition(cfg)
-        else:
-            self._skip("gen_partition")
-
-        if en("inspect_mesh"):
-            print("[STEP] inspect_mesh")
-            from workflow.diagnostics.submit_inspect_mesh import (
-                submit_inspect_mesh,
-            )
-            jid = submit_inspect_mesh(cfg, config_dir)
-            if jid:
-                _slurm_jobs.append(jid)
-        else:
-            self._skip("inspect_mesh")
 
         # ---- Phase 1: downloads (DTN only) ----
         # Catch DtnRequiredError so --phase all on a login node
@@ -234,15 +206,6 @@ class SchismDriver(ModelDriver):
             self._skip("plot_sflux")
 
         # ---- Phase 3: SCHISM preprocessing ----
-        if en("gen_estuary"):
-            print("[STEP] gen_estuary")
-            from workflow.models.schism.preprocess.gen_estuary import (
-                run_gen_estuary,
-            )
-            run_gen_estuary(cfg)
-        else:
-            self._skip("gen_estuary")
-
         if en("gen_bctides"):
             print("[STEP] gen_bctides")
             from workflow.models.schism.preprocess.gen_bctides import (

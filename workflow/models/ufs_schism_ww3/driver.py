@@ -6,8 +6,10 @@ UfsSchismWw3Driver — UFS-SCHISM+WW3 externally coupled model.
 Inherits all UFS-SCHISM preprocessing, run, and postprocessing steps
 from UfsSchismDriver and adds WW3-specific preprocessing steps:
 
-  gen_ww3_mesh  : mesh.msh, mod_def.ww3, ww3_ESMFmesh.nc from hgrid.ll (once)
-  gen_ww3_points: ww3_points.list from station.in (once; kept if present)
+  gen_ww3_mesh  : mesh.msh, mod_def.ww3, ww3_ESMFmesh.nc from hgrid.ll
+                  (once, --phase setup)
+  gen_ww3_points: ww3_points.list from station.in (once, --phase setup;
+                  kept if present)
   gen_ww3_shel  : generate ww3_shel.nml per group (interactive)
   gen_ww3_ounp  : generate ww3_ounp.inp per group (interactive)
 
@@ -32,9 +34,11 @@ from typing import Optional
 
 class UfsSchismWw3Driver(UfsSchismDriver):
     name = "UFS_SCHISM+WW3"
+    setup_steps = UfsSchismDriver.setup_steps | {"gen_ww3_mesh",
+                                                 "gen_ww3_points"}
 
     # -------------------------------------------------------------------------
-    # Phase 0-3 — Pre-processing
+    # Phase 1-3 — Pre-processing (the mesh steps are --phase setup)
     # Inherits all UFS-SCHISM steps and adds gen_ww3_shel + gen_ww3_ounp.
     # The UFS barrier (wait for gen_datm + gen_esmf_mesh before interactive
     # config steps) is inherited unchanged from UfsSchismDriver.
@@ -42,7 +46,7 @@ class UfsSchismWw3Driver(UfsSchismDriver):
     def preprocess(self, only: Optional[str] = None):
 
         # Run all inherited UFS-SCHISM preprocessing steps.
-        # This includes Phase 0 (inspect_mesh), Phase 1 (downloads),
+        # This includes Phase 1 (downloads),
         # Phase 2 (aggregate_hycom, gen_sflux, gen_datm, gen_esmf_mesh,
         # UFS config files), and Phase 3 (SCHISM preprocessing).
         # The UFS barrier between SLURM jobs and interactive steps is
@@ -53,24 +57,6 @@ class UfsSchismWw3Driver(UfsSchismDriver):
         # These run AFTER all UFS-SCHISM steps because they read
         # param.nml (for nhot_write/dt) which must already be in
         # I{ID}_{group_id}/ from gen_param.
-
-        if self.enabled("gen_ww3_mesh", only):
-            print("[STEP] gen_ww3_mesh")
-            from workflow.models.ufs_schism_ww3.preprocess.gen_ww3_mesh import (
-                run_gen_ww3_mesh,
-            )
-            run_gen_ww3_mesh(self.cfg, self.config_dir)
-        else:
-            print("[SKIP] gen_ww3_mesh")
-
-        if self.enabled("gen_ww3_points", only):
-            print("[STEP] gen_ww3_points")
-            from workflow.models.ufs_schism_ww3.preprocess.gen_ww3_points import (
-                run_gen_ww3_points,
-            )
-            run_gen_ww3_points(self.cfg)
-        else:
-            print("[SKIP] gen_ww3_points")
 
         if self.enabled("gen_ww3_shel", only):
             print("[STEP] gen_ww3_shel")

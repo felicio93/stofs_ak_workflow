@@ -5,7 +5,7 @@ SchismWwmDriver — SCHISM + WWM internally coupled model.
 
 Inherits all SCHISM preprocessing and run steps from SchismDriver,
 adding WWM-specific steps:
-  - gen_wwmbnd  : generate fix/wwmbnd.gr3 (once)
+  - gen_wwmbnd  : generate fix/wwmbnd.gr3 (once, --phase setup)
   - gen_wwminput: generate wwminput.nml per group
   - wave_skill  : WWM station output vs NDBC wave observations
 """
@@ -17,18 +17,10 @@ from typing import Optional
 class SchismWwmDriver(SchismDriver):
     name = "SCHISM+WWM"
     supports_wwm_steps = True
+    setup_steps = SchismDriver.setup_steps | {"gen_wwmbnd"}
 
     def preprocess(self, only: Optional[str] = None):
         slurm_jobs = super().preprocess(only=only)
-
-        if self.enabled("gen_wwmbnd", only):
-            print("[STEP] gen_wwmbnd")
-            from workflow.models.schism_wwm.preprocess.gen_wwmbnd import (
-                run_gen_wwmbnd,
-            )
-            run_gen_wwmbnd(self.cfg)
-        else:
-            print("[SKIP] gen_wwmbnd")
 
         if self.enabled("gen_wwminput", only):
             print("[STEP] gen_wwminput")

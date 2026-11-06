@@ -6,7 +6,7 @@
 #     stofs-ak --run --phase setup --config <config_dir>
 # (also part of --phase all). Its steps are switched on in steps.yaml
 # (# Setup section) and run in this order:
-#     gen_vgrid -> replicate_fix -> gen_estuary -> inspect_mesh
+#     gen_vgrid -> replicate_fix -> gen_nudge_gr3 -> gen_estuary -> inspect_mesh
 # A file a step makes is kept when it is already in fix/ (move it aside to make
 # a new one). These keys are read from this file only.
 
@@ -88,12 +88,27 @@
 # -----------------------------------------------------------------------------
 # replicate_fix: property files carried over from another project
 # -----------------------------------------------------------------------------
-# The project whose fix/ property .gr3 files and tvd.prop are interpolated onto
-# this project's new mesh of the same domain (e.g. .../M21).
+# The project (or a folder of fix files, e.g. of STOFS-3D-Atlantic) whose
+# property .gr3 files, tvd.prop and estuary.gr3 are interpolated onto this
+# project's mesh; it must cover this domain. Its mesh is read from hgrid.ll,
+# or hgrid.gr3 (lon/lat) when there is no hgrid.ll; param.nml is copied from
+# it while this project's is still the starter template.
 # replicate_depth: true also replaces this mesh's depths by the source mesh's
 # (off by default: the new mesh should come with its own DEM bathymetry).
 # replicate_from: /work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M21
 replicate_depth: false
+
+# -----------------------------------------------------------------------------
+# gen_nudge_gr3: fix/TEM_nudge.gr3 and SAL_nudge.gr3
+# -----------------------------------------------------------------------------
+# T/S nudging strength along the open boundaries (STOFS-3D-Atlantic formula):
+# 1/(rnu_day*86400) 1/s on the boundary, falling linearly to 0 at rlmax
+# degrees (lon/lat distance) from the nearest open-boundary node.
+# STOFS-3D-Atlantic (whole basin) uses rlmax 1.5, rnu_day 0.25; a regional
+# domain needs a narrower zone. boundaries: optional list (1-based; all).
+# nudge_gr3:
+#   rlmax: 0.3
+#   rnu_day: 0.25
 
 # -----------------------------------------------------------------------------
 # gen_estuary: fix/estuary.gr3

@@ -61,7 +61,7 @@ WW3_STEPS = {"gen_ww3_mesh", "gen_ww3_points", "gen_ww3_shel", "gen_ww3_ounp",
 WAVE_STEPS = {"wave_skill", "download_altimetry", "collocate_altimetry",
               "plot_altimetry"}
 # Steps a 2D barotropic model does not have (Schism2dDriver reports them N/A).
-NOT_2D_STEPS = {"gen_vgrid", "replicate_fix", "download_hycom", "aggregate_hycom",
+NOT_2D_STEPS = {"gen_vgrid", "replicate_fix", "gen_nudge_gr3", "download_hycom", "aggregate_hycom",
                 "plot_hycom", "gen_estuary", "gen_hotstart", "gen_3Dth",
                 "gen_nudge", "plot_hycom_outputs", "download_sst",
                 "compare_sst", "download_argo", "collocate_argo", "plot_argo"}
@@ -122,7 +122,7 @@ def step_applies(step: str, model: str) -> bool:
     if model == "schism_2d" and step in NOT_2D_STEPS:
         return False
     if step == "gen_constant_gr3":
-        return model == "schism_2d"
+        return model in ("schism", "schism_2d", "schism_wwm")
     if step == "gen_partition":
         return model not in UFS
     if step in UFS_STEPS:

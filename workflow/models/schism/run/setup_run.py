@@ -58,7 +58,8 @@ DIAG_SBATCH_TEMPLATE   = (
 FIX_LINKS = [
     "hgrid.gr3", "hgrid.ll", "vgrid.in", "partition.prop", "tvd.prop",
     "albedo.gr3", "diffmin.gr3", "diffmax.gr3", "watertype.gr3",
-    "shapiro.gr3", "windrot_geo2proj.gr3", "rough.gr3",
+    "shapiro.gr3", "windrot_geo2proj.gr3", "rough.gr3", "drag.gr3",
+    "manning.gr3",
     "estuary.gr3", "TEM_nudge.gr3", "SAL_nudge.gr3", "station.in",
 ]
 

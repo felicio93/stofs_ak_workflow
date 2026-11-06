@@ -9,8 +9,9 @@ because each step reads what the earlier ones made:
 
   gen_vgrid         fix/vgrid.in from hgrid.gr3 and the vgrid: block
   gen_partition     fix/partition.prop (metis_prep reads vgrid.in)
-  gen_constant_gr3  constant property files (schism_2d)
+  gen_constant_gr3  constant property files
   replicate_fix     property files interpolated from replicate_from
+  gen_nudge_gr3     TEM/SAL_nudge.gr3 along the open boundaries
   gen_estuary       fix/estuary.gr3 + bin/*.in for the HYCOM utilities
   gen_wwmbnd        fix/wwmbnd.gr3 (schism_wwm)
   gen_ww3_mesh      mesh.msh, mod_def.ww3, ww3_ESMFmesh.nc (ufs_schism_ww3)
@@ -26,7 +27,7 @@ from typing import Optional
 
 SETUP_STEPS = (
     "gen_vgrid", "gen_partition", "gen_constant_gr3", "replicate_fix",
-    "gen_estuary", "gen_wwmbnd", "gen_ww3_mesh", "gen_ww3_points",
+    "gen_nudge_gr3", "gen_estuary", "gen_wwmbnd", "gen_ww3_mesh", "gen_ww3_points",
     "inspect_mesh",
 )
 
@@ -55,6 +56,13 @@ def _replicate_fix(cfg, config_dir):
         run_replicate_fix,
     )
     run_replicate_fix(cfg)
+
+
+def _gen_nudge_gr3(cfg, config_dir):
+    from workflow.models.schism.preprocess.gen_nudge_gr3 import (
+        run_gen_nudge_gr3,
+    )
+    run_gen_nudge_gr3(cfg)
 
 
 def _gen_estuary(cfg, config_dir):
@@ -95,6 +103,7 @@ _RUNNERS = {
     "gen_partition": _gen_partition,
     "gen_constant_gr3": _gen_constant_gr3,
     "replicate_fix": _replicate_fix,
+    "gen_nudge_gr3": _gen_nudge_gr3,
     "gen_estuary": _gen_estuary,
     "gen_wwmbnd": _gen_wwmbnd,
     "gen_ww3_mesh": _gen_ww3_mesh,

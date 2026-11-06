@@ -1,9 +1,12 @@
 """
 models/schism/preprocess/replicate_fix.py
 =========================================
-Step replicate_fix (interactive, once per project): carry the property files
+Step replicate_fix (setup phase, once per project): carry the property files
 of an existing project (replicate_from, e.g. M21) over to this project's new
-mesh of the same domain.
+mesh. The source can also be a plain folder of fix files of a larger model
+that contains this domain (e.g. STOFS-3D-Atlantic); its mesh is read from
+hgrid.ll, else hgrid.gr3, else the first of its property .gr3 files (each
+carries the mesh); the coordinates must be lon/lat.
 
 Needs this project's own fix/hgrid.gr3, fix/hgrid.ll and fix/vgrid.in
 (partition.prop is needed only at setup_run). The mesh's bathymetry is
@@ -13,15 +16,17 @@ the source mesh (originals kept as hgrid.gr3.orig / hgrid.ll.orig).
 
   continuous node fields   linear inside the source triangle containing the
                            node, nearest source node outside the source mesh
-  watertype.gr3            nearest source node (values are classes)
+  watertype.gr3,           nearest source node (values are classes)
+  estuary.gr3
   tvd.prop                 nearest source element centroid (0/1 flags)
   station.in, source_*.csv linked (mesh independent)
   param.nml, run_test,     copied when this project's file is missing or
   run_comb                 still the untouched starter template; review dt
                            (and nspool/ihfskip/nspool_sta) and the cores
 
-estuary.gr3 is made from the new depths by gen_estuary; vgrid.in and
-partition.prop are the user's. Files already in fix/ are never overwritten.
+A source without estuary.gr3 leaves it to gen_estuary (from the new depths).
+vgrid.in and partition.prop come from gen_vgrid / gen_partition or the user.
+Files already in fix/ are never overwritten.
 Nearest-point searches use points on the unit sphere (true distances, no
 0-360/180 issue). The QA of every file goes to fix/replicate_fix.txt.
 """
@@ -37,9 +42,9 @@ import numpy as np
 from workflow.core.config import model_dir
 
 LINEAR_FIELDS = ["albedo.gr3", "diffmin.gr3", "diffmax.gr3", "rough.gr3",
-                 "TEM_nudge.gr3", "SAL_nudge.gr3", "windrot_geo2proj.gr3",
-                 "shapiro.gr3"]
-NEAREST_FIELDS = ["watertype.gr3"]
+                 "drag.gr3", "manning.gr3", "TEM_nudge.gr3", "SAL_nudge.gr3",
+                 "windrot_geo2proj.gr3", "shapiro.gr3"]
+NEAREST_FIELDS = ["watertype.gr3", "estuary.gr3"]
 LINKED = ["station.in", "source_glofas.csv", "source_schism.csv"]
 JOB_FILES = ["param.nml", "run_test", "run_comb"]
 EARTH_KM = 6371.0
@@ -220,13 +225,24 @@ class Interpolator:
 def _source_fix(cfg: dict) -> Path:
     src = cfg.get("replicate_from")
     if not src:
-        sys.exit("ERROR: replicate_fix needs replicate_from in project.yaml "
-                 "(the project to copy from, e.g. /work2/.../M21)")
+        sys.exit("ERROR: replicate_fix needs replicate_from in "
+                 "modelsetup.yaml (the project or fix folder to copy from, "
+                 "e.g. /work2/.../M21)")
     p = Path(str(src))
     fix = p / "fix" if (p / "fix").is_dir() else p
-    if not (fix / "hgrid.ll").exists():
-        sys.exit(f"ERROR: replicate_from: no hgrid.ll in {fix}")
+    if _source_mesh(fix) is None:
+        sys.exit(f"ERROR: replicate_from: no hgrid.ll, hgrid.gr3 or property "
+                 f".gr3 file in {fix}")
     return fix
+
+
+def _source_mesh(fix: Path):
+    """The source mesh file: hgrid.ll, else hgrid.gr3, else a property .gr3
+    (same nodes and elements); must be lon/lat."""
+    for name in ["hgrid.ll", "hgrid.gr3"] + LINEAR_FIELDS + NEAREST_FIELDS:
+        if (fix / name).exists():
+            return fix / name
+    return None
 
 
 def _untouched_template(cfg: dict, name: str, path: Path) -> bool:
@@ -261,9 +277,17 @@ def run_replicate_fix(cfg: dict):
 
     print(f"  replicate_fix: {src} -> {fix}")
     print("  Reading meshes ...")
-    s_mesh = read_gr3(src / "hgrid.ll")
+    s_file = _source_mesh(src)
+    s_mesh = read_gr3(s_file)
+    if len(s_mesh["conn"]) != s_mesh["ne"]:
+        sys.exit(f"ERROR: {s_file} has no complete element block; put the "
+                 f"source's hgrid.ll (or hgrid.gr3) next to it")
+    if s_file.name != "hgrid.ll" and (np.abs(s_mesh["x"]).max() > 360
+                                      or np.abs(s_mesh["y"]).max() > 90):
+        sys.exit(f"ERROR: {s_file} is not in lon/lat; put the source's "
+                 f"hgrid.ll next to it")
     d_mesh = read_gr3(fix / "hgrid.ll")
-    say(f"source mesh: np={s_mesh['np']} ne={s_mesh['ne']}   "
+    say(f"source mesh ({s_file.name}): np={s_mesh['np']} ne={s_mesh['ne']}   "
         f"new mesh: np={d_mesh['np']} ne={d_mesh['ne']}")
     print("  Locating new nodes in the source mesh ...")
     itp = Interpolator(s_mesh, d_mesh["x"], d_mesh["y"])

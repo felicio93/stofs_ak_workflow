@@ -31,7 +31,6 @@ _NO_TS    = "2D barotropic: no temperature/salinity computed"
 
 class Schism2dDriver(SchismDriver):
     name = "SCHISM 2D"
-    setup_steps = SchismDriver.setup_steps | {"gen_constant_gr3"}
     na_steps = {
         "gen_vgrid":          "2D uses the one-layer vgrid.in of the "
                               "template (ivcor=2)",
@@ -41,6 +40,7 @@ class Schism2dDriver(SchismDriver):
         "aggregate_hycom":    _NO_HYCOM,
         "plot_hycom":         _NO_HYCOM,
         "gen_estuary":        _NO_HYCOM,
+        "gen_nudge_gr3":      _NO_HYCOM,
         "gen_hotstart":       _NO_HYCOM,
         "gen_3Dth":           _NO_HYCOM,
         "gen_nudge":          _NO_HYCOM,

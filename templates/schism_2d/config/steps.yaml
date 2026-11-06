@@ -19,10 +19,10 @@ build_executables: true
 # Setup — fix/ files made from the mesh, once per project (settings in
 # modelsetup.yaml). Runs after the build in --phase all, or alone with:
 #     stofs-ak --run --phase setup --config <config_dir>      (--only <step> for one)
-gen_partition:    true   # fix/partition.prop for run_test's compute cores (-n minus scribes),
-                         # made with fix/vgrid.in (needs build target partition_tools)
-gen_constant_gr3: true   # fix/manning.gr3 + fix/windrot_geo2proj.gr3 from constant_gr3
-inspect_mesh:     true   # Plot all fix/ input files + mesh resolution + vertical layers (SLURM)
+gen_partition:    true  # fix/partition.prop for run_test's compute cores (-n minus scribes),
+                        # made with fix/vgrid.in (needs build target partition_tools)
+gen_constant_gr3: true  # fix/manning.gr3 + fix/windrot_geo2proj.gr3 from constant_gr3
+inspect_mesh:     true  # Plot all fix/ input files + mesh resolution + vertical layers (SLURM)
 
 # Phase 1 — DTN only (requires internet access):
 download_era5:   true   # ERA5 monthly raw files (wind, pressure -> sflux_air)

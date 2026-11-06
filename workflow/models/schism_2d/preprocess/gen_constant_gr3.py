@@ -51,7 +51,7 @@ def run_gen_constant_gr3(cfg: dict):
     print(f"  gen_constant_gr3 for M{cfg['project_id']}")
     print(f"{'='*60}")
     if not files:
-        print("  constant_gr3 is empty in schism_2d.yaml; nothing to write.")
+        print("  constant_gr3 is empty in modelsetup.yaml; nothing to write.")
         return
     if not hgrid.exists():
         print(f"ERROR: {hgrid} not found.")

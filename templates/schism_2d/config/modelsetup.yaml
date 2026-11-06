@@ -1,0 +1,37 @@
+# =============================================================================
+# modelsetup.yaml — settings of --phase setup
+# =============================================================================
+# The setup phase builds the fix/ files that depend only on the mesh, once per
+# project, after the build phase and before preprocessing:
+#     stofs-ak --run --phase setup --config <config_dir>
+# (also part of --phase all). Its steps are switched on in steps.yaml
+# (# Setup section) and run in this order:
+#     gen_partition -> gen_constant_gr3 -> inspect_mesh
+# A file a step makes is kept when it is already in fix/ (move it aside to make
+# a new one). These keys are read from this file only.
+
+# -----------------------------------------------------------------------------
+# vgrid.in
+# -----------------------------------------------------------------------------
+# gen_vgrid does not apply: the 2D model uses the one-layer vgrid.in of the
+# template (ivcor = 2, copied to fix/ by --new-project).
+
+# -----------------------------------------------------------------------------
+# gen_partition: fix/partition.prop
+# -----------------------------------------------------------------------------
+# No settings here: the number of parts is the compute cores of fix/run_test
+# (#SBATCH -n minus the scribes, the last argument of the srun line), and the
+# partition is made with fix/vgrid.in (so it runs after gen_vgrid).
+
+# -----------------------------------------------------------------------------
+# gen_constant_gr3: constant property files
+# -----------------------------------------------------------------------------
+# Property files written by gen_constant_gr3 (from fix/hgrid.gr3, one value
+# everywhere). Files already in fix/ are kept, so a hand-made spatially
+# varying file can replace one of these.
+#   manning.gr3          Manning's n (param.nml nchi = -1, hmin_man)
+#   windrot_geo2proj.gr3 wind rotation angle [deg]; 0 for a lon/lat mesh
+#                        (read by SCHISM when nws = 2)
+constant_gr3:
+  manning.gr3: 0.025
+  windrot_geo2proj.gr3: 0.0

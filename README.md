@@ -38,18 +38,19 @@ real Hercules project) and `docs/AUDIT.md` (code review record).
 
 ## Overview
 
-The workflow has four top-level phases, dispatched by a model **driver**
+The workflow has five top-level phases, dispatched by a model **driver**
 selected from `project.yaml` (`model_type`):
 
 | Phase | CLI | What it does |
 |-------|-----|--------------|
 | **Build** | `stofs-ak --run --phase build` | Compile the model and utility executables from source into `M{ID}/bin/` (skipped when up to date) |
-| **Preprocess** | `stofs-ak --run` (default) | Download forcing, generate every model input |
+| **Setup** | `stofs-ak --run --phase setup` | Build the `fix/` files that depend only on the mesh, once per project: `vgrid.in`, `partition.prop`, property files, wave meshes, mesh plots (settings in `modelsetup.yaml`) |
+| **Preprocess** | `stofs-ak --run` (default) | Download forcing, generate the per-group model inputs |
 | **Run** | `stofs-ak --run --phase run` | Populate run directories, launch group runs, chain restarts automatically |
 | **Postprocess** | `stofs-ak --run --phase postprocess` | Field GIFs, SST/Argo/altimetry comparison, station skill |
 
-`--phase all` runs the four in sequence (build -> preprocess -> run ->
-postprocess).
+`--phase all` runs the five in sequence (build -> setup -> preprocess -> run
+-> postprocess).
 
 Preprocessing steps run in different execution contexts:
 
@@ -57,7 +58,7 @@ Preprocessing steps run in different execution contexts:
 |---------|-------|----------|----------|
 | Build | login node (git) + SLURM job per target | git only | `build_executables` (SCHISM, UFS-Coastal, HYCOM/combine/partition utilities) |
 | Downloads | DTN | yes | `download_hycom`, `download_era5`, `download_glofas`, `download_sst`, `download_coops`, `download_ndbc`, `download_argo`, `download_altimetry` |
-| Interactive | any node | no | `aggregate_hycom`, `gen_estuary`, `gen_bctides`, `gen_source`, `gen_param`, `gen_datm_in`, ... |
+| Interactive | any node | no | `gen_vgrid`, `gen_partition`, `aggregate_hycom`, `gen_estuary`, `gen_bctides`, `gen_source`, `gen_param`, `gen_datm_in`, ... |
 | SLURM | login node, runs on compute | no | `inspect_mesh`, `gen_sflux`, `gen_hotstart`, `gen_3Dth`, `gen_nudge`, `gen_datm`, `gen_esmf_mesh`, plot steps |
 
 ---
@@ -93,8 +94,10 @@ hotstart/boundary/nudging steps and the SST/Argo comparisons print `[N/A]`.
   `PREC_EVAP` forces the evaporation/precipitation model, and SCHISM aborts
   ("Evap/precip model must be used with heat exchange model") when the heat
   budget is off.
-- `gen_constant_gr3` writes `fix/manning.gr3` and `fix/windrot_geo2proj.gr3`
-  from `constant_gr3` in `schism_2d.yaml` (files already in `fix/` are kept).
+- `gen_constant_gr3` (setup phase) writes `fix/manning.gr3` and
+  `fix/windrot_geo2proj.gr3` from `constant_gr3` in `modelsetup.yaml` (files
+  already in `fix/` are kept). `gen_vgrid` does not apply: the template's
+  one-layer `vgrid.in` is used.
 - `gen_partition` makes `partition.prop` with the one-layer `vgrid.in`
   (`metis_prep` weights elements by their level count). Only 2D outputs are
   written, so one scribe is enough (`srun ./<exe> 1`).
@@ -164,7 +167,7 @@ stofs_ak_workflow/                      <- git repo (clone this to Hercules)
 ├── templates/                          <- one folder per model, mirroring M{ID}/
 │   ├── schism/  schism_2d/  schism_wwm/  ufs_schism/  ufs_schism_ww3/
 │   │     config/  project.yaml domain.yaml steps.yaml envs.yaml <model>.yaml
-│   │              postprocess.yaml build.yaml
+│   │              modelsetup.yaml postprocess.yaml build.yaml
 │   │     fix/     starter files (param.nml, run_test, run_comb, ...)
 │   └── README.md                       <- origin of every template file
 └── workflow/
@@ -268,13 +271,15 @@ Running the tool never writes into `$WF`; all generated data goes under
 stofs-ak --new-project --model ufs_schism_ww3 --id 14 --dir <project_dir>
 export CFG=<project_dir>/M14/config
 
-# edit $CFG/project.yaml, domain.yaml, steps.yaml (dates, domain box, SLURM account, steps)
-# put your mesh files in <project_dir>/M14/fix/   (hgrid.gr3, hgrid.ll, vgrid.in, partition.prop, ...)
+# edit $CFG/project.yaml, domain.yaml, modelsetup.yaml, steps.yaml
+#   (dates, domain box, SLURM account, vertical grid, steps)
+# put your mesh in <project_dir>/M14/fix/   (hgrid.gr3, hgrid.ll; vgrid.in and
+#   partition.prop too unless gen_vgrid / gen_partition make them)
 
 stofs-ak --check-fix --config $CFG   # which fix/ files are present / missing / edited; mesh orientation
 stofs-ak --init      --config $CFG   # create the directory tree (safe to re-run; deletes nothing)
 stofs-ak --setup-envs --config $CFG  # on the DTN; creates/verifies the conda envs
-stofs-ak --run --phase all --config $CFG   # build -> preprocess -> run -> postprocess
+stofs-ak --run --phase all --config $CFG   # build -> setup -> preprocess -> run -> postprocess
 ```
 
 `--new-project` creates `<project_dir>/M<id>/config/` from
@@ -305,18 +310,22 @@ the step flags for your own project; see `templates/README.md`.
   with. The workflow rewrites `-J`/`-D` (and the WW3 `srun` executable and the
   `combine_hotstart7 -i` step) per run directory; `-N/-n` must match your
   partitioning (and `*_petlist_bounds` for UFS).
-- **Mesh-specific files you supply:** `hgrid.gr3`, `hgrid.ll`, `vgrid.in`,
-  `partition.prop` (see `partition_tools`), `tvd.prop`, `albedo.gr3`,
+- **Mesh-specific files you supply:** `hgrid.gr3`, `hgrid.ll`, `vgrid.in`
+  and `partition.prop` (unless `gen_vgrid` / `gen_partition` make them),
+  `tvd.prop`, `albedo.gr3`,
   `diffmin.gr3`, `diffmax.gr3`, `watertype.gr3`, `shapiro.gr3`,
   `windrot_geo2proj.gr3`, `rough.gr3`, `TEM_nudge.gr3`, `SAL_nudge.gr3`,
   `station.in`, `source_glofas.csv`, `source_schism.csv`; `schism_wwm` also
   `hgrid_WWM.gr3` (linked to `hgrid.ll` by `gen_wwmbnd` when absent); `ufs_schism_ww3` also `mod_def.ww3`, `ww3_points.list`,
   `ST4TABUHF2.bin`, `ww3_ESMFmesh.nc`, `mesh.msh` (the last four except `ww3_points.list` are made by `gen_ww3_mesh` when absent). Missing optional files are
   skipped with a NOTE by `setup_run`; `--check-fix` marks which are required.
-- **Generated by a step:** `estuary.gr3` (`gen_estuary`), `wwmbnd.gr3`
-  (`gen_wwmbnd`), `partition.prop` (`gen_partition`, any standalone SCHISM
-  model; off in the 3D templates, whose meshes come with one), `manning.gr3`
-  and `windrot_geo2proj.gr3` (`gen_constant_gr3`, `schism_2d`).
+- **Generated by a step** (setup phase): `vgrid.in` (`gen_vgrid`, all but
+  `schism_2d`), `partition.prop` (`gen_partition`, standalone SCHISM models;
+  off in the 3D templates, whose meshes come with one), `estuary.gr3`
+  (`gen_estuary`), `wwmbnd.gr3` (`gen_wwmbnd`), `manning.gr3` and
+  `windrot_geo2proj.gr3` (`gen_constant_gr3`, `schism_2d`). `--check-fix`
+  lists `vgrid.in` and `partition.prop` as made by a step when that step is
+  on.
 
 `bin/` is filled by the build phase (next section). The HYCOM utilities
 expect **unpacked** float data (the downloader unpacks with `ncpdq -U`), so
@@ -437,7 +446,8 @@ All files in the config directory are merged into one flat dict by
 `workflow.core.config.load_config`:
 
 `project.yaml` + `domain.yaml` + `steps.yaml` + `envs.yaml` +
-`<model_type>.yaml` + optional `postprocess.yaml` and `build.yaml` (the latter
+`<model_type>.yaml` + optional `modelsetup.yaml`, `postprocess.yaml` and
+`build.yaml` (the latter
 keeps everything under one `build:` key; see
 [Building the executables](#building-the-executables-build-phase)).
 
@@ -468,8 +478,47 @@ defined once in `workflow/core/slurm.py` and overridden by `slurm:`.
 ### domain.yaml
 
 `lon_min/lon_max/lat_min/lat_max` (download box), `lon_reference` (`"360"`
-or `"180"`; Bering Sea domains crossing 180 use `"360"`),
-`estuary_depth_threshold`, plot ranges/colormaps.
+or `"180"`; Bering Sea domains crossing 180 use `"360"`), plot
+ranges/colormaps.
+
+### modelsetup.yaml
+
+Settings of the setup phase, and only there (`load_config` stops with an
+error naming the file if one of these keys is found elsewhere):
+
+| Key | Step | Meaning |
+|-----|------|---------|
+| `vgrid:` | `gen_vgrid` | vertical grid (below) |
+| `replicate_from`, `replicate_depth` | `replicate_fix` | project whose property files are interpolated onto this mesh; also take its depths |
+| `estuary_depth_threshold` | `gen_estuary` | nodes this shallow or shallower are estuary in `estuary.gr3` |
+| `constant_gr3` | `gen_constant_gr3` | `{file: value}` constant property files (`schism_2d`) |
+
+`gen_vgrid` writes `fix/vgrid.in` (`ivcor = 1`, localized sigma / VQS) in
+the layout SCHISM reads since Oct 2021 (bottom level index of every node,
+then one line per level). It is a port of SCHISM's `gen_vqs` programs with
+every value in the config:
+
+```yaml
+vgrid:
+  dz_bot_min: 0.1          # minimum bottom layer thickness [m]
+  a_vqs0: 0.0              # bias of class 1 (-1 surface, 1 bottom)
+  theta_b: 0.0             # S-coordinate bottom parameter
+  downward_fix: [2, 3]     # classes forced to step down from the one before
+  classes:                 # master grids, depths increasing
+    - [1.0, 2, 0.0001]     # [max depth m, levels, theta_f]
+    - ...
+    - {depth: 1050.0, extend: 18, z: [-400, -460, ...]}   # class 18 + fixed depths
+```
+
+A node at most as deep as class 1 gets class 1's levels as plain sigma; a
+deeper node interpolates between the two classes that bracket its depth and
+keeps levels while they are at least `dz_bot_min` above the bottom. The
+templates carry two complete examples as comments: Alaska (`gen_vqs_1.f90`,
+10 classes, up to 51 levels) and STOFS-3D-Atlantic (22 classes, up to 49
+levels; identical to the STOFS `gen_vqs.py` output). An existing
+`fix/vgrid.in` is kept. `M{ID}/vgrid_work/` gets `nlev.gr3` (levels per
+node), `vgrid_master.out` and `gen_vgrid.log` (nvrt, prisms, average
+layers).
 
 ### steps.yaml
 
@@ -489,7 +538,7 @@ on mismatch); SLURM steps call the env interpreter by full path.
 | File | Main keys |
 |------|-----------|
 | `schism.yaml` | `estuary_temp/sal`, `outside_temp/sal`, `open_boundary_flags`, `tobc`, `sobc`, `tidal_constituents`, `tidal_cutoff_depth`, `open_boundaries`, `hycom_dt`, `hycom_lon_shift`, `nudge_stride`, `nbin`, `mne_bin`, `chain_hotstart` |
-| `schism_2d.yaml` | `open_boundary_flags` (`[[3, 0, 0, 0]]`: tides only), `tidal_constituents`, `tidal_cutoff_depth`, `constant_gr3` (file: value, for `gen_constant_gr3`), `chain_hotstart` |
+| `schism_2d.yaml` | `open_boundary_flags` (`[[3, 0, 0, 0]]`: tides only), `tidal_constituents`, `tidal_cutoff_depth`, `chain_hotstart` |
 | `schism_wwm.yaml` | `wwm_cutoff_freq`, `wwm_outstyle_station`, `wwm_lsp1d`, `wwm_lsp2d`, `wwm_deltc_hotfile`, `wwm_procname` |
 | `ufs_schism.yaml` | DATM (`datm_subdir`, `datm_filename_template`, `dt_atmos`), coupling (`coupling_dt`, `*_model`, `cpl_mode`, `coupling_config`, `case_name`), PET lists (`med/atm/ocn_petlist_bounds`), OMP threads |
 | `ufs_schism_ww3.yaml` | all of the above (self-contained) + `wav_model`, `wav_petlist_bounds`, `wav_omp_num_threads`, `med_pio_*`, `wav_mesh_file`, `wav_pio_*`, `ww3_point_output_dt`, `ww3_fix_files`, `chain_ww3_restart` |
@@ -519,35 +568,43 @@ Steps not valid for a model print `[N/A]`.
 |------|---------|--------|-------------|
 | `build_executables` | login node + SLURM job per target | all | every target of `build.yaml` (skipped when up to date); `--only <target>` builds one |
 
-### Phase 0-3: preprocess (`stofs-ak --run`)
+### Setup (`--phase setup`, after the build in `--phase all`)
+
+Once per project, in this order; settings in `modelsetup.yaml`.
 
 | Step | Context | Models | Description |
 |------|---------|--------|-------------|
-| `replicate_fix` | interactive | all but 2 | once, for a new mesh of the same domain: property `.gr3` files (linear; `watertype` nearest) and `tvd.prop` (nearest element) interpolated from `replicate_from`, `station.in`/`source_*.csv` linked, job files copied if still the starter templates; `replicate_depth: true` also takes the source mesh's depths (off by default). Never overwrites; QA in `fix/replicate_fix.txt` |
-| `gen_constant_gr3` | interactive | 2 | `fix/manning.gr3`, `fix/windrot_geo2proj.gr3` (constant values from `constant_gr3`); existing files kept |
+| `gen_vgrid` | interactive | all but 2 | `fix/vgrid.in` from `hgrid.gr3` and the `vgrid:` block (see [modelsetup.yaml](#modelsetupyaml)); an existing file is kept |
 | `gen_partition` | interactive | S, 2, W | `fix/partition.prop` for `run_test`'s compute cores (`-n` minus the scribes, the last `srun` argument) with `bin/partition_offline.pl` in `M{ID}/partition_work/`; a matching file is kept, a stale one renamed `partition.prop.replaced_<time>`. `--check-fix` reports a `partition.prop` that does not match the mesh or the core count |
+| `gen_constant_gr3` | interactive | 2 | `fix/manning.gr3`, `fix/windrot_geo2proj.gr3` (constant values from `constant_gr3`); existing files kept |
+| `replicate_fix` | interactive | all but 2 | once, for a new mesh of the same domain: property `.gr3` files (linear; `watertype` nearest) and `tvd.prop` (nearest element) interpolated from `replicate_from`, `station.in`/`source_*.csv` linked, job files copied if still the starter templates; `replicate_depth: true` also takes the source mesh's depths (off by default). Never overwrites; QA in `fix/replicate_fix.txt` |
+| `gen_estuary` | interactive | all but 2 | `fix/estuary.gr3` + `bin/gen_*_from_nc.in` |
+| `gen_wwmbnd` | interactive | W | `fix/wwmbnd.gr3` |
+| `gen_ww3_mesh` | interactive + 1 SLURM job | R | once per project: `mesh.msh` (from `hgrid.ll`, same numbering), `mod_def.ww3` + `ST4TABUHF2.bin` (`ww3_grid` from the UFS build), `ww3_ESMFmesh.nc` (`ESMF_Scrip2Unstruct`). Files already in `fix/` are kept and checked, never overwritten |
+| `gen_ww3_points` | interactive | R | once: `ww3_points.list` from `fix/station.in`, one point per distinct lon/lat (surface only), named by station id (`KU2`, `KU2b`, ...). A `ww3_points.list` already in `fix/` is kept |
 | `inspect_mesh` | SLURM | all | plots of `fix/` inputs, resolution, layers -> `D{ID}/D{ID}_fix/` (JPEG) |
+
+### Phase 1-3: preprocess (`stofs-ak --run`)
+
+| Step | Context | Models | Description |
+|------|---------|--------|-------------|
 | `download_hycom` | DTN | all but 2 | daily SSH/TS/UV via OPeNDAP; corrupt days (<=3 in a row) are interpolated |
 | `download_era5` | DTN | all | monthly ERA5 (CDS API) |
 | `download_glofas` | DTN | all | annual GloFAS discharge (EWDS) |
 | `aggregate_hycom` | any | all but 2 | daily -> `SSH_1/TS_1/UV_1` stacks per group; missing days inside a group are interpolated (<=3 in a row), otherwise that stack fails |
 | `plot_hycom`, `plot_sflux` | SLURM array | all (`plot_hycom` not 2) | debug GIFs |
 | `gen_sflux` | SLURM array | all | ERA5 -> sflux files per group |
-| `gen_estuary` | interactive | all but 2 | `estuary.gr3` + `gen_*_from_nc.in` (once) |
 | `gen_bctides` | interactive | all | `bctides.in` from TPXO9 |
 | `gen_source` | interactive | all | `source.nc` from GloFAS |
 | `gen_param` | interactive | all | `param.nml` per group (dates, `rnday`, `nhot_write`, `ihot`) |
 | `gen_hotstart` | SLURM | all but 2 (cold start) | `hotstart.nc` (first group only) |
 | `gen_3Dth`, `gen_nudge` | SLURM array | all but 2 | `*.th.nc`, `TEM/SAL_nu.nc` |
 | `plot_hycom_outputs` | SLURM array (after the three above, `afterany`) | all but 2 | verifies the HYCOM-derived inputs and plots them (below) |
-| `gen_wwmbnd` | interactive | W | `fix/wwmbnd.gr3` (once) |
 | `gen_wwminput` | interactive | W | `wwminput.nml` per group (`BEGTC/ENDTC` from `param.nml`) |
 | `gen_datm`, `plot_datm` | SLURM | U, R | sflux -> CDEPS DATM forcing; debug GIFs |
 | `gen_esmf_mesh` | SLURM | U, R | ESMF mesh of the DATM grid |
 | `gen_datm_in`, `gen_datm_streams`, `gen_model_configure`, `gen_ufs_configure` | interactive | U, R | UFS config files per group |
 | `copy_fd_ufs`, `copy_noahmptable`, `copy_modulefiles` | interactive | U, R | copy static UFS files into each `I{ID}_*` |
-| `gen_ww3_mesh` | interactive + 1 SLURM job | R | once per project: `mesh.msh` (from `hgrid.ll`, same numbering), `mod_def.ww3` + `ST4TABUHF2.bin` (`ww3_grid` from the UFS build), `ww3_ESMFmesh.nc` (`ESMF_Scrip2Unstruct`). Files already in `fix/` are kept and checked, never overwritten |
-| `gen_ww3_points` | interactive | R | once: `ww3_points.list` from `fix/station.in`, one point per distinct lon/lat (surface only), named by station id (`KU2`, `KU2b`, ...). A `ww3_points.list` already in `fix/` is kept |
 | `gen_ww3_shel`, `gen_ww3_ounp` | interactive | R | `ww3_shel.nml`, `ww3_ounp.inp` per group |
 
 `gen_hotstart`, `gen_3Dth` and `gen_nudge` first run the longitude preflight
@@ -595,12 +652,13 @@ the interactive config steps that read their output (only when no `--only`).
 stofs-ak --new-project --model <type> --id NN --dir <project_dir>  # scaffold config/ + fix/
 stofs-ak --check-fix --config $CFG                            # fix/ files: present / missing / edited; mesh orientation
 stofs-ak --run --phase build --config $CFG                    # compile the executables (up-to-date targets skipped)
+stofs-ak --run --phase setup --config $CFG                    # fix/ from the mesh (vgrid.in, partition.prop, ...)
 stofs-ak --run --config $CFG                                  # preprocess (default)
 stofs-ak --run --only download_hycom --config $CFG            # one step, ignores flags
 stofs-ak --run --phase run         --only setup_run  --config $CFG
 stofs-ak --run --phase run         --only submit_run --config $CFG   # blocking: screen/tmux
 stofs-ak --run --phase postprocess --config $CFG
-stofs-ak --run --phase all --config $CFG                      # build -> preprocess -> run -> postprocess
+stofs-ak --run --phase all --config $CFG                      # build -> setup -> preprocess -> run -> postprocess
 stofs-ak --refresh --config $CFG                              # reset sentinels (see below)
 ```
 
@@ -614,7 +672,8 @@ Notes:
   skipped).
 - `download_hycom` (DTN, no `sbatch`) and `plot_hycom` (needs `sbatch`) cannot
   both succeed in one invocation on the same node.
-- `--phase all` waits for the SLURM jobs of the build and preprocess phases
+- `--phase all` waits for the SLURM jobs of the build, setup and preprocess
+  phases
   and stops before the next phase if any of them did not COMPLETE (checked
   with `sacct`). A first build (UFS+WW3 in particular, about an hour) makes
   the first `--phase all` long: run the build phase alone first, in

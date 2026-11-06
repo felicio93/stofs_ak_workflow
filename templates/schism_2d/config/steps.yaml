@@ -7,6 +7,7 @@
 # model. Run the workflow one step at a time when testing: enable one step,
 # test it, then disable it and enable the next.
 #
+#     stofs-ak --run --phase setup       --config <config_dir>
 #     stofs-ak --run --config <config_dir>                     (preprocess)
 #     stofs-ak --run --phase run         --config <config_dir>
 #     stofs-ak --run --phase postprocess --config <config_dir>
@@ -15,11 +16,13 @@
 # (schism_2d without PREC_EVAP, combine_hotstart, partition tools).
 build_executables: true
 
-# Phase 0 — mesh files (interactive) and diagnostics (SLURM):
-gen_constant_gr3: true  # fix/manning.gr3 + fix/windrot_geo2proj.gr3 from constant_gr3 (schism_2d.yaml)
-gen_partition:    true  # fix/partition.prop for run_test's compute cores (-n minus scribes),
-                        # made with the one-layer fix/vgrid.in (needs build target partition_tools)
-inspect_mesh:     true  # Plot the fix/ input files + mesh resolution
+# Setup — fix/ files made from the mesh, once per project (settings in
+# modelsetup.yaml). Runs after the build in --phase all, or alone with:
+#     stofs-ak --run --phase setup --config <config_dir>      (--only <step> for one)
+gen_partition:    true   # fix/partition.prop for run_test's compute cores (-n minus scribes),
+                         # made with fix/vgrid.in (needs build target partition_tools)
+gen_constant_gr3: true   # fix/manning.gr3 + fix/windrot_geo2proj.gr3 from constant_gr3
+inspect_mesh:     true   # Plot all fix/ input files + mesh resolution + vertical layers (SLURM)
 
 # Phase 1 — DTN only (requires internet access):
 download_era5:   true   # ERA5 monthly raw files (wind, pressure -> sflux_air)

@@ -7,7 +7,8 @@
 # Run the workflow one step at a time: enable one step, test it,
 # then disable it and enable the next.
 #
-# Steps are grouped by phase. Preprocessing steps run with:
+# Steps are grouped by phase. Setup steps run with --phase setup (below).
+# Preprocessing steps run with:
 #     stofs-ak --run --config <config_dir>            (phase defaults to preprocess)
 # Run-management and post-processing steps run with:
 #     stofs-ak --run --phase run         --config <config_dir>
@@ -18,9 +19,17 @@
 #     stofs-ak --run --phase build --config <config_dir>      (--only <target> for one)
 build_executables: true
 
-# Phase 0 — Mesh diagnostics (SLURM job, run before any other step):
-replicate_fix: false  # Once, for a new mesh of the same domain: property .gr3 files and tvd.prop interpolated from replicate_from (project.yaml)
-inspect_mesh: true   # Plot all fix/ input files + mesh resolution + vertical layers
+# Setup — fix/ files made from the mesh, once per project (settings in
+# modelsetup.yaml). Runs after the build in --phase all, or alone with:
+#     stofs-ak --run --phase setup --config <config_dir>      (--only <step> for one)
+gen_vgrid:      false  # fix/vgrid.in from fix/hgrid.gr3 and the vgrid: block (kept if present)
+replicate_fix:  false  # new mesh of an existing domain: property .gr3 files and tvd.prop
+                       # interpolated from replicate_from
+gen_estuary:    true   # fix/estuary.gr3 + bin/*.in files for the HYCOM utilities
+gen_ww3_mesh:   true   # mesh.msh / mod_def.ww3 / ww3_ESMFmesh.nc from hgrid.ll (kept if in fix/)
+gen_ww3_points: true   # ww3_points.list from fix/station.in, one point per distinct lon/lat
+                       # (kept if present)
+inspect_mesh:   true   # Plot all fix/ input files + mesh resolution + vertical layers (SLURM)
 
 # Phase 1 — DTN only (requires internet access):
 download_hycom:  true
@@ -47,8 +56,6 @@ copy_modulefiles: true # Copy .lua modulefiles to monthly input directories
 gen_ufs_configure: true # Generate ufs.configure file from template
 
 # Phase 3 — SCHISM preprocessing (no internet required):
-# Run gen_estuary first (once, interactive) before submitting SLURM steps.
-gen_estuary:  true   # Step A: create fix/estuary.gr3 + bin/*.in files (once, interactive)
 gen_bctides:  true   # Step B: create bctides.in per month from TPXO9 (interactive)
 gen_source:   true   # Step C: GloFAS discharge -> source.nc per month (interactive)
 gen_param:    true   # Step D: copy fix/param.nml to each I{ID}_YYYYMM/ with correct dates (interactive)
@@ -62,8 +69,6 @@ plot_hycom_outputs: true   # Verify + plot the inputs built from HYCOM (th files
 # WW3 modules (UFS-SCHISM+WW3 only):
 gen_ww3_shel: true   # Step WW3-A: generate ww3_shel.nml per group from fix/ww3_shel.nml
                       # (dates, output cadences and restart interval updated per group)
-gen_ww3_points: true  # Step WW3-0b: ww3_points.list from fix/station.in, one point per distinct lon/lat (kept if present)
-gen_ww3_mesh: true   # Step WW3-0: mesh.msh / mod_def.ww3 / ww3_ESMFmesh.nc from hgrid.ll (kept if already in fix/)
 gen_ww3_ounp: true   # Step WW3-B: generate ww3_ounp.inp per group from fix/ww3_ounp.inp
                       # (start time and number of records updated per group)
 

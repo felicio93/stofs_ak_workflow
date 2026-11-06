@@ -5,7 +5,7 @@
 # Loaded automatically by workflow.core.config.load_config (optional file).
 
 # Temperature and salinity assigned to estuary nodes (shallow nodes with
-# depth < estuary_depth_threshold in domain.yaml). These represent the
+# depth < estuary_depth_threshold in modelsetup.yaml). These represent the
 # background coastal/estuarine water properties.
 estuary_temp: 10.0   # degrees C  (reasonable for Alaska coastal waters)
 estuary_sal:  0.0    # psu        (freshwater end-member)

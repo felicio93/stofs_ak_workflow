@@ -21,6 +21,7 @@ from datetime import datetime
 from pathlib import Path
 
 from workflow.core.templating import unreplaced
+from workflow.models.schism.run.setup_run import input_not_needed
 from workflow.core.config import (
     list_groups,
     model_dir,
@@ -248,6 +249,9 @@ def _setup_group(cfg, mdir, group_id, group_index,
     # --- symlink per-group inputs ---
     for name in INPUT_LINKS:
         if not _link(idir / name, rdir / name):
+            if input_not_needed(idir, name):
+                print(f"  NOTE: no {name} (if_source = 0), skipped.")
+                continue
             print(f"  ERROR {group_id}: required input missing: "
                   f"{idir / name}")
             return False

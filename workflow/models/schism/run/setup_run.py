@@ -175,6 +175,15 @@ def _read_nml_int(nml_path: Path, param: str):
         return None
 
 
+def input_not_needed(idir: Path, name: str) -> bool:
+    """True for a group input that param.nml does not use: source.nc when
+    the group's param.nml has if_source = 0 (SCHISM default 0)."""
+    pn = idir / "param.nml"
+    if name != "source.nc" or not pn.exists():
+        return False
+    return not _read_nml_int(pn, "if_source")
+
+
 def station_output_off(fix: Path, param_nml: Path, group_id: str):
     """Without fix/station.in, set iout_sta = 0 in the group's param.nml
     (SCHISM stops at startup when station output is on and station.in is
@@ -379,6 +388,9 @@ def _setup_group(cfg: dict, mdir: Path, group_id: str,
     # --- symlink group inputs ---
     for name in profile.input_links:
         if not _link(idir / name, rdir / name):
+            if input_not_needed(idir, name):
+                print(f"  NOTE: no {name} (if_source = 0), skipped.")
+                continue
             print(f"  ERROR {group_id}: required input missing: "
                   f"{idir / name}")
             return False

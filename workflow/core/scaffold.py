@@ -168,6 +168,10 @@ def _norm(text: str) -> str:
 def _consistency(model: str, cfg: dict, fix: Path) -> list:
     """Cross-checks between fix/ files and the config (warnings only)."""
     warns = []
+    if not (fix / "station.in").exists() and model != "schism_wwm":
+        warns.append("no station.in: the runs will have no station output "
+                     "(setup_run sets iout_sta = 0) and the station "
+                     "downloads and station_skill are skipped")
     exes = cfg.get("executables") or {}
     rt = fix / "run_test"
     if rt.exists():

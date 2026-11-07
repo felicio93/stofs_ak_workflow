@@ -24,6 +24,7 @@ from datetime import datetime
 from pathlib import Path
 
 from workflow.core.templating import ufs_module_name, unreplaced
+from workflow.models.schism.run.setup_run import station_output_off
 from workflow.core.config import (
     list_groups,
     model_dir,
@@ -383,6 +384,7 @@ def _setup_group(cfg: dict, mdir: Path, group_id: str,
     for name in FIX_LINKS:
         if not _link(fix / name, rdir / name):
             print(f"  NOTE: fix/{name} not found, skipped.")
+    station_output_off(fix, idir / "param.nml", group_id)
 
     # --- symlink group inputs ---
     for name in INPUT_LINKS:

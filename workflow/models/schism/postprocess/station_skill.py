@@ -687,7 +687,8 @@ def run_station_skill(cfg: dict, config_dir=None):
     mdir       = model_dir(cfg)
     station_in = mdir / "fix" / "station.in"
     if not station_in.exists():
-        print(f"ERROR: station.in not found: {station_in}")
+        print(f"  WARNING: no {station_in} -- no station output to assess, "
+              f"station_skill skipped.")
         return
 
     start_str, end_str = _skill_window(cfg)

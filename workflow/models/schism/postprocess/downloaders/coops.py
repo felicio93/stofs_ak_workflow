@@ -206,6 +206,10 @@ def _download_station_product_month(
 # =============================================================================
 
 def run_download_coops(cfg: dict):
+    if not (model_dir(cfg) / "fix" / "station.in").exists():
+        print("  WARNING: no fix/station.in -- no CO-OPS stations, "
+              "download_coops skipped.")
+        return
     check_dtn("CO-OPS observation download")
     check_active_env(cfg, "download_coops")
 

@@ -175,6 +175,21 @@ def _read_nml_int(nml_path: Path, param: str):
         return None
 
 
+def station_output_off(fix: Path, param_nml: Path, group_id: str):
+    """Without fix/station.in, set iout_sta = 0 in the group's param.nml
+    (SCHISM stops at startup when station output is on and station.in is
+    missing) and warn. The run then has no staout output."""
+    if (fix / "station.in").exists() or not param_nml.exists():
+        return
+    if not _read_nml_int(param_nml, "iout_sta"):
+        return
+    text = re.sub(r"(?mi)^(\s*iout_sta\s*=\s*)-?\d+", r"\g<1>0",
+                  param_nml.read_text(), count=1)
+    param_nml.write_text(text)
+    print(f"  WARNING {group_id}: no fix/station.in -- station output "
+          f"turned off (iout_sta = 0 in {param_nml}).")
+
+
 # =============================================================================
 # Job-card helpers
 # =============================================================================
@@ -359,6 +374,7 @@ def _setup_group(cfg: dict, mdir: Path, group_id: str,
     for name in profile.fix_links:
         if not _link(fix / name, rdir / name):
             print(f"  NOTE: fix/{name} not found, skipped.")
+    station_output_off(fix, idir / "param.nml", group_id)
 
     # --- symlink group inputs ---
     for name in profile.input_links:

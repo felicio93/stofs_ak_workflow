@@ -233,6 +233,10 @@ def _years_in_range(start: date, end: date):
 def run_download_ndbc(cfg: dict):
     import pandas as pd
 
+    if not (model_dir(cfg) / "fix" / "station.in").exists():
+        print("  WARNING: no fix/station.in -- no NDBC stations, "
+              "download_ndbc skipped.")
+        return
     check_dtn("NDBC observation download")
     check_active_env(cfg, "download_ndbc")
 

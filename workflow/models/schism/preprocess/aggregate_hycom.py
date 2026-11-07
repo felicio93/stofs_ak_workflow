@@ -28,6 +28,8 @@ The extra days beyond the group end come from the following group's raw
 HYCOM files, which exist because download_hycom fetches 6 days past end_date.
 
 - Skips groups whose output already exists (resume-safe, atomic finalize).
+- Days on a different HYCOM grid than most of the stack (the GLBv0.08 ->
+  GLBy0.08 switch on 2018-12-04) are interpolated onto that grid first.
 - Warns (but proceeds) when days are missing from a group.
 """
 
@@ -152,6 +154,67 @@ def fill_group_gaps(var_dir: Path, prefix: str, cfg: dict,
         present, missing = daily_files_for_stack(
             var_dir, prefix, cfg, group_id)
     return present, missing, unfilled
+
+
+def _grid_key(nc: Path) -> tuple:
+    import netCDF4
+    import numpy as np
+    with netCDF4.Dataset(str(nc)) as ds:
+        return tuple(
+            tuple(np.round(np.asarray(ds[c][:], dtype="f8"), 4))
+            if c in ds.variables else ()
+            for c in ("xlon", "ylat", "depth"))
+
+
+def harmonise_grids(present, prefix: str, tmp_dir: Path):
+    """Daily files on the grid most of them use, for ncrcat.
+
+    HYCOM changed product inside some groups (GLBv0.08 -> GLBy0.08 on
+    2018-12-04: same longitudes, different latitudes), and ncrcat needs one
+    grid. Each day on another grid is interpolated linearly (xlon, ylat,
+    depth) onto the common one into tmp_dir; target points outside its grid
+    take the edge values. Returns (files, regridded_tmp_files)."""
+    from collections import Counter
+    if len(present) < 2:
+        return present, []
+    keys = [_grid_key(f) for f in present]
+    target = Counter(keys).most_common(1)[0][0]
+    odd = [i for i, k in enumerate(keys) if k != target]
+    if not odd:
+        return present, []
+
+    import numpy as np
+    import xarray as xr
+    ref = present[keys.index(target)]
+    with xr.open_dataset(str(ref), decode_times=False) as r:
+        tgt = {c: r[c].values for c in ("xlon", "ylat", "depth")
+               if c in r.variables}
+    files, made = list(present), []
+    for i in odd:
+        src = present[i]
+        out = tmp_dir / f"regrid_{src.name}"
+        with xr.open_dataset(str(src), decode_times=False) as ds:
+            at = {c: np.clip(v, float(ds[c].min()), float(ds[c].max()))
+                  for c, v in tgt.items() if c in ds.dims}
+            new = ds.interp(at, method="linear").assign_coords(
+                {c: tgt[c] for c in at})
+            enc = {c: {"dtype": "float32", "_FillValue": None} for c in at}
+            for v in new.data_vars:
+                fv = ds[v].encoding.get("_FillValue")
+                enc[v] = {"dtype": "float32",
+                          "_FillValue": np.float32(fv) if fv is not None
+                          else np.float32(np.nan)}
+                mv = ds[v].encoding.get("missing_value")
+                if mv is not None:
+                    enc[v]["missing_value"] = np.float32(mv)
+            new.load().to_netcdf(str(out), encoding=enc,
+                                 unlimited_dims=["time"])
+        files[i] = out
+        made.append(out)
+    print(f"  {prefix.upper()}: {len(odd)} day(s) on another HYCOM grid "
+          f"regridded onto the grid of {len(present) - len(odd)} day(s): "
+          + ", ".join(present[i].stem.split("_")[-1] for i in odd))
+    return files, made
 
 
 def report_missing(var, group_id, missing):
@@ -287,7 +350,11 @@ def run_aggregate(cfg: dict):
                         "filled (gap > 3 days or no good neighbours): "
                         + ", ".join(d.strftime("%Y%m%d")
                                     for d in unfilled))
-                aggregate_ssh(present, ssh_out, tmp_dir)
+                present, regridded = harmonise_grids(present, "ssh", tmp_dir)
+                try:
+                    aggregate_ssh(present, ssh_out, tmp_dir)
+                finally:
+                    cleanup(*regridded)
             except Exception as exc:
                 print(f"  ERROR: SSH aggregation failed for {group_id}: {exc}")
                 failures.append((group_id, "ssh"))
@@ -308,7 +375,11 @@ def run_aggregate(cfg: dict):
                         "filled (gap > 3 days or no good neighbours): "
                         + ", ".join(d.strftime("%Y%m%d")
                                     for d in unfilled))
-                aggregate_uv(present, uv_out, tmp_dir)
+                present, regridded = harmonise_grids(present, "uv", tmp_dir)
+                try:
+                    aggregate_uv(present, uv_out, tmp_dir)
+                finally:
+                    cleanup(*regridded)
             except Exception as exc:
                 print(f"  ERROR: UV aggregation failed for {group_id}: {exc}")
                 failures.append((group_id, "uv"))
@@ -329,7 +400,11 @@ def run_aggregate(cfg: dict):
                         "filled (gap > 3 days or no good neighbours): "
                         + ", ".join(d.strftime("%Y%m%d")
                                     for d in unfilled))
-                aggregate_ts(present, ts_out, tmp_dir)
+                present, regridded = harmonise_grids(present, "ts", tmp_dir)
+                try:
+                    aggregate_ts(present, ts_out, tmp_dir)
+                finally:
+                    cleanup(*regridded)
             except Exception as exc:
                 print(f"  ERROR: TS aggregation failed for {group_id}: {exc}")
                 failures.append((group_id, "ts"))

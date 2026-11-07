@@ -63,7 +63,9 @@ echo ""
 echo "  Executable: {{GENNUDGE_EXE}}  (expects UNPACKED float HYCOM data)"
 echo ""
 
-# Run the executable
+# Run the executable (fort.11 cleared first: it is the fatal-error check
+# below, and gen_hotstart and gen_nudge share the first group's folder)
+rm -f fort.11
 ./{{GENNUDGE_EXE}}
 
 # A Fortran `stop` exits with status 0, so the exit code alone cannot tell

@@ -12,7 +12,8 @@ upstream changes the lines it patches.
 
 Variants (per utility; `key` is the project.yaml executables key):
 
-  noscaling            scaling removed, rjunk = -29999
+  noscaling            scaling removed, rjunk = -29999 (gen_hotstart: the
+                       empty-latitude-row flag moved below it)
   noscaling_lonshift   + HYCOM 0-360 shifted to -180..180 right after the
                        xlon axis is read (only valid when the shifted axis
                        is still increasing, i.e. the grid does not cross 180)
@@ -51,8 +52,14 @@ _SCALE5 = [
 _RJUNK = ("        rjunk=-3.e4*1.e-3+20\n",
           "        !rjunk=-3.e4*1.e-3+20\n        rjunk = -29999.0\n")
 
+# gen_hot_from_hycom_0 flags latitude rows with no wet HYCOM point as -9999
+# and fills them from the next row north where ts_lat < rjunk + 0.1: true
+# with the stock rjunk (-10), never with -29999, so the flag goes below it.
+_TS_LAT_FLAG = ("        ts_lat=-9999 !flag\n",
+                "        ts_lat=rjunk-1 !flag (below rjunk)\n")
+
 _NOSCALING = {
-    "gen_hotstart": _SCALE5 + [_RJUNK],
+    "gen_hotstart": _SCALE5 + [_RJUNK, _TS_LAT_FLAG],
     "gen_3Dth":     _SCALE5 + [_RJUNK],
     "gen_nudge":    _SCALE5[:2] + [_RJUNK],       # nudge reads only T and S
 }

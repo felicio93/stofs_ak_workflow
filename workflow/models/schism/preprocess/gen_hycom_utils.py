@@ -316,6 +316,18 @@ def submit_gen_3Dth(cfg: dict, config_dir: Path) -> str:
 
     exe = _select_hycom_exe(cfg, mdir, groups, "gen_3Dth")
 
+    # The utility indexes the mesh's open boundaries with these IDs and
+    # crashes (array bound) on an ID the mesh does not have.
+    from workflow.core.mesh_parser import read_open_boundaries
+    nbnd = len(read_open_boundaries(mdir / "fix" / "hgrid.ll"))
+    obs = cfg.get("open_boundaries", [1, 2])
+    bad = [b for b in obs if not (isinstance(b, int) and 1 <= b <= nbnd)]
+    if bad or not obs:
+        print(f"  ERROR: open_boundaries {obs} (schism.yaml) do not match "
+              f"the {nbnd} open boundary(ies) of fix/hgrid.ll "
+              f"(use IDs 1..{nbnd}).")
+        return ""
+
     logdir = mdir / "logs"
     logdir.mkdir(parents=True, exist_ok=True)
 

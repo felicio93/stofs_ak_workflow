@@ -124,10 +124,11 @@ def submit_plot_outputs(cfg: dict, config_dir: Path) -> str:
               "Has the model run completed?")
         return ""
 
-    # Cap ntasks at a user-configurable maximum.
+    # Cap the ranks (each rank renders files rank, rank+size, ...): one rank
+    # per file asked for 214 nodes on a 14-month run. Default 200 ranks.
+    nfiles = ntasks
     max_tasks_cfg = slurm.get("plot_outputs_max_ntasks")
-    if max_tasks_cfg is not None:
-        ntasks = min(ntasks, int(max_tasks_cfg))
+    ntasks = min(ntasks, int(max_tasks_cfg) if max_tasks_cfg else 200)
 
     nnodes = math.ceil(ntasks / ranks_per_node)
 
@@ -156,7 +157,7 @@ def submit_plot_outputs(cfg: dict, config_dir: Path) -> str:
         "WALLTIME": slurm.get("plot_outputs_walltime", "02:00:00"),
     })
     print(f"  Submitting plot_outputs MPI frames: {ntasks} rank(s) on "
-          f"{nnodes} node(s)  ({ntasks} output files, "
+          f"{nnodes} node(s)  ({nfiles} output files, "
           f"{ranks_per_node} ranks/node)")
     out1 = submitter.render_and_submit(
         "plot_outputs_mpi.sbatch", stage1,

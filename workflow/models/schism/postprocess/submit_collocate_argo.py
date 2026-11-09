@@ -4,7 +4,10 @@ models/schism/postprocess/submit_collocate_argo.py
 Three-stage SLURM launcher for the parallel Argo collocation + plotting pipeline.
 
 Stage 1 — SLURM array, one task per day (throttled):
-    A manifest lists every day in the collocation window. Each array task
+    A manifest lists every day in the collocation window (runs longer than
+    slurm.collocate_argo_max_tasks days, default 200, put several
+    consecutive days on a line: Hercules counts every array task against
+    QOSMaxSubmitJobPerUser, 400). Each array task
     collocates ALL configured variables (temperature + salinity) for its
     assigned day, reusing the 2.6 M-node KDTree built once per task.
     Per-day per-variable NetCDFs are written to:
@@ -129,11 +132,18 @@ def submit_collocate_argo(cfg: dict, config_dir: Path) -> str:
         return ""
 
     # ---- Full pipeline: Stage 1 + 2 + (optionally) 3 ----
-    ntasks   = len(days)
+    max_tasks = max(1, int(slurm.get("collocate_argo_max_tasks", 200)))
+    per       = -(-len(days) // max_tasks)
+    lines     = [" ".join(days[i:i + per]) for i in range(0, len(days), per)]
+    ntasks   = len(lines)
     throttle = str(slurm.get("collocate_argo_array_throttle", 50))
+    walltime = slurm.get("collocate_argo_walltime")
+    if not walltime:
+        mins = 60 * per
+        walltime = f"{mins // 60:02d}:{mins % 60:02d}:00"
 
     manifest = logdir / "collocate_argo_days.manifest"
-    manifest.write_text("\n".join(days) + "\n")
+    manifest.write_text("\n".join(lines) + "\n")
 
     stage1 = dict(common)
     stage1.update({
@@ -141,11 +151,12 @@ def submit_collocate_argo(cfg: dict, config_dir: Path) -> str:
         "NTASKS":         str(ntasks),
         "ARRAY_THROTTLE": throttle,
         "MEM":            slurm.get("collocate_argo_mem",      "48G"),
-        "WALLTIME":       slurm.get("collocate_argo_walltime", "01:00:00"),
+        "WALLTIME":       walltime,
         "MANIFEST":       str(manifest),
     })
-    print(f"  Submitting collocate_argo Stage 1 array: {ntasks} day(s) "
-          f"({days[0]} -> {days[-1]})  throttle={throttle}")
+    print(f"  Submitting collocate_argo Stage 1 array: {len(days)} day(s) "
+          f"({days[0]} -> {days[-1]}) in {ntasks} task(s) of up to {per} "
+          f"day(s), walltime {walltime}, throttle={throttle}")
     out1 = submitter.render_and_submit(
         "collocate_argo_day.sbatch", stage1,
         logdir / "collocate_argo_day.sbatch")

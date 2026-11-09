@@ -7,8 +7,11 @@ Stage 1 — SLURM array, one task per day (throttled):
     A manifest lists every day in [compare_sst_start, compare_sst_end]
     (default: the whole run). Each array task renders one two-panel
     model-vs-satellite frame for its day. Using a throttled array
-    (--array=1-N%K) avoids MPI entirely and stays within the QOS
-    MaxSubmitJobsPerUser limit.
+    (--array=1-N%K) avoids MPI entirely. The QOS MaxSubmitJobsPerUser
+    limit (400 on Hercules) counts every array task, so runs longer than
+    slurm.compare_sst_max_tasks days (default 200) give each task several
+    consecutive days (one manifest line each) and a walltime scaled to
+    match unless compare_sst_walltime is set.
 
 Stage 2 — GIF assembly (single serial job, --dependency=afterok):
     Stitches the daily frames into one GIF and keeps/deletes frames.
@@ -96,12 +99,19 @@ def submit_compare_sst(cfg: dict, config_dir: Path) -> str:
 
     # --- Full pipeline: SLURM array for frames + GIF assembly ---
     # Write day manifest for the array.
-    manifest = logdir / "compare_sst_days.manifest"
-    manifest.write_text("\n".join(days) + "\n")
+    max_tasks = max(1, int(slurm.get("compare_sst_max_tasks", 200)))
+    per       = -(-len(days) // max_tasks)
+    lines     = [" ".join(days[i:i + per]) for i in range(0, len(days), per)]
+    manifest  = logdir / "compare_sst_days.manifest"
+    manifest.write_text("\n".join(lines) + "\n")
 
     # Throttle keeps active tasks ≤ limit to stay within QOS cap (400).
-    ntasks   = len(days)
+    ntasks   = len(lines)
     throttle = str(slurm.get("compare_sst_array_throttle", 50))
+    walltime = slurm.get("compare_sst_walltime")
+    if not walltime:
+        mins = 30 * per
+        walltime = f"{mins // 60:02d}:{mins % 60:02d}:00"
 
     common = {
         "ACCOUNT":    slurm.get("account",   DEFAULT_ACCOUNT),
@@ -123,11 +133,12 @@ def submit_compare_sst(cfg: dict, config_dir: Path) -> str:
         "NTASKS":         str(ntasks),
         "ARRAY_THROTTLE": throttle,
         "MEM":            slurm.get("compare_sst_mem",      "24G"),
-        "WALLTIME":       slurm.get("compare_sst_walltime", "00:30:00"),
+        "WALLTIME":       walltime,
         "MANIFEST":       str(manifest),
     })
-    print(f"  Submitting compare_sst frames: {ntasks} day(s) "
-          f"({days[0]} -> {days[-1]})  throttle={throttle}")
+    print(f"  Submitting compare_sst frames: {len(days)} day(s) "
+          f"({days[0]} -> {days[-1]}) in {ntasks} task(s) of up to {per} "
+          f"day(s), walltime {walltime}, throttle={throttle}")
     out1 = submitter.render_and_submit(
         "compare_sst_frames.sbatch", stage1,
         logdir / "compare_sst_frames.sbatch")

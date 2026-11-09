@@ -1,7 +1,8 @@
 #!/bin/bash --login
 # =============================================================================
 # SLURM array template for compare_sst Stage 1 (per-day frames).
-# One array task per day. Rendered/submitted by
+# One array task per manifest line (one day, or several consecutive days for
+# long runs). Rendered/submitted by
 # workflow.models.schism.postprocess.submit_compare_sst.
 # =============================================================================
 #SBATCH -D {{WORKDIR}}
@@ -19,8 +20,10 @@
 
 set -e
 
-DAY=$(sed -n "${SLURM_ARRAY_TASK_ID}p" {{MANIFEST}})
-echo "=== compare_sst frames: task ${SLURM_ARRAY_TASK_ID} -> ${DAY} ==="
+DAYS=$(sed -n "${SLURM_ARRAY_TASK_ID}p" {{MANIFEST}})
+echo "=== compare_sst frames: task ${SLURM_ARRAY_TASK_ID} -> ${DAYS} ==="
 
-{{PY}} {{SCRIPT}} --config {{CONFIG_DIR}} frames --date "${DAY}"
-echo "=== done ${DAY} ==="
+for DAY in ${DAYS}; do
+    {{PY}} {{SCRIPT}} --config {{CONFIG_DIR}} frames --date "${DAY}"
+    echo "=== done ${DAY} ==="
+done

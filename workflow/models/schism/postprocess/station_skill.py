@@ -205,7 +205,8 @@ def _ndbc_token_filter(cfg: dict):
 # Variable of outputs/staout.nc for each ASCII staout_N. SCHISM writes all
 # station output to staout.nc since 2026-10-19 (a3e58bff, "code now directly
 # writes nc (no ascii intermediary)"); names from ar_name in schism_init.F90.
-# The SCHISM inside UFS-Coastal still writes the ASCII staout_N files.
+# Older builds (e.g. the SCHISM pinned inside UFS-Coastal) still write the
+# ASCII staout_N files.
 _STAOUT_NC_VARS = {
     1: "elevation", 2: "airPressure", 3: "windx", 4: "windy",
     5: "temperature", 6: "salinity", 7: "horizontalVelX",

@@ -18,6 +18,8 @@ build.yaml layout::
       source_root: /abs/path          # clones and build dirs (no default)
       sources:
         schism: {repo: <url>, ref: master}      # one checkout per source
+                                                # (optional submodules: see
+                                                # sources.py)
       targets:
         schism:
           kind: schism
@@ -97,6 +99,18 @@ def validate_build(cfg: dict) -> list:
         for k in ("repo", "ref"):
             if not isinstance(src, dict) or not src.get(k):
                 errs.append(f"build.sources.{name}.{k} is required")
+        subs = src.get("submodules") if isinstance(src, dict) else None
+        if subs is not None and not isinstance(subs, dict):
+            errs.append(f"build.sources.{name}.submodules must map a "
+                        f"submodule path to {{ref, repo}}")
+            subs = None
+        for path, spec in (subs or {}).items():
+            if not isinstance(spec, dict) or not spec.get("ref"):
+                errs.append(f"build.sources.{name}.submodules.{path}.ref "
+                            f"is required")
+            elif set(spec) - {"ref", "repo"}:
+                errs.append(f"build.sources.{name}.submodules.{path}: unknown "
+                            f"key(s) {sorted(set(spec) - {'ref', 'repo'})}")
     targets = b["targets"] if isinstance(b["targets"], dict) else {}
     if not targets:
         errs.append("build.targets is empty")

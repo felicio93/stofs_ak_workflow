@@ -277,6 +277,35 @@ def job_state(job_id: str) -> str:
     return ""
 
 
+def require_completed(job_id: str, what: str, partial=()):
+    """Stop (exit 1) unless SLURM job `job_id` ended COMPLETED.
+
+    A job that ran out of time (TIMEOUT) or failed can leave its output
+    files behind, cut short; checking only that they exist would accept
+    them and the cleanup after it would delete the inputs needed to redo
+    the work. The files in `partial` that exist are renamed to
+    <name>.incomplete, so that a rerun of this script redoes the step.
+    """
+    state = ""
+    for _ in range(6):              # sacct can lag behind squeue
+        state = job_state(job_id)
+        if state and state not in ("PENDING", "RUNNING", "COMPLETING"):
+            break
+        time.sleep(10)
+    if state == "COMPLETED":
+        return
+    log(f"ERROR: {what} job {job_id} ended {state or 'in an unknown state'} "
+        f"(not COMPLETED). Its inputs are kept; nothing is cleaned up.")
+    for f in partial:
+        f = Path(f)
+        if f.exists():
+            f.replace(f.with_name(f.name + ".incomplete"))
+            log(f"  Renamed the incomplete {f.name} to {f.name}.incomplete")
+    log("  Fix the cause (e.g. a longer walltime) and run this script "
+        "again to redo the step.")
+    sys.exit(1)
+
+
 # States where resubmitting the same job card would fail the same way.
 _NO_RESUBMIT_STATES = {"TIMEOUT", "OUT_OF_MEMORY", "OUT_OF_ME"}
 
@@ -408,11 +437,14 @@ def combine_output_stacks():
         log(f"ERROR: sbatch {COMBINE_OUTPUT_SBATCH} failed:\n{out}")
         sys.exit(1)
     log(f"Submitted combine_schout job: {out}")
+    comb_jobid = out.split()[-1]
     while squeue_line_for(comb_jobname) is not None:
         log(f"  combine_schout ({comb_jobname}): waiting ... "
             f"(checking every {_COMBINE_POLL_SECONDS//60} min)")
         time.sleep(_COMBINE_POLL_SECONDS)
     time.sleep(10)
+    require_completed(comb_jobid, "combine_schout",
+                      [outdir / f"schout_{i}.nc" for i in rank0_stacks])
     missing = [f"schout_{i}.nc" for i in rank0_stacks
                if not (outdir / f"schout_{i}.nc").exists()]
     if missing:
@@ -627,13 +659,14 @@ def combine_and_chain():
     if not combined.exists():
         comb_jobname = "C" + RUN_JOBNAME[1:]
         log(f"Submitting combine_hotstart to build {combined.name} ...")
-        submit("run_comb")
+        comb_jobid = submit("run_comb")
         while squeue_line_for(comb_jobname) is not None:
             log(f"  combine_hotstart ({comb_jobname}): waiting for "
                 f"hotstart_it={NHOT_WRITE}.nc ... "
                 f"(checking every {_COMBINE_POLL_SECONDS//60} min)")
             time.sleep(_COMBINE_POLL_SECONDS)
         time.sleep(10)
+        require_completed(comb_jobid, "combine_hotstart", [combined])
         if not combined.exists():
             log(f"ERROR: combine_hotstart finished but {combined} was not created.")
             sys.exit(1)

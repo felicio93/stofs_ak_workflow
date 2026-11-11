@@ -129,7 +129,7 @@ slurm:
   plot_sflux_mem: "16G"
   # Phase 5 postprocessing:
   combine_output_nranks:   80
-  combine_output_walltime: "04:00:00"
+  combine_output_walltime: "08:00:00"   # one rank per stack: a weekly 200 m-mesh group took ~4 h (M28, M29)
   plot_outputs_qos: windfall
   plot_outputs_walltime: "02:00:00"
   plot_outputs_mem: "16G"

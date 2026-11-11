@@ -243,7 +243,7 @@ def _render_combine_output_sbatch(cfg: dict, mdir: Path,
         "COMBINE_NODES":    str(combine_nodes),
         "COMBINE_NRANKS":   str(combine_nranks),
         "COMBINE_WALLTIME": slurm.get(
-            "combine_output_walltime", "04:00:00"),
+            "combine_output_walltime", "08:00:00"),
         "LOGDIR":           str(mdir / "logs"),
         "RUNDIR":           str(rdir),
         "MAILUSER":         slurm.get(

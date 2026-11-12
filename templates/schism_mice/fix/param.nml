@@ -228,7 +228,7 @@
 ! in the code (not working for ics=2 yet).
 !-----------------------------------------------------------------------
   imm = 0
-  ibdef = 10 !needed if imm=1; # of steps used in deformation
+  nbdef = 10 !needed if imm=1; # of steps used in deformation (named ibdef before SCHISM 449df95b, 2026-11-04)
 
 !-----------------------------------------------------------------------
 ! Reference latitude for beta-plane approximation when ncor=1 (not used if ics=2)

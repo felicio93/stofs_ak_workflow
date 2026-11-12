@@ -20,6 +20,10 @@ Variables downloaded (ERA5 hourly single-level reanalysis):
     mean_total_precipitation_rate   -> mtpr (or avg_tprate in newer API)
     mean_surface_downward_long_wave_radiation_flux   -> msdwlwrf
     mean_surface_downward_short_wave_radiation_flux  -> msdwswrf
+    mean_snowfall_rate              -> msr (or avg_tsrwe in newer API);
+                                       only for models with sea ice
+                                       (SNOWFALL_MODELS), whose sflux_prc
+                                       files carry srate
 
 Domain: same bbox as the HYCOM download (lon_min/max, lat_min/max from
 domain.yaml) with a 0.5-degree buffer. CDS accepts east longitudes > 180,
@@ -68,6 +72,26 @@ CDS_VARIABLES = [
     "mean_surface_downward_long_wave_radiation_flux",
     "mean_surface_downward_short_wave_radiation_flux",
 ]
+SNOWFALL_VARIABLE = "mean_snowfall_rate"
+
+# Models whose sflux_prc files need the snowfall rate (srate): SCHISM's
+# multi-class ice module splits prate into rain and snow with it.
+SNOWFALL_MODELS = ("schism_mice",)
+
+
+def wants_snowfall(cfg: dict) -> bool:
+    return str(cfg.get("model_type", "schism")).lower() in SNOWFALL_MODELS
+
+
+def cds_variables(cfg: dict) -> list:
+    return CDS_VARIABLES + ([SNOWFALL_VARIABLE] if wants_snowfall(cfg) else [])
+
+
+def has_snowfall(path: Path) -> bool:
+    """True if a raw ERA5 file holds the snowfall rate."""
+    import netCDF4
+    with netCDF4.Dataset(str(path)) as ds:
+        return "msr" in ds.variables or "avg_tsrwe" in ds.variables
 
 
 # =============================================================================
@@ -167,6 +191,7 @@ def _unzip_and_merge(zip_path: Path, out_nc: Path):
                 "avg_tprate": "mtpr",
                 "avg_sdlwrf": "msdwlwrf",
                 "avg_sdswrf": "msdwswrf",
+                "avg_tsrwe":  "msr",
             }
             actual_renames = {k: v for k, v in rename_map.items()
                               if k in merged.data_vars}
@@ -205,7 +230,7 @@ def download_month(client, ym: str, out_path: Path, cfg: dict):
           f"S={area[2]} E={area[3]}")
 
     request = {
-        "variable":        CDS_VARIABLES,
+        "variable":        cds_variables(cfg),
         "product_type":    "reanalysis",
         "year":            str(year),
         "month":           f"{month:02d}",
@@ -292,6 +317,15 @@ def run_download_era5(cfg: dict):
         out_path = era5_dir / f"era5_{ym}.nc"
 
         if out_path.exists() and out_path.stat().st_size > 0:
+            if wants_snowfall(cfg) and not has_snowfall(out_path):
+                print(f"\n--- {ym}: ERROR: {out_path.name} has no snowfall "
+                      f"rate (msr), which model_type "
+                      f"{cfg.get('model_type')} needs. Move it aside "
+                      f"(e.g. to {out_path.name}.nosnow) and re-run to "
+                      f"download the month again.")
+                failed.append(ym)
+                prog.update(ym)
+                continue
             print(f"\n--- {ym}: already downloaded, skipping.")
             prog.update(ym)
             continue

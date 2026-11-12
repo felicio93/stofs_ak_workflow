@@ -18,6 +18,9 @@ Each daily file contains 25 hourly timesteps (00Z day N to 00Z day N+1).
 
 Variable derivation:
     spfh: specific humidity from 2m dewpoint (d2m) and MSL pressure (msl)
+    srate: ERA5 mean snowfall rate (msr), only for models with sea ice
+           (era5.SNOWFALL_MODELS); limited to 0 <= srate <= prate, since
+           SCHISM's ice module takes rain = prate - srate
     All other variables passed through directly.
 
 Usage (called by SLURM via workflow.models.schism.preprocess.submit_era5):
@@ -143,6 +146,8 @@ def write_sflux_file(path: Path, ftype: str, day_date: date,
                       "northward_wind", "m/s"),
             "prate": ("Surface Precipitation Rate",
                       "precipitation_flux", "kg/m^2/s"),
+            "srate": ("Surface Snowfall Rate",
+                      "snowfall_flux", "kg/m^2/s"),
             "dlwrf": ("Downward Long Wave Radiation Flux",
                       "surface_downwelling_longwave_flux_in_air", "W/m^2"),
             "dswrf": ("Downward Short Wave Radiation Flux",
@@ -162,6 +167,17 @@ def write_sflux_file(path: Path, ftype: str, day_date: date,
 # Per-day sflux data reader
 # =============================================================================
 
+def _prc(fields: dict, snow: bool) -> dict:
+    """The sflux_prc variables: prate, plus srate (0 <= srate <= prate)
+    when the model needs the snowfall rate."""
+    out = {"prate": fields["mtpr"]}
+    if snow:
+        out["srate"] = np.clip(fields["msr"], 0.0,
+                               np.maximum(fields["mtpr"], 0.0)
+                               ).astype(np.float32)
+    return out
+
+
 def _pad_last(arr, n):
     """Persist the last time record until arr has n records along axis 0."""
     if arr.shape[0] >= n:
@@ -171,10 +187,11 @@ def _pad_last(arr, n):
     return np.concatenate([arr] + [last] * reps, axis=0)
 
 
-def _read_day_fields(mdir: Path, d: date) -> dict:
+def _read_day_fields(mdir: Path, d: date, snow: bool = False) -> dict:
     """Read the 25-hour ERA5 field block for day d (00Z -> next day 00Z).
 
-    Returns a dict with keys: u10, v10, msl, t2m, d2m, mtpr, dlwrf, dswrf.
+    Returns a dict with keys: u10, v10, msl, t2m, d2m, mtpr, dlwrf, dswrf
+    (and msr, the snowfall rate, when snow is True).
     All arrays have shape (25, ny, nx) with lat in ASCENDING order.
     Pads the 25th record if it falls in the next month's file.
     Returns None if the ERA5 file for d is missing.
@@ -206,6 +223,12 @@ def _read_day_fields(mdir: Path, d: date) -> dict:
             "dlwrf": rd(["msdwlwrf", "avg_sdlwrf"]),
             "dswrf": rd(["msdwswrf", "avg_sdswrf"]),
         }
+        if snow:
+            fields["msr"] = rd(["msr", "avg_tsrwe"])
+            if fields["msr"] is None:
+                raise SystemExit(f"ERROR: no snowfall rate (msr) in the ERA5 "
+                                 f"file for {d}; re-run download_era5 for "
+                                 f"this month (see its message).")
 
         # Pad to 25 records if we ran out of data in this file
         n_actual = fields["u10"].shape[0]
@@ -231,6 +254,8 @@ def _read_day_fields(mdir: Path, d: date) -> dict:
                     "dlwrf": rd_next(["msdwlwrf", "avg_sdlwrf"]),
                     "dswrf": rd_next(["msdwswrf", "avg_sdswrf"]),
                 }
+                if snow:
+                    nxt["msr"] = rd_next(["msr", "avg_tsrwe"])
                 ds_next.close()
                 for k in fields:
                     if fields[k] is not None and nxt[k] is not None:
@@ -279,6 +304,8 @@ def gen_sflux_group(cfg: dict, group_id: str):
         return
 
     sflux_dir.mkdir(parents=True, exist_ok=True)
+    from workflow.downloaders.era5 import wants_snowfall
+    snow = wants_snowfall(cfg)
     print(f"\n--- gen_sflux {group_id}  "
           f"({gstart} -> {gend}, {ndays} days) -> {sflux_dir} ---")
 
@@ -300,7 +327,7 @@ def gen_sflux_group(cfg: dict, group_id: str):
         d     = gstart + timedelta(days=day_offset)
         stack = str(day_offset + 1)   # 1-based, unpadded
 
-        fields = _read_day_fields(mdir, d)
+        fields = _read_day_fields(mdir, d, snow)
         if fields is None:
             print(f"  ERROR: could not read ERA5 for {d}. "
                   f"Check that download_era5 has run.")
@@ -319,7 +346,7 @@ def gen_sflux_group(cfg: dict, group_id: str):
         write_sflux_file(
             sflux_dir / f"sflux_prc_1.{stack}.nc", "prc", d,
             lon2d, lat2d, times_days,
-            {"prate": fields["mtpr"]})
+            _prc(fields, snow))
         write_sflux_file(
             sflux_dir / f"sflux_rad_1.{stack}.nc", "rad", d,
             lon2d, lat2d, times_days,
@@ -332,7 +359,7 @@ def gen_sflux_group(cfg: dict, group_id: str):
     extra_stack = str(ndays + 1)
     d_extra     = gend + timedelta(days=1)
 
-    fields_extra = _read_day_fields(mdir, d_extra)
+    fields_extra = _read_day_fields(mdir, d_extra, snow)
     if fields_extra is not None:
         src_note = f"from ERA5 ({d_extra})"
     elif _last_fields is not None:
@@ -357,7 +384,7 @@ def gen_sflux_group(cfg: dict, group_id: str):
         write_sflux_file(
             sflux_dir / f"sflux_prc_1.{extra_stack}.nc", "prc", d_extra,
             lon2d, lat2d, times_days,
-            {"prate": fields_extra["mtpr"]})
+            _prc(fields_extra, snow))
         write_sflux_file(
             sflux_dir / f"sflux_rad_1.{extra_stack}.nc", "rad", d_extra,
             lon2d, lat2d, times_days,

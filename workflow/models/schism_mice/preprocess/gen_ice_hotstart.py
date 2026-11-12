@@ -82,6 +82,19 @@ def _read_ice(path: Path):
     if np.any(np.diff(lat) < 0):
         lat = lat[::-1]
         fields = {k: a[::-1] for k, a in fields.items()}
+
+    # HYCOM leaves sih/siu/siv missing (fill) where there is no ice while
+    # sic is 0 there: the ocean is where sic is defined, and a missing
+    # thickness or velocity on the ocean means 0.
+    ocean = np.isfinite(fields["sic"])
+    for v in ("sih", "siu", "siv"):
+        gap = ocean & ~np.isfinite(fields[v])
+        icy = gap & (fields["sic"] > 0)
+        if icy.any():
+            print(f"  WARNING: {v} missing on {int(icy.sum())} HYCOM cells "
+                  f"with sic > 0; set to 0 there")
+        fields[v][gap] = 0.0
+        fields[v][~ocean] = np.nan
     return lon, lat, fields
 
 
@@ -129,6 +142,11 @@ def interpolate(lon, lat, fields, xn, yn):
     no_ice = out["sic2"] <= 0.0
     for name in ("sih2", "siu2", "siv2"):
         out[name][no_ice] = 0.0
+    for name, v in out.items():
+        if not np.all(np.isfinite(v)):
+            sys.exit(f"ERROR: {name} has {int((~np.isfinite(v)).sum())} "
+                     f"non-finite values at the nodes; hotstart.nc not "
+                     f"changed")
     return out, nearest
 
 

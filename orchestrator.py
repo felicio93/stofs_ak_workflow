@@ -141,6 +141,7 @@ PREPROCESS_STEPS = {
     "gen_sflux", "gen_hotstart", "gen_3Dth", "gen_nudge",
     "plot_hycom_outputs",
     "gen_wwminput", "gen_ww3_shel", "gen_ww3_ounp",
+    "download_hycom_ice", "gen_mice_nml", "gen_ice_hotstart",
 }
 BUILD_STEPS       = {"build_executables"}
 RUN_PHASE_STEPS   = {"setup_run", "submit_run"}

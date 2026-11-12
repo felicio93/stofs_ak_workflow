@@ -59,6 +59,12 @@ class SchismDriver(ModelDriver):
     # ({step: reason}); reported as [N/A] when enabled, never run.
     na_steps: dict = {}
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # {step: SLURM job ID} of the jobs submitted by this run, for steps
+        # of a derived model that must wait for them
+        self.submitted = {}
+
     def enabled(self, step: str, only: Optional[str] = None) -> bool:
         return step not in self.na_steps and super().enabled(step, only)
 
@@ -244,6 +250,7 @@ class SchismDriver(ModelDriver):
             if jid:
                 _slurm_jobs.append(jid)
                 _gen_hycom_jobs.append(jid)
+                self.submitted["gen_hotstart"] = jid
         else:
             self._skip("gen_hotstart")
 

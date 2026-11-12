@@ -188,6 +188,19 @@ def read_elements(path: Path):
     return elem_ids, connectivity
 
 
+def has_quads(path: Path) -> bool:
+    """True if the element block of a .gr3 file has any quadrilateral."""
+    with open(path) as f:
+        f.readline()
+        ne, np_ = (int(v) for v in f.readline().split()[:2])
+        for _ in range(np_):
+            f.readline()
+        for _ in range(ne):
+            if f.readline().split(None, 2)[1] == "4":
+                return True
+    return False
+
+
 def read_element_centroids(path: Path):
     """
     Compute element centroids from node coordinates.

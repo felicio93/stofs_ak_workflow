@@ -83,6 +83,7 @@ class RunProfile(NamedTuple):
     input_links: tuple        # from I{ID}_{group_id}/, must exist
     sentinels: tuple          # (file in I{ID}_{group_id}/, step) per group
     first_hotstart: bool      # first group needs I{ID}_{first}/hotstart.nc
+    first_sentinels: tuple = ()   # (file, step) checked for the first group only
 
 
 SCHISM_PROFILE = RunProfile(
@@ -378,6 +379,10 @@ def _setup_group(cfg: dict, mdir: Path, group_id: str,
         if not _check_sentinel(
                 idir / "gen_hotstart.done", "gen_hotstart"):
             return False
+    if group_index == 0:
+        for sentinel, step in profile.first_sentinels:
+            if not _check_sentinel(idir / sentinel, step):
+                return False
 
     # --- symlink static fix/ files ---
     for name in profile.fix_links:

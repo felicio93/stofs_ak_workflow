@@ -14,7 +14,7 @@ project_id: "31"
 #   schism_wwm      SCHISM + WWM, internally coupled
 #   ufs_schism      UFS-Coastal: DATM + CMEPS + SCHISM (old I/O)
 #   ufs_schism_ww3  UFS-Coastal: DATM + CMEPS + SCHISM + WW3
-#   schism_mice     SCHISM + MICE (placeholder, not implemented)
+#   schism_mice     SCHISM + MICE (multi-class sea ice, Icepack)
 # The matching <model_type>.yaml (e.g. ufs_schism_ww3.yaml) must be copied
 # next to this file (this folder already contains it).
 model_type: schism_2d

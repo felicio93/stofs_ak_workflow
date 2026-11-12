@@ -825,6 +825,98 @@ def run_download(cfg: dict):
     return not failed_days
 
 
+# =============================================================================
+# Sea ice at the start date (initial ice of SCHISM's multi-class ice module)
+# =============================================================================
+
+# HYCOM's CICE fields (sic: concentration [1], sih: thickness [m], siu/siv:
+# ice velocity [m/s]; Int16 with scale_factor). One dataset per year, time in
+# "hours since 2000-01-01". Same switch date as the ocean epochs above, so
+# that the ice and the ocean hotstart come from the same product.
+ICE_EPOCHS = [
+    {"first": "20181204", "last": "20240904",
+     "base": f"{TDS}/GLBy0.08/expt_93.0/ice"},      # GOFS 3.1, 3-hourly
+    {"first": "20240905", "last": None,
+     "base": f"{TDS}/ESPC-D-V02/ice"},              # ESPC-D-V02, hourly
+]
+ICE_VARIABLES = "sic,sih,siu,siv"
+
+
+def ice_file(cfg: dict) -> Path:
+    """raw/hycom/ice/ice_<start date>.nc: HYCOM ice at the first group's
+    start (00 UTC of start_date)."""
+    flat = date.fromisoformat(cfg["start_date"]).strftime("%Y%m%d")
+    return (Path(cfg["project_dir"]) / f"M{cfg['project_id']}" / "raw"
+            / "hycom" / "ice" / f"ice_{flat}.nc")
+
+
+def ice_source_url(date_flat: str) -> str:
+    for ep in ICE_EPOCHS:
+        if date_flat >= ep["first"] and (ep["last"] is None
+                                         or date_flat <= ep["last"]):
+            return f"{ep['base']}/{date_flat[:4]}"
+    raise ValueError(f"no HYCOM ice dataset configured for {date_flat} "
+                     f"(available from {ICE_EPOCHS[0]['first']})")
+
+
+def run_download_ice(cfg: dict):
+    """Download HYCOM sic/sih/siu/siv at the start date (00 UTC) over the
+    domain box; unpacked to float, lon in the domain's lon_reference."""
+    global _DEBUG
+    check_dtn()
+    check_active_env(cfg)
+    check_required_tools()
+
+    out = ice_file(cfg)
+    date_str  = date.fromisoformat(cfg["start_date"]).isoformat()
+    date_flat = date_str.replace("-", "")
+    print(f"\n{'='*60}")
+    print(f"  HYCOM ice download for {date_str} 00 UTC -> {out}")
+    print(f"{'='*60}")
+    if is_complete_file(out):
+        print("  Already downloaded, skipping.")
+        return True
+    url = ice_source_url(date_flat)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp_dir = out.parent / "tmp"
+    tmp_dir.mkdir(exist_ok=True)
+    _DEBUG = DebugLog(out.parents[3] / "logs", "download_hycom_ice")
+
+    raw = tmp_dir / f"ice_raw_{date_flat}.nc"
+    unp = tmp_dir / f"ice_unpacked_{date_flat}.nc"
+    tmp = tmp_dir / f"{out.name}.tmp"
+    cleanup_files(raw, unp, tmp)
+    try:
+        ok = _fetch_subset(date_str, url, ICE_VARIABLES,
+                           float(cfg["lon_min"]), float(cfg["lon_max"]),
+                           float(cfg["lat_min"]), float(cfg["lat_max"]),
+                           str(cfg["lon_reference"]), raw, tmp_dir,
+                           prefix="ice")
+        if not ok:
+            print(f"  ERROR: could not fetch {ICE_VARIABLES} from {url}")
+            return False
+        run(["ncpdq", "-O", "-U", str(raw), str(unp)])
+        run(["ncap2", "-O", "-s",
+             "sic=float(sic); sih=float(sih); siu=float(siu); "
+             "siv=float(siv); lat=float(lat); lon=float(lon);",
+             str(unp), str(tmp)])
+        finalize_output(tmp, out)
+    except RuntimeError as exc:
+        print(f"  ERROR: {exc}")
+        return False
+    finally:
+        cleanup_files(raw, unp, tmp)
+        _DEBUG.close()
+    with nc4.Dataset(str(out)) as ds:
+        t = ds.variables["time"]
+        when = nc4.num2date(t[:], t.units)
+        sic = np.ma.masked_invalid(ds.variables["sic"][:])
+        print(f"  OK: time {', '.join(str(w) for w in np.atleast_1d(when))}; "
+              f"sic {float(sic.min()):.3f}..{float(sic.max()):.3f}, "
+              f"ice (sic > 0.15) on {int((sic > 0.15).sum())} grid cells")
+    return True
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Download HYCOM data for SCHISM workflow")

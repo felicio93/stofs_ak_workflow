@@ -1,0 +1,46 @@
+!SCHISM multi-class sea ice (USE_MICE) - main parameters, read from the run directory.
+!Starter copy of SCHISM's sample_inputs/mice.nml (master 3f25bd24), with comments from
+!reading the code (src/Multi_ice). Review it for every project.
+!
+!The workflow writes one copy per group into I{ID}_{group}/mice.nml (step gen_mice_nml):
+!the first group keeps ihot_mice from this file, every later group gets ihot_mice = 1
+!(restart from the previous group's hotstart.nc). Everything else is copied as is.
+!
+!EVERY key below must be present: SCHISM initialises them to junk values and aborts on any
+!that stays junk, including the ones it does not use (marked "unused").
+!(1) Use '' for chars; (2) integer values are fine for real vars.
+
+&mice_in
+  ice_tests = 0  !0: normal run; 1: box test (forcing replaced, velocities fixed). Use 0.
+  ihot_mice = 2  !0: cold start, ice-free (ice forms where the water reaches freezing)
+                 !1: restart from hotstart.nc written by a previous MICE run (Icepack state)
+                 !2: initialise from HYCOM: sic2/sih2/siu2/siv2 in hotstart.nc (step
+                 !   gen_ice_hotstart adds them); all ice in one thickness category, no snow
+                 !(the SCHISM manual has 1 and 2 swapped; this is what the code does)
+  ice_advection = 6 !0: none; 1: FCT; 2: Taylor-Galerkin; 3: upwind; 4: centred;
+                    !5: TVD; 6: TVD-upwind (recommended); 7: TVD-Casulli
+  ice_therm_on = 1 !ice thermodynamics on/off (on needs nws=2, ihconsv=1, PREC_EVAP)
+  ievp = 2 !0: no dynamics; 1: EVP; 2: mEVP (recommended)
+  ice_cutoff = 0.001 !concentration or volume [m] at or below which a node has no ice
+                     !(no coupling there; ice velocity = surface current)
+  evp_rheol_steps = 500  !EVP sub-cycles (ievp=1 only)
+  mevp_rheol_steps = 500 !mEVP iterations per ice step (ievp=2). Each iteration exchanges
+                         !halos twice: the main cost of the ice module (see nstep_ice)
+  delta_min = 1.0e-11 !minimum deformation rate [1/s] (caps the viscosity)
+  theta_io = 0.       !ice-ocean turning angle [deg]
+  mevp_alpha1 = 200.  !mEVP: used only for the shear stress sigma12 (sigma11/22 use an
+                      !adaptive constant built into the code)
+  mevp_alpha2 = 200.  !unused (required)
+  pstar = 27500.      ![N/m^2] ice strength P* - EVP only; mEVP uses Icepack's strength
+                      !(kstrength in namelist.icepack)
+  ellipse = 2.        !yield-curve ellipticity
+  c_pressure = 20.0   !strength concentration constant C - EVP only
+  !FCT (ice_advection=1 only)
+  niter_fct = 3       !# of iterations in the higher-order solve
+  ice_gamma_fct = 0.25 !smoothing parameter
+
+  !Leftovers from the single-class module: unused by MICE (required, must be valid)
+  h_ml0 = 0.1      !unused (MICE uses the thickness of the top layer as mixed layer)
+  salt_ice = 5.    !unused (ice salinity is set by Icepack, ktherm in namelist.icepack)
+  salt_water = 34. !unused
+/

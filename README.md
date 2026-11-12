@@ -72,7 +72,7 @@ Preprocessing steps run in different execution contexts:
 | `schism_wwm` | SCHISM + WWM (internally coupled waves) | `SchismWwmDriver(SchismDriver)` | implemented |
 | `ufs_schism` | UFS-Coastal: DATM + CMEPS + SCHISM (old I/O) | `UfsSchismDriver` | implemented |
 | `ufs_schism_ww3` | UFS-Coastal: DATM + CMEPS + SCHISM + WW3 | `UfsSchismWw3Driver(UfsSchismDriver)` | implemented |
-| `schism_mice` | SCHISM + MICE (sea ice) | `SchismMiceDriver(SchismDriver)` | placeholder: all phases raise `NotImplementedError` |
+| `schism_mice` | SCHISM + multi-class sea ice (MICE: Icepack column physics, mEVP dynamics) | `SchismMiceDriver(SchismDriver)` | implemented, not yet run (first test: Alaska mesh, Oct 2025 – Jun 2026) |
 
 Which steps apply to which model is listed in [Steps by phase](#steps-by-phase).
 
@@ -105,6 +105,41 @@ hotstart/boundary/nudging steps and the SST/Argo comparisons print `[N/A]`.
   non-barotropic `param.nml`, a missing friction file and a `PREC_EVAP`
   executable.
 
+### SCHISM + sea ice (`schism_mice`)
+
+SCHISM's multi-class ice module (`USE_MICE`, `src/Multi_ice`): Icepack 1.3.4
+column physics at every node (ice thickness categories, snow, melt ponds,
+ridging) with SCHISM's EVP/mEVP dynamics and ice advection. Everything else is
+standalone 3D SCHISM. Details of the module (forcing, coupling, every
+parameter, outputs, known issues) are in the study note
+`handoffs/2026-11-12_schism-multi-ice-study.md` (outside the repo).
+
+- **Build**: target `schism_mice` (`USE_MICE: true` with `PREC_EVAP`),
+  installed as `executables.schism_mice`.
+- **fix/**: `mice.nml` (every `&mice_in` key must be present, used or not;
+  `--check-fix` checks it) and `namelist.icepack`, from
+  `templates/schism_mice/fix/`; `param.nml` with `nstep_ice` and the
+  `iof_mice` outputs. Triangles only; `nws = 2`, `ihconsv = 1`.
+- **Snowfall**: `download_era5` also gets ERA5 `mean_snowfall_rate`, and
+  `gen_sflux` writes it as `srate` in `sflux_prc` (`0 <= srate <= prate`; the
+  ice module takes rain = `prate - srate`). Only for this model.
+- **Initial ice** (first group, `ihot_mice` in `fix/mice.nml`): `2` starts the
+  ice from HYCOM: `download_hycom_ice` (DTN) gets `sic/sih/siu/siv` at
+  `start_date` 00 UTC (GOFS 3.1 GLBy0.08 through 2024-09-04, ESPC-D-V02
+  after), and `gen_ice_hotstart` (SLURM, after `gen_hotstart`) adds
+  `sic2/sih2/siu2/siv2` to the first `hotstart.nc`. `0` starts ice-free.
+- **Restarts**: `gen_mice_nml` writes each group's `mice.nml`; every group
+  after the first gets `ihot_mice = 1` and restarts the ice from the Icepack
+  state in the hotstart that `auto_hotstart` chains (the combine merges it).
+- **Outputs** (scribe I/O, `out2d`): `iceTracer_1` (ice volume per area, m),
+  `iceTracer_2` (concentration), `iceTracer_3` (snow, m), `iceVelocityX/Y`,
+  `iceNetHeatFlux`, `iceFreshwaterFlux`, `iceTopTemperature`,
+  `iceStrainRate`. The template `postprocess.yaml` plots the ice fields.
+- **Limits of the module**: no ice crosses open boundaries (ice velocity is 0
+  at every boundary node); the salt flux of the ice is not passed to the
+  ocean; the mEVP cost grows with `mevp_rheol_steps` (raise `nstep_ice` on
+  large meshes).
+
 ---
 
 ## Package architecture
@@ -118,7 +153,7 @@ hotstart/boundary/nudging steps and the SST/Argo comparisons print `[N/A]`.
         ┌───────────────────────┼─────────────────────────┐
         ▼                       ▼                         ▼
    SchismDriver           UfsSchismDriver           SchismMiceDriver
-        │                       │                    (placeholder)
+        │                       │                    (SCHISM + sea ice)
  SchismWwmDriver        UfsSchismWw3Driver
         │                       │
    preprocess / run / postprocess  (per model)
@@ -195,7 +230,8 @@ stofs_ak_workflow/                      <- git repo (clone this to Hercules)
         ├── ufs_schism_ww3/             driver, preprocess/ (gen_ww3_shel/ounp),
         │                               run/setup_run.py, postprocess/ (wave_skill,
         │                               altimetry, plot_outputs_ww3), templates/
-        └── schism_mice/                placeholder driver
+        └── schism_mice/                driver, mice_nml.py, preprocess/ (gen_mice_nml,
+                                        gen_ice_hotstart), run/setup_run.py, templates/
 ```
 
 ---
@@ -463,7 +499,7 @@ the ones you want to change into your `<model_type>.yaml`.
 | Field | Description |
 |-------|-------------|
 | `project_id` | two-digit string (`"01"`) -> `M01`, `I01`, ... |
-| `model_type` | `schism`, `schism_2d`, `schism_wwm`, `ufs_schism`, `ufs_schism_ww3` (`schism_mice` = placeholder) |
+| `model_type` | `schism`, `schism_2d`, `schism_wwm`, `schism_mice`, `ufs_schism`, `ufs_schism_ww3` |
 | `project_dir` | absolute parent directory on HPC |
 | `start_date` / `end_date` | inclusive, `YYYY-MM-DD` |
 | `grouping` | `monthly` (default), `ndays`, or alias `daily` / `weekly` / `biweekly` |
@@ -559,8 +595,9 @@ are still chained). Configs copied from an older template that contain
 
 ## Steps by phase
 
-Legend: **S** = schism, **2** = schism_2d, **W** = schism_wwm, **U** =
-ufs_schism, **R** = ufs_schism_ww3 (WW3); "all" includes 2D unless noted.
+Legend: **S** = schism, **2** = schism_2d, **W** = schism_wwm, **I** =
+schism_mice (sea ice), **U** = ufs_schism, **R** = ufs_schism_ww3 (WW3); "all"
+includes 2D and I unless noted.
 Steps not valid for a model print `[N/A]`.
 
 ### Phase B: build (`--phase build`, first in `--phase all`)
@@ -591,15 +628,18 @@ Once per project, in this order; settings in `modelsetup.yaml`.
 | Step | Context | Models | Description |
 |------|---------|--------|-------------|
 | `download_hycom` | DTN | all but 2 | daily SSH/TS/UV via OPeNDAP; corrupt days (<=3 in a row) are interpolated |
-| `download_era5` | DTN | all | monthly ERA5 (CDS API) |
+| `download_hycom_ice` | DTN | I | HYCOM `sic/sih/siu/siv` at `start_date` 00 UTC -> `raw/hycom/ice/` (only when `fix/mice.nml` has `ihot_mice = 2`) |
+| `download_era5` | DTN | all | monthly ERA5 (CDS API); I also gets the snowfall rate |
 | `download_glofas` | DTN | all | annual GloFAS discharge (EWDS) |
 | `aggregate_hycom` | any | all but 2 | daily -> `SSH_1/TS_1/UV_1` stacks per group; missing days inside a group are interpolated (<=3 in a row), otherwise that stack fails |
 | `plot_hycom`, `plot_sflux` | SLURM array | all (`plot_hycom` not 2) | debug GIFs |
-| `gen_sflux` | SLURM array | all | ERA5 -> sflux files per group |
+| `gen_sflux` | SLURM array | all | ERA5 -> sflux files per group (I: `srate` in `sflux_prc`) |
 | `gen_bctides` | interactive | all | `bctides.in` from TPXO9 |
 | `gen_source` | interactive | all | `source.nc` from GloFAS |
 | `gen_param` | interactive | all | `param.nml` per group (dates, `rnday`, `nhot_write`, `ihot`) |
+| `gen_mice_nml` | interactive | I | `mice.nml` per group: `ihot_mice` from `fix/` for the first group, `1` (ice restart) for the others |
 | `gen_hotstart` | SLURM | all but 2 (cold start) | `hotstart.nc` (first group only) |
+| `gen_ice_hotstart` | SLURM (after `gen_hotstart`) | I | HYCOM ice -> `sic2/sih2/siu2/siv2` in the first `hotstart.nc` (only when `ihot_mice = 2`) |
 | `gen_3Dth`, `gen_nudge` | SLURM array | all but 2 | `*.th.nc`, `TEM/SAL_nu.nc` |
 | `plot_hycom_outputs` | SLURM array (after the three above, `afterany`) | all but 2 | verifies the HYCOM-derived inputs and plots them (below) |
 | `gen_wwminput` | interactive | W | `wwminput.nml` per group (`BEGTC/ENDTC` from `param.nml`) |

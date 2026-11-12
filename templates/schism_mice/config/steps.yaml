@@ -1,0 +1,102 @@
+# =============================================================================
+# steps.yaml — Step execution flags
+# =============================================================================
+# Set a step to true to enable it, false to skip it.
+# This template is for model_type: schism_mice (SCHISM + multi-class sea ice). It
+# lists the SCHISM steps plus the three ice steps (download_hycom_ice,
+# gen_mice_nml, gen_ice_hotstart).
+# Run the workflow one step at a time: enable one step, test it,
+# then disable it and enable the next.
+#
+# Steps are grouped by phase. Setup steps run with --phase setup (below).
+# Preprocessing steps run with:
+#     stofs-ak --run --config <config_dir>            (phase defaults to preprocess)
+# Run-management and post-processing steps run with:
+#     stofs-ak --run --phase run         --config <config_dir>
+#     stofs-ak --run --phase postprocess --config <config_dir>
+#
+# Phase B — Build (SLURM): compile the executables listed in build.yaml into M{ID}/bin/.
+# Targets already built (same recipe) are skipped. Runs first in --phase all, or alone with:
+#     stofs-ak --run --phase build --config <config_dir>      (--only <target> for one)
+build_executables: true
+
+# Setup — fix/ files made from the mesh, once per project (settings in
+# modelsetup.yaml). Runs after the build in --phase all, or alone with:
+#     stofs-ak --run --phase setup --config <config_dir>      (--only <step> for one)
+gen_vgrid:        false # fix/vgrid.in from fix/hgrid.gr3 and the vgrid: block (kept if present)
+gen_partition:    false # fix/partition.prop for run_test's compute cores (-n minus scribes),
+                        # made with fix/vgrid.in (needs build target partition_tools)
+                        # off: the reference meshes come with their partition.prop
+gen_constant_gr3: false # constant-value property files from constant_gr3 (kept if present)
+replicate_fix:    false # property .gr3 files, tvd.prop, estuary.gr3 interpolated from
+                        # replicate_from (a project or fix folder covering this domain)
+gen_nudge_gr3:    false # fix/TEM_nudge.gr3 + SAL_nudge.gr3 along the open boundaries
+                        # (nudge_gr3; kept if present)
+gen_estuary:      true  # fix/estuary.gr3 + bin/*.in files for the HYCOM utilities
+inspect_mesh:     true  # Plot all fix/ input files + mesh resolution + vertical layers (SLURM)
+
+# Phase 1 — DTN only (requires internet access):
+download_hycom:  true
+download_hycom_ice: true   # HYCOM sea ice (sic, sih, siu, siv) at start_date 00 UTC,
+                           # when fix/mice.nml ihot_mice = 2 (ice from HYCOM)
+download_era5:   true   # Download ERA5 monthly raw files (one file per month);
+                        # includes the snowfall rate for this model
+download_glofas: true   # Download GloFAS v4 reanalysis discharge (one file per year)
+
+# Phase 2 — Any node, no internet required:
+aggregate_hycom: true  # Concatenate HYCOM daily -> monthly SCHISM stacks
+
+# plot_hycom submits SLURM job arrays (one task per group).
+plot_hycom: true   # HYCOM debug GIFs (temperature, salinity, ssh)
+plot_sflux:     true   # ERA5/sflux debug GIFs (6-hourly, all variables)
+
+# Phase 3 — SCHISM preprocessing (no internet required):
+gen_bctides:  true   # Step B: create bctides.in per month from TPXO9 (interactive)
+gen_source:   true   # Step C: GloFAS discharge -> source.nc per month (interactive)
+gen_param:    true   # Step D: copy fix/param.nml to each I{ID}_YYYYMM/ with correct dates (interactive)
+gen_mice_nml: true   # copy fix/mice.nml to each I{ID}_YYYYMM/: ihot_mice from fix/ for the
+                     # first group, 1 (ice restart) for the others (interactive)
+gen_sflux:    true   # Step E: ERA5 raw -> sflux_air/prc/rad per month (SLURM array);
+                     # sflux_prc gets srate (snowfall) for this model
+gen_hotstart: true   # Step F: create hotstart.nc (once, first month only, SLURM)
+gen_ice_hotstart: true   # HYCOM ice -> sic2/sih2/siu2/siv2 in the first hotstart.nc
+                         # (SLURM, after gen_hotstart; only when ihot_mice = 2)
+gen_3Dth:     true   # Step G: create *[23D].th.nc files (SLURM array, one job per month)
+gen_nudge:    true   # Step H: create TEM/SAL_nu.nc files (SLURM array, one job per month)
+plot_hycom_outputs: true   # Verify + plot the inputs built from HYCOM (th files, nudging, hotstart);
+                           # fails if they are missing, empty or constant (SLURM array)
+
+# =============================================================================
+# Phase 4 — Run management
+# Run with:  stofs-ak --run --phase run --config <config_dir>
+# =============================================================================
+setup_run:  true   # Populate R{ID}_YYYYMM/ dirs: symlink fix/ + I{ID}_YYYYMM/
+                    # inputs, copy executables, adapt run_test/run_comb job cards,
+                    # write auto_hotstart.py (interactive, fast)
+submit_run: true   # Run auto_hotstart.py month-by-month, chaining hotstarts.
+                    # Blocking — launch inside screen/tmux (see tutorial).
+
+# =============================================================================
+# Phase 5 — Post-processing
+# Run with:  stofs-ak --run --phase postprocess --config <config_dir>
+# Variables/layers/cadence configured in postprocess.yaml.
+# =============================================================================
+diag_run_plots:  true   # Per-output-stack diagnostic frames -> D{ID} DURING the
+                         # run (dispatched by auto_hotstart.py). Enable BEFORE
+                         # setup_run so it is baked into the run directories.
+                         # model_type: schism ONLY (ignored for schism_wwm and UFS).
+download_sst:    true   # DTN: download LEO L3S-DY satellite SST + subset -> M{ID}/obs/
+download_coops:  true   # DTN: download NOAA CO-OPS station obs (WL, water temp, air
+                         # pressure, wind) -> M{ID}/obs/coops/ (based on fix/station.in)
+download_ndbc:   true   # DTN: download NOAA NDBC buoy obs (WTMP, wind, PRES) ->
+                         # M{ID}/obs/ndbc/ (annual + current-year monthly + realtime)
+download_argo:   true   # DTN: download Argo float profiles (IFREMER GDAC via OCSTrack)
+                         # -> M{ID}/obs/argo/{region}/processed/ (domain-cropped)
+plot_outputs:    true   # Full-run field GIFs -> P{ID} (SLURM: parallel frames + GIF)
+compare_sst:     true   # Model vs satellite SST GIF -> P{ID} (needs download_sst first)
+station_skill:   true   # Interactive: CO-OPS/NDBC obs vs model staout_* time-series
+                         # plots + skill_metrics.csv -> P{ID} (needs download_coops/ndbc first)
+collocate_argo:  true   # Interactive: OCSTrack 3-D collocation of SCHISM T/S profiles
+                         # vs Argo floats -> P{ID}/P{ID}_collocate_argo/ (needs download_argo)
+plot_argo:       true   # Interactive: Argo diagnostic plots (location map, skill
+                         # histograms, profile matrix) -> P{ID}/P{ID}_collocate_argo/

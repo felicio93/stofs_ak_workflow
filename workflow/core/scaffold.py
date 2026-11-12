@@ -23,7 +23,8 @@ import sys
 from pathlib import Path
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "templates"
-MODELS = ("schism", "schism_2d", "schism_wwm", "ufs_schism", "ufs_schism_ww3")
+MODELS = ("schism", "schism_2d", "schism_wwm", "schism_mice", "ufs_schism",
+          "ufs_schism_ww3")
 
 # Files made by a step (absence before that step is not an error).
 GENERATED = {
@@ -52,6 +53,7 @@ TEMPLATE_FILES = {
     "schism":     _JOB_CARDS,
     "schism_2d":  _JOB_CARDS + ["vgrid.in"],
     "schism_wwm": _JOB_CARDS + ["wwminput.nml"],
+    "schism_mice": _JOB_CARDS + ["mice.nml", "namelist.icepack"],
     "ufs_schism": _JOB_CARDS + ["datm_in", "datm.streams", "fd_ufs.yaml",
                                 "noahmptable.tbl", "model_configure"],
     "ufs_schism_ww3": _JOB_CARDS + [
@@ -69,6 +71,7 @@ REQUIRED = {
     "schism":     _REQUIRED_BASE,
     "schism_2d":  _REQUIRED_BASE,
     "schism_wwm": _REQUIRED_BASE + ["wwminput.nml", "station.in"],
+    "schism_mice": _REQUIRED_BASE + ["mice.nml", "namelist.icepack"],
     "ufs_schism": _REQUIRED_BASE + ["datm_in", "datm.streams", "fd_ufs.yaml",
                                     "noahmptable.tbl", "model_configure"],
     "ufs_schism_ww3": _REQUIRED_BASE + [
@@ -83,7 +86,8 @@ _WW3_DEFAULT_FILES = ["mod_def.ww3", "namelists.nml", "ww3_points.list",
 
 # fix/ starter files are looked up in these template folders, first match wins:
 # ufs_schism_ww3 only stores what differs from ufs_schism.
-TEMPLATE_CHAIN = {"ufs_schism_ww3": ("ufs_schism_ww3", "ufs_schism")}
+TEMPLATE_CHAIN = {"ufs_schism_ww3": ("ufs_schism_ww3", "ufs_schism"),
+                  "schism_mice":    ("schism_mice", "schism")}
 _MODULES_RE = re.compile(r"@@MODULES:([a-z_]+)@@")
 
 
@@ -121,6 +125,8 @@ def _linked_files(model: str, cfg: dict = None) -> list:
         from workflow.models.schism_2d.run.setup_run import FIX_LINKS as f
     elif model == "schism_wwm":
         from workflow.models.schism_wwm.run.setup_run import FIX_LINKS as f
+    elif model == "schism_mice":
+        from workflow.models.schism_mice.run.setup_run import FIX_LINKS as f
     elif model == "ufs_schism":
         from workflow.models.ufs_schism.run.setup_run import FIX_LINKS as f
     else:
@@ -211,6 +217,40 @@ def _consistency(model: str, cfg: dict, fix: Path) -> list:
     warns += _domain_covers_mesh(cfg, fix)
     if model == "schism_2d":
         warns += _consistency_2d(cfg, fix)
+    if model == "schism_mice":
+        warns += _consistency_mice(cfg, fix)
+    return warns
+
+
+def _consistency_mice(cfg: dict, fix: Path) -> list:
+    """SCHISM+MICE: mice.nml complete, and the param.nml settings the ice
+    module checks at start-up (mice_init.F90, mice_step.F90)."""
+    from workflow.models.schism_mice import mice_nml
+    warns = []
+    mn = fix / "mice.nml"
+    if mn.exists():
+        warns += mice_nml.check(mn)
+    pn = fix / "param.nml"
+    if pn.exists():
+        text = pn.read_text()
+        for key, want in (("nws", 2), ("ihconsv", 1)):
+            v = _nml_int(text, key)
+            if v is not None and v != want:
+                warns.append(f"param.nml {key}={v}: the ice thermodynamics "
+                             f"need {key}={want}")
+        v = _nml_int(text, "nstep_ice")
+        if v is None or v <= 0:
+            warns.append("param.nml needs nstep_ice > 0 (ice step every "
+                         "nstep_ice SCHISM steps)")
+        if not re.search(r"(?m)^\s*iof_mice\(\s*7\s*\)\s*=\s*1", text):
+            warns.append("param.nml iof_mice(7) is not 1: no ice "
+                         "concentration output (iceTracer_2)")
+    hg = fix / "hgrid.gr3"
+    if hg.exists():
+        from workflow.core.mesh_parser import has_quads
+        if has_quads(hg):
+            warns.append("hgrid.gr3 has quadrilaterals: the ice module "
+                         "needs a triangle-only mesh")
     return warns
 
 

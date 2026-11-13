@@ -117,7 +117,7 @@ def mesh_bins(cfg, obs: dict) -> dict:
     ny, nx = obs["conc"].shape
     if cache.exists():
         z = np.load(cache)
-        if z["cell_area"].shape == (ny, nx):
+        if z["cell_area"].shape == (ny, nx) and "blon" in z.files:
             return {k: z[k] for k in z.files}
 
     from pyproj import Proj, Transformer
@@ -151,7 +151,7 @@ def mesh_bins(cfg, obs: dict) -> dict:
            "cell_area": cell_area, "coverage": covered / cell_area}
 
     # mesh boundaries in projected coordinates, for the maps
-    xb, yb = [], []
+    xb, yb, blon, blat = [], [], [], []
     for hp in (model_dir(cfg) / "fix" / "hgrid.ll",
                model_dir(cfg) / "fix" / "hgrid.gr3"):
         if hp.exists():
@@ -163,8 +163,11 @@ def mesh_bins(cfg, obs: dict) -> dict:
                                           np.asarray(la_))
                     xb += list(bx) + [np.nan]
                     yb += list(by) + [np.nan]
+                    blon += list(lo_) + [np.nan]
+                    blat += list(la_) + [np.nan]
             break
     out["xb"], out["yb"] = np.asarray(xb), np.asarray(yb)
+    out["blon"], out["blat"] = np.asarray(blon), np.asarray(blat)
 
     cache.parent.mkdir(parents=True, exist_ok=True)
     tmp = cache.with_name(f"mesh_bins.{np.random.randint(1 << 30)}.tmp.npz")
@@ -265,6 +268,9 @@ def compare_day(cfg, d: date) -> bool:
 
 
 def _plot_day(cfg, d, obs, mod, valid, bins, st):
+    """Model | NSIDC | difference. Default lon/lat axes, every NSIDC cell
+    drawn as its own quadrilateral (no resampling);
+    compare_seaice_projection: polar draws the native NSIDC grid."""
     import numpy as np
     import matplotlib
     matplotlib.use("Agg")
@@ -279,31 +285,62 @@ def _plot_day(cfg, d, obs, mod, valid, bins, st):
     r0, r1 = max(rows.min() - pad, 0), min(rows.max() + pad + 1, len(y))
     c0, c1 = max(cols.min() - pad, 0), min(cols.max() + pad + 1, len(x))
     sl = (slice(r0, r1), slice(c0, c1))
-    xs, ys = xe[c0:c1 + 1], ye[r0:r1 + 1]
-    Xc, Yc = np.meshgrid(x[c0:c1], y[r0:r1])
+    Xe, Ye = np.meshgrid(xe[c0:c1 + 1], ye[r0:r1 + 1])     # cell corners
+    Xc, Yc = np.meshgrid(x[c0:c1], y[r0:r1])               # cell centres
+
+    polar = str(cfg.get("compare_seaice_projection", "lonlat")).lower() \
+        == "polar"
+    if polar:
+        CX, CY, PX, PY = Xe, Ye, Xc, Yc
+        bx, by = bins["xb"], bins["yb"]
+        xlim = (Xe.min(), Xe.max())
+        ylim = (Ye.min(), Ye.max())
+        aspect = 1.0
+    else:
+        from pyproj import Transformer
+        inv = Transformer.from_crs(obs["proj4"], "EPSG:4326", always_xy=True)
+        wrap = (lambda v: v % 360.0) \
+            if str(cfg.get("lon_reference", "360")) == "360" \
+            else (lambda v: (v + 180.0) % 360.0 - 180.0)
+        CX, CY = inv.transform(Xe, Ye)
+        PX, PY = inv.transform(Xc, Yc)
+        CX, PX = wrap(CX), wrap(PX)
+        bx, by = wrap(bins["blon"]), bins["blat"]
+        vr = valid[sl]
+        cxv = np.concatenate([CX[:-1, :-1][vr], CX[1:, 1:][vr]])
+        cyv = np.concatenate([CY[:-1, :-1][vr], CY[1:, 1:][vr]])
+        xlim = (max(cxv.min() - 0.5, float(cfg["lon_min"])),
+                min(cxv.max() + 0.5, float(cfg["lon_max"])))
+        ylim = (max(cyv.min() - 0.3, float(cfg["lat_min"])),
+                min(cyv.max() + 0.3, float(cfg["lat_max"])))
+        aspect = 1.0 / np.cos(np.deg2rad(0.5 * (ylim[0] + ylim[1])))
 
     m = np.where(valid, mod, np.nan)[sl]
     o = np.where(valid, obs["conc"], np.nan)[sl]
     panels = (("Model (on NSIDC 25 km cells)", m, "Blues_r", 0, 1),
               ("NOAA/NSIDC CDR", o, "Blues_r", 0, 1),
               ("Model - NSIDC", m - o, "RdBu_r", -1, 1))
-    w = (xs[-1] - xs[0]) / 1e3
-    h = abs(ys[-1] - ys[0]) / 1e3
+    w = xlim[1] - xlim[0]
+    h = (ylim[1] - ylim[0]) * aspect
     fig, axes = plt.subplots(1, 3, figsize=(15, 15 / 3 * h / w + 1.0),
                              constrained_layout=True)
     for ax, (title, a, cmap, vmin, vmax) in zip(axes, panels):
-        im = ax.pcolormesh(xs, ys, np.ma.masked_invalid(a), cmap=cmap,
+        im = ax.pcolormesh(CX, CY, np.ma.masked_invalid(a), cmap=cmap,
                            vmin=vmin, vmax=vmax, shading="flat")
-        ax.plot(bins["xb"], bins["yb"], color="0.4", lw=0.4)
+        ax.plot(bx, by, color="0.4", lw=0.4)
         for f, ls, c in ((m, "-", "red"), (o, "--", "black")):
             ff = np.ma.masked_invalid(f)      # no edge along the mask
             if ff.count() and ff.max() >= ICE_EDGE:
-                ax.contour(Xc, Yc, ff, levels=[ICE_EDGE], colors=c,
+                ax.contour(PX, PY, ff, levels=[ICE_EDGE], colors=c,
                            linewidths=0.8, linestyles=ls)
-        ax.set_xlim(xs[0], xs[-1])
-        ax.set_ylim(min(ys[0], ys[-1]), max(ys[0], ys[-1]))
-        ax.set_aspect("equal")
-        ax.set_xticks([]); ax.set_yticks([])
+        ax.set_xlim(*xlim)
+        ax.set_ylim(*ylim)
+        ax.set_aspect(aspect)
+        if polar:
+            ax.set_xticks([]); ax.set_yticks([])
+        else:
+            ax.set_xlabel("longitude (°E)"); ax.set_ylabel("latitude (°N)")
+            ax.tick_params(labelsize=8)
         ax.set_title(title, fontsize=10)
         fig.colorbar(im, ax=ax, shrink=0.8,
                      label="concentration" if vmin == 0 else "difference")

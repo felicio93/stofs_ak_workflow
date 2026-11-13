@@ -97,8 +97,18 @@ class SchismMiceDriver(SchismDriver):
         if only not in ice_steps:
             from workflow.models.schism.postprocess import postprocess_phase
             postprocess_phase(self.cfg, self.config_dir, only=only)
-        en = lambda step: (step == only) if only is not None \
-            else bool(self.cfg.get(step, False))
+
+        def en(step):
+            # The ice comparison is what this model is run for: a steps.yaml
+            # made before these steps existed (no line for them) runs them;
+            # an explicit false turns them off.
+            if only is not None:
+                return step == only
+            if step not in self.cfg:
+                print(f"[NOTE] {step}: not in steps.yaml, runs by default for "
+                      f"model_type=schism_mice (add '{step}: false' to skip)")
+                return True
+            return bool(self.cfg[step])
 
         if en("download_seaice"):
             from workflow.core.environment import dtn_skip, is_dtn

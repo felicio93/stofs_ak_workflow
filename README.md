@@ -139,7 +139,10 @@ parameter, outputs, known issues) are in the study note
   covers for at least `compare_seaice_min_coverage` (0.5): daily maps of
   model / NSIDC / difference with both 15 % ice edges, and extent, ice area,
   integrated ice-edge error, bias and RMSE (CSV, time series, GIF) in
-  `P{ID}/P{ID}_compare_seaice/`.
+  `P{ID}/P{ID}_compare_seaice/`. Maps in lon/lat, each NSIDC cell drawn as
+  its own quadrilateral (`compare_seaice_projection: polar` for the native
+  grid). Both steps run in `--phase postprocess` also when `steps.yaml` has
+  no line for them (projects made before they existed); `false` skips them.
 - **Outputs** (scribe I/O, `out2d`): `iceTracer_1` (ice volume per area, m),
   `iceTracer_2` (concentration), `iceTracer_3` (snow, m), `iceVelocityX/Y`,
   `iceNetHeatFlux`, `iceFreshwaterFlux`, `iceTopTemperature`,

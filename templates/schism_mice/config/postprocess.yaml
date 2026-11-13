@@ -171,6 +171,7 @@ compare_seaice_end:   null      # null = end_date
 compare_seaice_min_coverage: 0.5
 compare_seaice_fps:  4
 compare_seaice_dpi:  120
+compare_seaice_projection: lonlat   # lonlat (as compare_sst) or polar (the native NSIDC grid)
 
 # =============================================================================
 # Frame retention

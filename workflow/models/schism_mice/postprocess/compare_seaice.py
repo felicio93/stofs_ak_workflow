@@ -10,11 +10,17 @@ by its area) and compared on the cells that are NSIDC ocean
 mesh for at least compare_seaice_min_coverage of their area (default 0.5).
 
 Per day (Stage 1, SLURM array, one task per few days):
-    frames/seaice__<YYYYMMDD>.jpg   model | NSIDC | model - NSIDC on the
-                                    25 km cells, with both 15 % ice edges
-    stats/seaice__<YYYYMMDD>.json   statistics below
-Then (Stage 2, after Stage 1): compare_seaice.gif, compare_seaice_stats.csv
-and compare_seaice_timeseries.png in P{ID}/P{ID}_compare_seaice/.
+    frames/seaice__<YYYYMMDD>.jpg       model (on its mesh) above NSIDC (each
+                                        25 km cell in lon/lat), in the
+                                        compare_sst layout
+    frames_diff/seaice_diff__<YYYYMMDD>.jpg
+                                        model - NSIDC, drawn on the mesh (each
+                                        node shows its 25 km cell) with the
+                                        plot_outputs frame style
+    stats/seaice__<YYYYMMDD>.json       statistics below
+Then (Stage 2, after Stage 1): compare_seaice.gif, compare_seaice_diff.gif,
+compare_seaice_stats.csv and compare_seaice_timeseries.png in
+P{ID}/P{ID}_compare_seaice/.
 
 Statistics (on the compared cells; areas use the true cell area):
     extent      area of cells with concentration >= 0.15   [km2]
@@ -110,14 +116,14 @@ def _node_areas(lon, lat, tris):
 def mesh_bins(cfg, obs: dict) -> dict:
     """{'cell': NSIDC cell index of every node (-1 outside the grid),
     'node_area': m2, 'cell_area': true area of every cell (ny, nx) m2,
-    'coverage': mesh area / cell area (ny, nx), 'xb'/'yb': boundaries}.
+    'coverage': mesh area / cell area (ny, nx)}.
     Cached in P{ID}_compare_seaice/mesh_bins.npz."""
     import numpy as np
     cache = _out_dir(cfg) / "mesh_bins.npz"
     ny, nx = obs["conc"].shape
     if cache.exists():
         z = np.load(cache)
-        if z["cell_area"].shape == (ny, nx) and "blon" in z.files:
+        if z["cell_area"].shape == (ny, nx):
             return {k: z[k] for k in z.files}
 
     from pyproj import Proj, Transformer
@@ -150,24 +156,6 @@ def mesh_bins(cfg, obs: dict) -> dict:
     out = {"cell": cell.astype(np.int64), "node_area": node_area,
            "cell_area": cell_area, "coverage": covered / cell_area}
 
-    # mesh boundaries in projected coordinates, for the maps
-    xb, yb, blon, blat = [], [], [], []
-    for hp in (model_dir(cfg) / "fix" / "hgrid.ll",
-               model_dir(cfg) / "fix" / "hgrid.gr3"):
-        if hp.exists():
-            from workflow.core.plot_style import read_mesh_boundaries
-            b = read_mesh_boundaries(hp)
-            for kind in ("land", "island", "open"):
-                for lo_, la_ in b.get(kind, []):
-                    bx, by = tr.transform((np.asarray(lo_) + 180) % 360 - 180,
-                                          np.asarray(la_))
-                    xb += list(bx) + [np.nan]
-                    yb += list(by) + [np.nan]
-                    blon += list(lo_) + [np.nan]
-                    blat += list(la_) + [np.nan]
-            break
-    out["xb"], out["yb"] = np.asarray(xb), np.asarray(yb)
-    out["blon"], out["blat"] = np.asarray(blon), np.asarray(blat)
 
     cache.parent.mkdir(parents=True, exist_ok=True)
     tmp = cache.with_name(f"mesh_bins.{np.random.randint(1 << 30)}.tmp.npz")
@@ -260,102 +248,154 @@ def compare_day(cfg, d: date) -> bool:
     sdir = _out_dir(cfg) / "stats"
     sdir.mkdir(parents=True, exist_ok=True)
     (sdir / f"seaice__{d:%Y%m%d}.json").write_text(json.dumps(st, indent=1))
-    _plot_day(cfg, d, obs, m, valid, bins, st)
+    _plot_pair(cfg, d, model, why, obs, obs_file)
+    cdiff = np.where(valid, m - o, np.nan).ravel()
+    node_diff = np.where(cell >= 0, cdiff[np.clip(cell, 0, None)], np.nan)
+    _plot_diff(cfg, d, node_diff, st)
     print(f"  {d}: extent model {st['extent_model_km2']:.0f} / NSIDC "
           f"{st['extent_obs_km2']:.0f} km2, IIEE {st['iiee_km2']:.0f} km2, "
           f"bias {st['bias']:+.3f}, RMSE {st['rmse']:.3f}")
     return True
 
 
-def _plot_day(cfg, d, obs, mod, valid, bins, st):
-    """Model | NSIDC | difference. Default lon/lat axes, every NSIDC cell
-    drawn as its own quadrilateral (no resampling);
-    compare_seaice_projection: polar draws the native NSIDC grid."""
-    import numpy as np
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
+_MESH = {}
 
+
+def _mesh(cfg):
+    """(x, y, depth, triangulation, is_tri, boundaries) of the run's mesh,
+    loaded once per process."""
+    key = cfg["project_id"]
+    if key not in _MESH:
+        stacks = pc.list_output_stacks(_outputs(cfg, list_groups(cfg)[0]),
+                                       "out2d")
+        x, y, depth, triang, is_tri = pc.load_mesh(stacks[0])
+        boundaries = None
+        for hp in (model_dir(cfg) / "fix" / "hgrid.ll",
+                   model_dir(cfg) / "fix" / "hgrid.gr3"):
+            if hp.exists():
+                try:
+                    from workflow.core.plot_style import read_mesh_boundaries
+                    boundaries = read_mesh_boundaries(hp)
+                except Exception:
+                    boundaries = None
+                break
+        _MESH[key] = (x, y, depth, triang, is_tri, boundaries)
+    return _MESH[key]
+
+
+def _obs_lonlat(cfg, obs):
+    """Cell-corner lon/lat (ny+1, nx+1) of the NSIDC grid in the domain's
+    lon_reference, and a (ny, nx) mask of the cells to draw (inside the
+    domain box, not split by the lon seam)."""
+    import numpy as np
+    from pyproj import Transformer
     x, y = obs["x"], obs["y"]
     dx, dy = x[1] - x[0], y[1] - y[0]
     xe = np.append(x - dx / 2, x[-1] + dx / 2)
     ye = np.append(y - dy / 2, y[-1] + dy / 2)
-    rows, cols = np.nonzero(valid)
-    pad = 3
-    r0, r1 = max(rows.min() - pad, 0), min(rows.max() + pad + 1, len(y))
-    c0, c1 = max(cols.min() - pad, 0), min(cols.max() + pad + 1, len(x))
-    sl = (slice(r0, r1), slice(c0, c1))
-    Xe, Ye = np.meshgrid(xe[c0:c1 + 1], ye[r0:r1 + 1])     # cell corners
-    Xc, Yc = np.meshgrid(x[c0:c1], y[r0:r1])               # cell centres
-
-    polar = str(cfg.get("compare_seaice_projection", "lonlat")).lower() \
-        == "polar"
-    if polar:
-        CX, CY, PX, PY = Xe, Ye, Xc, Yc
-        bx, by = bins["xb"], bins["yb"]
-        xlim = (Xe.min(), Xe.max())
-        ylim = (Ye.min(), Ye.max())
-        aspect = 1.0
+    inv = Transformer.from_crs(obs["proj4"], "EPSG:4326", always_xy=True)
+    lon_c, lat_c = inv.transform(*np.meshgrid(xe, ye))
+    lon_m, lat_m = inv.transform(*np.meshgrid(x, y))
+    if str(cfg.get("lon_reference", "360")) == "360":
+        lon_c, lon_m = lon_c % 360.0, lon_m % 360.0
     else:
-        from pyproj import Transformer
-        inv = Transformer.from_crs(obs["proj4"], "EPSG:4326", always_xy=True)
-        wrap = (lambda v: v % 360.0) \
-            if str(cfg.get("lon_reference", "360")) == "360" \
-            else (lambda v: (v + 180.0) % 360.0 - 180.0)
-        CX, CY = inv.transform(Xe, Ye)
-        PX, PY = inv.transform(Xc, Yc)
-        CX, PX = wrap(CX), wrap(PX)
-        bx, by = wrap(bins["blon"]), bins["blat"]
-        vr = valid[sl]
-        cxv = np.concatenate([CX[:-1, :-1][vr], CX[1:, 1:][vr]])
-        cyv = np.concatenate([CY[:-1, :-1][vr], CY[1:, 1:][vr]])
-        xlim = (max(cxv.min() - 0.5, float(cfg["lon_min"])),
-                min(cxv.max() + 0.5, float(cfg["lon_max"])))
-        ylim = (max(cyv.min() - 0.3, float(cfg["lat_min"])),
-                min(cyv.max() + 0.3, float(cfg["lat_max"])))
-        aspect = 1.0 / np.cos(np.deg2rad(0.5 * (ylim[0] + ylim[1])))
+        lon_c = (lon_c + 180.0) % 360.0 - 180.0
+        lon_m = (lon_m + 180.0) % 360.0 - 180.0
+    corners = np.stack([lon_c[:-1, :-1], lon_c[:-1, 1:],
+                        lon_c[1:, :-1], lon_c[1:, 1:]])
+    seam = corners.max(axis=0) - corners.min(axis=0) > 10.0
+    box = ((lon_m >= float(cfg["lon_min"]) - 2) & (lon_m <= float(cfg["lon_max"]) + 2)
+           & (lat_m >= float(cfg["lat_min"]) - 2) & (lat_m <= float(cfg["lat_max"]) + 2))
+    return lon_c, lat_c, box & ~seam
 
-    m = np.where(valid, mod, np.nan)[sl]
-    o = np.where(valid, obs["conc"], np.nan)[sl]
-    panels = (("Model (on NSIDC 25 km cells)", m, "Blues_r", 0, 1),
-              ("NOAA/NSIDC CDR", o, "Blues_r", 0, 1),
-              ("Model - NSIDC", m - o, "RdBu_r", -1, 1))
-    w = xlim[1] - xlim[0]
-    h = (ylim[1] - ylim[0]) * aspect
-    fig, axes = plt.subplots(1, 3, figsize=(15, 15 / 3 * h / w + 1.0),
-                             constrained_layout=True)
-    for ax, (title, a, cmap, vmin, vmax) in zip(axes, panels):
-        im = ax.pcolormesh(CX, CY, np.ma.masked_invalid(a), cmap=cmap,
-                           vmin=vmin, vmax=vmax, shading="flat")
-        ax.plot(bx, by, color="0.4", lw=0.4)
-        for f, ls, c in ((m, "-", "red"), (o, "--", "black")):
-            ff = np.ma.masked_invalid(f)      # no edge along the mask
-            if ff.count() and ff.max() >= ICE_EDGE:
-                ax.contour(PX, PY, ff, levels=[ICE_EDGE], colors=c,
-                           linewidths=0.8, linestyles=ls)
-        ax.set_xlim(*xlim)
-        ax.set_ylim(*ylim)
-        ax.set_aspect(aspect)
-        if polar:
-            ax.set_xticks([]); ax.set_yticks([])
-        else:
-            ax.set_xlabel("longitude (°E)"); ax.set_ylabel("latitude (°N)")
-            ax.tick_params(labelsize=8)
+
+def _plot_pair(cfg, d, model_nodes, model_desc, obs, obs_file):
+    """Model above NSIDC, in the compare_sst layout (panel size, isobaths,
+    boundary colours, colorbars, titles)."""
+    import gc
+    import numpy as np
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.axes_grid1 import make_axes_locatable
+
+    x, y, depth, triang, _is_tri, boundaries = _mesh(cfg)
+    lon_c, lat_c, draw = _obs_lonlat(cfg, obs)
+    ob = np.ma.masked_where(~(draw & obs["ocean"] & np.isfinite(obs["conc"])),
+                            obs["conc"])
+
+    vmin, vmax = 0.0, 1.0
+    cmap     = cfg.get("compare_seaice_cmap", "Blues_r")
+    dpi      = int(cfg.get("compare_seaice_dpi", 150))
+    isobaths = cfg.get("isobaths", [200, 2000])
+    if isobaths:
+        isobaths = [float(v) for v in isobaths]
+    lon_min, lon_max = float(cfg["lon_min"]), float(cfg["lon_max"])
+    lat_min, lat_max = float(cfg["lat_min"]), float(cfg["lat_max"])
+
+    panel_w = 10.0
+    panel_h = panel_w * (lat_max - lat_min) / (lon_max - lon_min)
+    fig = plt.figure(figsize=(panel_w, panel_h * 2 + 0.8))
+    ax1 = fig.add_subplot(2, 1, 1)
+    ax2 = fig.add_subplot(2, 1, 2)
+
+    tp1 = ax1.tripcolor(triang, np.asarray(model_nodes), shading="flat",
+                        cmap=cmap, vmin=vmin, vmax=vmax, rasterized=True)
+    tp2 = ax2.pcolormesh(lon_c, lat_c, ob, cmap=cmap, vmin=vmin, vmax=vmax,
+                         rasterized=True)
+    titles = (f"SCHISM sea-ice concentration — {d:%Y-%m-%d}  ({model_desc})",
+              f"NOAA/NSIDC CDR sea-ice concentration (25 km) — {d:%Y-%m-%d}"
+              f"  ({obs_file.name.split('_')[-1].replace('.nc', '')})")
+    labels = ("Model ice concentration", "NSIDC ice concentration")
+    for ax, tp, title, label in ((ax1, tp1, titles[0], labels[0]),
+                                 (ax2, tp2, titles[1], labels[1])):
+        if isobaths:
+            try:
+                ax.tricontour(triang, np.asarray(depth), levels=isobaths,
+                              colors="k", linewidths=0.4, alpha=0.6)
+            except Exception:
+                pass
+        if boundaries is not None:
+            for lo, la in boundaries.get("open", []):
+                ax.plot(lo, la, color="blue", linewidth=1.0, alpha=0.8)
+            for lo, la in boundaries.get("land", []):
+                ax.plot(lo, la, color="red", linewidth=0.6, alpha=0.7)
+            for lo, la in boundaries.get("island", []):
+                ax.plot(lo, la, color="green", linewidth=0.6, alpha=0.7)
+        cax = make_axes_locatable(ax).append_axes("right", size="3%", pad=0.1)
+        fig.colorbar(tp, cax=cax).set_label(label, fontsize=9)
         ax.set_title(title, fontsize=10)
-        fig.colorbar(im, ax=ax, shrink=0.8,
-                     label="concentration" if vmin == 0 else "difference")
-    fig.suptitle(
-        f"Sea-ice concentration {d}   |   extent model "
-        f"{st['extent_model_km2']/1e3:.0f}k / NSIDC "
-        f"{st['extent_obs_km2']/1e3:.0f}k km²   IIEE "
-        f"{st['iiee_km2']/1e3:.0f}k km²   bias {st['bias']:+.2f}   "
-        f"RMSE {st['rmse']:.2f}\n15 % ice edge: model red, NSIDC black dashed",
-        fontsize=10)
+        ax.set_xlim(lon_min, lon_max)
+        ax.set_ylim(lat_min, lat_max)
+        ax.set_aspect("equal")
+
+    fig.tight_layout(pad=0.5, h_pad=0.8)
     fdir = _out_dir(cfg) / "frames"
     fdir.mkdir(parents=True, exist_ok=True)
-    fig.savefig(fdir / f"seaice__{d:%Y%m%d}.jpg",
-                dpi=int(cfg.get("compare_seaice_dpi", 120)))
+    fig.savefig(str(fdir / f"seaice__{d:%Y%m%d}.jpg"), dpi=dpi,
+                format="jpeg", bbox_inches="tight", pil_kwargs={"quality": 90})
     plt.close(fig)
+    gc.collect()
+
+
+def _plot_diff(cfg, d, node_diff, st):
+    """Model - NSIDC on the mesh, with the plot_outputs frame style."""
+    x, y, depth, triang, _is_tri, boundaries = _mesh(cfg)
+    isobaths = cfg.get("isobaths", [200, 2000])
+    if isobaths:
+        isobaths = [float(v) for v in isobaths]
+    fdir = _out_dir(cfg) / "frames_diff"
+    fdir.mkdir(parents=True, exist_ok=True)
+    title = (f"Ice concentration, model − NSIDC — {d:%Y-%m-%d}\n"
+             f"bias {st['bias']:+.2f}  RMSE {st['rmse']:.2f}  IIEE "
+             f"{st['iiee_km2']/1e3:.0f}k km²  (cells with ≥ 15 % ice)")
+    pc.render_frame(
+        triang, node_diff, title=title,
+        out_path=fdir / f"seaice_diff__{d:%Y%m%d}.jpg",
+        cbar_label="Model − NSIDC (25 km cells)", cmap="RdBu_r",
+        vmin=-1.0, vmax=1.0, depth=depth, isobaths=isobaths,
+        dpi=int(cfg.get("plot_outputs_dpi", 150)), boundaries=boundaries,
+        padding=pc.plot_padding(cfg))
 
 
 # =============================================================================
@@ -376,10 +416,13 @@ def assemble(cfg):
         wr.writeheader()
         wr.writerows(stats)
     _plot_timeseries(cfg, stats, odir / "compare_seaice_timeseries.png")
+    fps  = int(cfg.get("compare_seaice_fps", 4))
+    keep = bool(cfg.get("keep_frames", True))
     pc.assemble_gif(sorted((odir / "frames").glob("seaice__*.jpg")),
-                    odir / "compare_seaice.gif",
-                    fps=int(cfg.get("compare_seaice_fps", 4)),
-                    keep_frames=bool(cfg.get("keep_frames", True)))
+                    odir / "compare_seaice.gif", fps=fps, keep_frames=keep)
+    pc.assemble_gif(sorted((odir / "frames_diff").glob("seaice_diff__*.jpg")),
+                    odir / "compare_seaice_diff.gif", fps=fps,
+                    keep_frames=keep)
     (odir / "compare_seaice.done").touch()
     print(f"  compare_seaice: {len(stats)} day(s) -> {odir}")
 

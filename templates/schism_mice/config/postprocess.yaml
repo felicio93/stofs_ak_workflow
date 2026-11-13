@@ -170,8 +170,8 @@ compare_seaice_start: null      # null = start_date
 compare_seaice_end:   null      # null = end_date
 compare_seaice_min_coverage: 0.5
 compare_seaice_fps:  4
-compare_seaice_dpi:  120
-compare_seaice_projection: lonlat   # lonlat (as compare_sst) or polar (the native NSIDC grid)
+compare_seaice_dpi:  150
+compare_seaice_cmap: Blues_r   # model and NSIDC panels (the difference uses RdBu_r)
 
 # =============================================================================
 # Frame retention

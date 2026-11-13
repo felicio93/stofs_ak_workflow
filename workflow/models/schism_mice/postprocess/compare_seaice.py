@@ -12,11 +12,14 @@ mesh for at least compare_seaice_min_coverage of their area (default 0.5).
 Per day (Stage 1, SLURM array, one task per few days):
     frames/seaice__<YYYYMMDD>.jpg       model (on its mesh) above NSIDC (each
                                         25 km cell in lon/lat), in the
-                                        compare_sst layout
+                                        compare_sst layout; both 15 % ice
+                                        edges on both (model red, NSIDC
+                                        black dashed)
     frames_diff/seaice_diff__<YYYYMMDD>.jpg
                                         model - NSIDC, drawn on the mesh (each
                                         node shows its 25 km cell) with the
-                                        plot_outputs frame style
+                                        plot_outputs frame style and the
+                                        same two ice edges
     stats/seaice__<YYYYMMDD>.json       statistics below
 Then (Stage 2, after Stage 1): compare_seaice.gif, compare_seaice_diff.gif,
 compare_seaice_stats.csv and compare_seaice_timeseries.png in
@@ -251,7 +254,7 @@ def compare_day(cfg, d: date) -> bool:
     _plot_pair(cfg, d, model, why, obs, obs_file)
     cdiff = np.where(valid, m - o, np.nan).ravel()
     node_diff = np.where(cell >= 0, cdiff[np.clip(cell, 0, None)], np.nan)
-    _plot_diff(cfg, d, node_diff, st)
+    _plot_diff(cfg, d, node_diff, st, model, obs)
     print(f"  {d}: extent model {st['extent_model_km2']:.0f} / NSIDC "
           f"{st['extent_obs_km2']:.0f} km2, IIEE {st['iiee_km2']:.0f} km2, "
           f"bias {st['bias']:+.3f}, RMSE {st['rmse']:.3f}")
@@ -284,9 +287,9 @@ def _mesh(cfg):
 
 
 def _obs_lonlat(cfg, obs):
-    """Cell-corner lon/lat (ny+1, nx+1) of the NSIDC grid in the domain's
-    lon_reference, and a (ny, nx) mask of the cells to draw (inside the
-    domain box, not split by the lon seam)."""
+    """Cell-corner lon/lat (ny+1, nx+1) and cell-centre lon/lat (ny, nx) of
+    the NSIDC grid in the domain's lon_reference, and a (ny, nx) mask of the
+    cells to draw (inside the domain box, not split by the lon seam)."""
     import numpy as np
     from pyproj import Transformer
     x, y = obs["x"], obs["y"]
@@ -306,7 +309,37 @@ def _obs_lonlat(cfg, obs):
     seam = corners.max(axis=0) - corners.min(axis=0) > 10.0
     box = ((lon_m >= float(cfg["lon_min"]) - 2) & (lon_m <= float(cfg["lon_max"]) + 2)
            & (lat_m >= float(cfg["lat_min"]) - 2) & (lat_m <= float(cfg["lat_max"]) + 2))
-    return lon_c, lat_c, box & ~seam
+    return lon_c, lat_c, lon_m, lat_m, box & ~seam
+
+
+def _edge_drawer(triang, model_nodes, lon_m, lat_m, obs_masked):
+    """callable(ax) drawing the 15 % ice edges: model (on its mesh) red
+    solid, NSIDC (on its cells; masked cells give no edge) black dashed,
+    with a small legend."""
+    import numpy as np
+    from matplotlib.lines import Line2D
+    mod = np.nan_to_num(np.asarray(model_nodes, dtype="f8"), nan=0.0)
+
+    def draw(ax):
+        if mod.max() >= ICE_EDGE:
+            try:
+                ax.tricontour(triang, mod, levels=[ICE_EDGE], colors="red",
+                              linewidths=0.9, zorder=6)
+            except Exception:
+                pass
+        if obs_masked.count() and obs_masked.max() >= ICE_EDGE:
+            try:
+                ax.contour(lon_m, lat_m, obs_masked, levels=[ICE_EDGE],
+                           colors="black", linewidths=0.9,
+                           linestyles="--", zorder=6)
+            except Exception:
+                pass
+        ax.legend(handles=[
+            Line2D([], [], color="red", lw=0.9, label="15 % edge, model"),
+            Line2D([], [], color="black", lw=0.9, ls="--",
+                   label="15 % edge, NSIDC")],
+            loc="lower left", fontsize=7, framealpha=0.8)
+    return draw
 
 
 def _plot_pair(cfg, d, model_nodes, model_desc, obs, obs_file):
@@ -320,9 +353,10 @@ def _plot_pair(cfg, d, model_nodes, model_desc, obs, obs_file):
     from mpl_toolkits.axes_grid1 import make_axes_locatable
 
     x, y, depth, triang, _is_tri, boundaries = _mesh(cfg)
-    lon_c, lat_c, draw = _obs_lonlat(cfg, obs)
+    lon_c, lat_c, lon_m, lat_m, draw = _obs_lonlat(cfg, obs)
     ob = np.ma.masked_where(~(draw & obs["ocean"] & np.isfinite(obs["conc"])),
                             obs["conc"])
+    edges = _edge_drawer(triang, model_nodes, lon_m, lat_m, ob)
 
     vmin, vmax = 0.0, 1.0
     cmap     = cfg.get("compare_seaice_cmap", "Blues_r")
@@ -362,6 +396,7 @@ def _plot_pair(cfg, d, model_nodes, model_desc, obs, obs_file):
                 ax.plot(lo, la, color="red", linewidth=0.6, alpha=0.7)
             for lo, la in boundaries.get("island", []):
                 ax.plot(lo, la, color="green", linewidth=0.6, alpha=0.7)
+        edges(ax)
         cax = make_axes_locatable(ax).append_axes("right", size="3%", pad=0.1)
         fig.colorbar(tp, cax=cax).set_label(label, fontsize=9)
         ax.set_title(title, fontsize=10)
@@ -378,9 +413,14 @@ def _plot_pair(cfg, d, model_nodes, model_desc, obs, obs_file):
     gc.collect()
 
 
-def _plot_diff(cfg, d, node_diff, st):
-    """Model - NSIDC on the mesh, with the plot_outputs frame style."""
+def _plot_diff(cfg, d, node_diff, st, model_nodes, obs):
+    """Model - NSIDC on the mesh, with the plot_outputs frame style, and both
+    15 % ice edges."""
+    import numpy as np
     x, y, depth, triang, _is_tri, boundaries = _mesh(cfg)
+    _lc, _tc, lon_m, lat_m, draw = _obs_lonlat(cfg, obs)
+    ob = np.ma.masked_where(~(draw & obs["ocean"] & np.isfinite(obs["conc"])),
+                            obs["conc"])
     isobaths = cfg.get("isobaths", [200, 2000])
     if isobaths:
         isobaths = [float(v) for v in isobaths]
@@ -395,7 +435,8 @@ def _plot_diff(cfg, d, node_diff, st):
         cbar_label="Model − NSIDC (25 km cells)", cmap="RdBu_r",
         vmin=-1.0, vmax=1.0, depth=depth, isobaths=isobaths,
         dpi=int(cfg.get("plot_outputs_dpi", 150)), boundaries=boundaries,
-        padding=pc.plot_padding(cfg))
+        padding=pc.plot_padding(cfg),
+        overlay=_edge_drawer(triang, model_nodes, lon_m, lat_m, ob))
 
 
 # =============================================================================

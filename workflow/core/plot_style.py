@@ -168,7 +168,8 @@ def make_frame_tripcolor(triangulation, values, title, out_path,
                          cbar_ticks=None, cbar_extend_minmax=False,
                          padding_lon=5.0, padding_lat=2.0,
                          dpi=300, quality=92, boundaries=None,
-                         depth=None, isobaths=None, extent=None):
+                         depth=None, isobaths=None, extent=None,
+                         overlay=None):
     """
     Save one JPEG frame using tripcolor (for mesh/unstructured grids).
     Same style as make_frame: vertical colorbar on the right.
@@ -183,6 +184,10 @@ def make_frame_tripcolor(triangulation, values, title, out_path,
     extent:
         [lon_min, lon_max, lat_min, lat_max] to show instead of the mesh
         bounds + padding (a zoom on part of the mesh).
+
+    overlay:
+        optional callable(ax) drawing extra lines on the field (after the
+        boundaries and isobaths), e.g. ice edges. None draws nothing.
     """
     if extent is not None:
         mesh_lon_min, mesh_lon_max, mesh_lat_min, mesh_lat_max = (
@@ -254,6 +259,9 @@ def make_frame_tripcolor(triangulation, values, title, out_path,
                           colors="k", linewidths=0.4, alpha=0.6, zorder=4)
         except Exception:
             pass  # never let an isobath failure kill a frame
+
+    if overlay is not None:
+        overlay(ax)
 
     ax.set_xlim(mesh_lon_min - padding_lon, mesh_lon_max + padding_lon)
     ax.set_ylim(mesh_lat_min - padding_lat, mesh_lat_max + padding_lat)

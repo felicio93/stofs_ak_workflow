@@ -354,10 +354,11 @@ def render_frame(triang, values, title, out_path, cbar_label,
                  cmap="jet", vmin=None, vmax=None,
                  depth=None, isobaths=(200, 2000),
                  dpi=150, quality=90, boundaries=None, is_elem=False,
-                 padding=None, extent=None):
+                 padding=None, extent=None, overlay=None):
     """Render one JPEG frame using the shared workflow style plus isobaths.
     padding: (lon, lat) margin in degrees (None = shared default).
-    extent:  [lon_min, lon_max, lat_min, lat_max] zoom (None = whole mesh)."""
+    extent:  [lon_min, lon_max, lat_min, lat_max] zoom (None = whole mesh).
+    overlay: optional callable(ax) for extra lines (None = none)."""
     import numpy as np
     from workflow.core.plot_style import (
         make_frame_tripcolor, PADDING_LON, PADDING_LAT,
@@ -370,6 +371,7 @@ def render_frame(triang, values, title, out_path, cbar_label,
         dpi=dpi, quality=quality, boundaries=boundaries,
         depth=depth, isobaths=isobaths, is_elem=is_elem,
         padding_lon=pad_lon, padding_lat=pad_lat, extent=extent,
+        overlay=overlay,
     )
 
 

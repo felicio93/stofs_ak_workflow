@@ -13,8 +13,8 @@ Per day (Stage 1, SLURM array, one task per few days):
     frames/seaice__<YYYYMMDD>.jpg       model (on its mesh) above NSIDC (each
                                         25 km cell in lon/lat), in the
                                         compare_sst layout; both 15 % ice
-                                        edges on both (model orange, NSIDC
-                                        yellow, solid, black outline)
+                                        edges on both (model solid orange,
+                                        NSIDC dashed yellow, black outline)
     frames_diff/seaice_diff__<YYYYMMDD>.jpg
                                         model - NSIDC, drawn on the mesh (each
                                         node shows its 25 km cell) with the
@@ -313,40 +313,44 @@ def _obs_lonlat(cfg, obs):
 
 
 def _edge_drawer(triang, model_nodes, lon_m, lat_m, obs_masked):
-    """callable(ax) drawing the 15 % ice edges as solid lines with a thin
-    black outline (visible on navy water, white ice and the white of the
-    difference map): model (on its mesh) orange, NSIDC (on its cells;
-    masked cells give no edge) yellow, with a small legend."""
+    """callable(ax) drawing the 15 % ice edges with a thin black outline
+    (visible on navy water, white ice and the white of the difference map):
+    model (on its mesh) solid orange, NSIDC (on its cells; masked cells give
+    no edge) thinner dashed yellow, with a small legend."""
     import numpy as np
     import matplotlib.patheffects as pe
     from matplotlib.lines import Line2D
     mod = np.nan_to_num(np.asarray(model_nodes, dtype="f8"), nan=0.0)
-    outline = [pe.Stroke(linewidth=2.2, foreground="black"), pe.Normal()]
-    style = {"linewidths": 1.2, "linestyles": "solid", "zorder": 6}
-    colors = {"model": "orange", "obs": "yellow"}
+    edge = {  # color, width, line style, outline width
+        "model": ("orange", 1.2, "solid", 2.2),
+        "obs":   ("yellow", 0.9, "dashed", 1.8),
+    }
+    outline = {k: [pe.Stroke(linewidth=v[3], foreground="black"), pe.Normal()]
+               for k, v in edge.items()}
+
+    def style(k):
+        return {"colors": edge[k][0], "linewidths": edge[k][1],
+                "linestyles": edge[k][2], "zorder": 6}
 
     def draw(ax):
-        sets = []
         if mod.max() >= ICE_EDGE:
             try:
-                sets.append(ax.tricontour(triang, mod, levels=[ICE_EDGE],
-                                          colors=colors["model"], **style))
+                ax.tricontour(triang, mod, levels=[ICE_EDGE],
+                              **style("model")).set_path_effects(
+                                  outline["model"])
             except Exception:
                 pass
         if obs_masked.count() and obs_masked.max() >= ICE_EDGE:
             try:
-                sets.append(ax.contour(lon_m, lat_m, obs_masked,
-                                       levels=[ICE_EDGE],
-                                       colors=colors["obs"], **style))
+                ax.contour(lon_m, lat_m, obs_masked, levels=[ICE_EDGE],
+                           **style("obs")).set_path_effects(outline["obs"])
             except Exception:
                 pass
-        for cs in sets:
-            cs.set_path_effects(outline)
         ax.legend(handles=[
-            Line2D([], [], color=colors["model"], lw=1.2, path_effects=outline,
-                   label="15 % edge, model"),
-            Line2D([], [], color=colors["obs"], lw=1.2, path_effects=outline,
-                   label="15 % edge, NSIDC")],
+            Line2D([], [], color=edge[k][0], lw=edge[k][1], ls=edge[k][2],
+                   path_effects=outline[k], label=label)
+            for k, label in (("model", "15 % edge, model"),
+                             ("obs", "15 % edge, NSIDC"))],
             loc="lower left", fontsize=7, framealpha=0.8)
     return draw
 

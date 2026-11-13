@@ -151,6 +151,7 @@ POSTPROCESS_STEPS = {
     "download_sst", "diag_run_plots",
     "download_argo", "collocate_argo", "plot_argo",
     "download_altimetry", "collocate_altimetry", "plot_altimetry",
+    "download_seaice", "compare_seaice",
 }
 _STEPS_BY_PHASE = {
     "build":       BUILD_STEPS,

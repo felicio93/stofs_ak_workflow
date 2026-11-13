@@ -34,6 +34,8 @@ conda_envs:
   plot_hycom_outputs: swf_plot
   plot_outputs:   swf_plot   # Phase 5 field output GIFs
   compare_sst:    swf_plot   # Phase 5 model-vs-satellite SST
+  compare_seaice: swf_plot   # Phase 5 model-vs-NSIDC sea-ice concentration (needs pyproj)
+  download_seaice: swf_main  # Phase 5 NSIDC sea-ice download (DTN)
   diag_run_plots: swf_plot   # Phase 5 per-stack diagnostics (during run)
   download_sst:   swf_main   # Phase 5 satellite SST download (DTN + NCO)
   download_coops: swf_main   # Phase 5 CO-OPS station obs download (DTN)

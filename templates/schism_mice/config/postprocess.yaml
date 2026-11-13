@@ -158,6 +158,21 @@ compare_sst_fps:  4
 compare_sst_dpi:  150
 
 # =============================================================================
+# compare_seaice — model vs NOAA/NSIDC sea-ice concentration CDR (25 km, daily)
+# =============================================================================
+# download_seaice (DTN) gets the daily files (final CDR G02202 v6, else the
+# near-real-time G10016 v4); compare_seaice averages the model's daily-mean
+# iceTracer_2 onto the NSIDC cells (node-area weighted) and compares on NSIDC
+# ocean cells covered by the mesh for at least compare_seaice_min_coverage.
+# Outputs in P{ID}/P{ID}_compare_seaice/: daily maps (GIF), statistics CSV,
+# time series of extent, ice area, IIEE, bias and RMSE.
+compare_seaice_start: null      # null = start_date
+compare_seaice_end:   null      # null = end_date
+compare_seaice_min_coverage: 0.5
+compare_seaice_fps:  4
+compare_seaice_dpi:  120
+
+# =============================================================================
 # Frame retention
 # =============================================================================
 # true  = keep individual JPEG frames after building the GIF

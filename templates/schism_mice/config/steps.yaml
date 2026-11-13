@@ -94,6 +94,8 @@ download_argo:   true   # DTN: download Argo float profiles (IFREMER GDAC via OC
                          # -> M{ID}/obs/argo/{region}/processed/ (domain-cropped)
 plot_outputs:    true   # Full-run field GIFs -> P{ID} (SLURM: parallel frames + GIF)
 compare_sst:     true   # Model vs satellite SST GIF -> P{ID} (needs download_sst first)
+download_seaice: true   # DTN: NOAA/NSIDC sea-ice concentration CDR (25 km, daily) -> M{ID}/obs/seaice_nsidc/
+compare_seaice:  true   # Model vs NSIDC ice concentration: maps, extent/area/IIEE/bias/RMSE -> P{ID}
 station_skill:   true   # Interactive: CO-OPS/NDBC obs vs model staout_* time-series
                          # plots + skill_metrics.csv -> P{ID} (needs download_coops/ndbc first)
 collocate_argo:  true   # Interactive: OCSTrack 3-D collocation of SCHISM T/S profiles

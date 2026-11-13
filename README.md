@@ -131,6 +131,15 @@ parameter, outputs, known issues) are in the study note
 - **Restarts**: `gen_mice_nml` writes each group's `mice.nml`; every group
   after the first gets `ihot_mice = 1` and restarts the ice from the Icepack
   state in the hotstart that `auto_hotstart` chains (the combine merges it).
+- **Ice vs observations**: `download_seaice` (DTN) gets the daily NOAA/NSIDC
+  sea-ice concentration CDR (25 km polar stereographic; final G02202 v6,
+  else near-real-time G10016 v4) from noaadata.apps.nsidc.org (no login).
+  `compare_seaice` averages the model's daily-mean `iceTracer_2` onto the
+  NSIDC cells (node-area weighted) and compares on NSIDC ocean cells the mesh
+  covers for at least `compare_seaice_min_coverage` (0.5): daily maps of
+  model / NSIDC / difference with both 15 % ice edges, and extent, ice area,
+  integrated ice-edge error, bias and RMSE (CSV, time series, GIF) in
+  `P{ID}/P{ID}_compare_seaice/`.
 - **Outputs** (scribe I/O, `out2d`): `iceTracer_1` (ice volume per area, m),
   `iceTracer_2` (concentration), `iceTracer_3` (snow, m), `iceVelocityX/Y`,
   `iceNetHeatFlux`, `iceFreshwaterFlux`, `iceTopTemperature`,
@@ -677,7 +686,7 @@ the interactive config steps that read their output (only when no `--only`).
 
 | Step | Context | Models |
 |------|---------|--------|
-| `diag_run_plots` (enable **before** `setup_run`) | during run | S, 2 (not W, not UFS) |
+| `diag_run_plots` (enable **before** `setup_run`) | during run | S, 2, I (not W, not UFS) |
 | `download_sst`, `compare_sst` | DTN / SLURM | all but 2 |
 | `plot_outputs` | SLURM (frames + GIF) | all |
 | `download_coops`, `download_ndbc`, `station_skill` | DTN / interactive | all |
@@ -685,6 +694,7 @@ the interactive config steps that read their output (only when no `--only`).
 | `wave_skill` | interactive | W, R |
 | `download_altimetry`, `collocate_altimetry`, `plot_altimetry` | DTN / SLURM / interactive | W, R |
 | `plot_outputs_ww3` | SLURM | R |
+| `download_seaice`, `compare_seaice` | DTN / SLURM (frames + GIF) | I |
 
 ---
 

@@ -15,6 +15,12 @@ Inherits all SCHISM steps and adds:
 and runs with the MICE run profile (executables.schism_mice, mice.nml and
 namelist.icepack linked into every run directory).
 
+Postprocessing: the SCHISM steps plus
+  - download_seaice : NOAA/NSIDC sea-ice concentration CDR, daily (DTN)
+  - compare_seaice  : model vs NSIDC concentration on the 25 km cells:
+                      daily maps, extent / area / IIEE / bias / RMSE,
+                      GIF + CSV + time series (SLURM)
+
 The ERA5 download and gen_sflux add the snowfall rate (srate in sflux_prc)
 for this model (downloaders/era5.SNOWFALL_MODELS).
 """
@@ -85,6 +91,34 @@ class SchismMiceDriver(SchismDriver):
             self._skip("gen_ice_hotstart")
 
         return slurm_jobs
+
+    def postprocess(self, only: Optional[str] = None):
+        ice_steps = ("download_seaice", "compare_seaice")
+        if only not in ice_steps:
+            from workflow.models.schism.postprocess import postprocess_phase
+            postprocess_phase(self.cfg, self.config_dir, only=only)
+        en = lambda step: (step == only) if only is not None \
+            else bool(self.cfg.get(step, False))
+
+        if en("download_seaice"):
+            from workflow.core.environment import dtn_skip, is_dtn
+            if not is_dtn():
+                dtn_skip("download_seaice")
+            else:
+                print("[STEP] download_seaice")
+                from workflow.models.schism_mice.postprocess.download_seaice \
+                    import run_download_seaice
+                run_download_seaice(self.cfg)
+        else:
+            print("[SKIP] download_seaice")
+
+        if en("compare_seaice"):
+            print("[STEP] compare_seaice")
+            from workflow.models.schism_mice.postprocess.submit_compare_seaice \
+                import submit_compare_seaice
+            submit_compare_seaice(self.cfg, self.config_dir)
+        else:
+            print("[SKIP] compare_seaice")
 
     def run(self, only: Optional[str] = None):
         from workflow.models.schism.run.run_manager import run_phase

@@ -13,8 +13,8 @@ Per day (Stage 1, SLURM array, one task per few days):
     frames/seaice__<YYYYMMDD>.jpg       model (on its mesh) above NSIDC (each
                                         25 km cell in lon/lat), in the
                                         compare_sst layout; both 15 % ice
-                                        edges on both (model red, NSIDC
-                                        black dashed)
+                                        edges on both (model orange, NSIDC
+                                        yellow, solid, black outline)
     frames_diff/seaice_diff__<YYYYMMDD>.jpg
                                         model - NSIDC, drawn on the mesh (each
                                         node shows its 25 km cell) with the
@@ -313,30 +313,39 @@ def _obs_lonlat(cfg, obs):
 
 
 def _edge_drawer(triang, model_nodes, lon_m, lat_m, obs_masked):
-    """callable(ax) drawing the 15 % ice edges: model (on its mesh) red
-    solid, NSIDC (on its cells; masked cells give no edge) black dashed,
-    with a small legend."""
+    """callable(ax) drawing the 15 % ice edges as solid lines with a thin
+    black outline (visible on navy water, white ice and the white of the
+    difference map): model (on its mesh) orange, NSIDC (on its cells;
+    masked cells give no edge) yellow, with a small legend."""
     import numpy as np
+    import matplotlib.patheffects as pe
     from matplotlib.lines import Line2D
     mod = np.nan_to_num(np.asarray(model_nodes, dtype="f8"), nan=0.0)
+    outline = [pe.Stroke(linewidth=2.2, foreground="black"), pe.Normal()]
+    style = {"linewidths": 1.2, "linestyles": "solid", "zorder": 6}
+    colors = {"model": "orange", "obs": "yellow"}
 
     def draw(ax):
+        sets = []
         if mod.max() >= ICE_EDGE:
             try:
-                ax.tricontour(triang, mod, levels=[ICE_EDGE], colors="red",
-                              linewidths=0.9, zorder=6)
+                sets.append(ax.tricontour(triang, mod, levels=[ICE_EDGE],
+                                          colors=colors["model"], **style))
             except Exception:
                 pass
         if obs_masked.count() and obs_masked.max() >= ICE_EDGE:
             try:
-                ax.contour(lon_m, lat_m, obs_masked, levels=[ICE_EDGE],
-                           colors="black", linewidths=0.9,
-                           linestyles="--", zorder=6)
+                sets.append(ax.contour(lon_m, lat_m, obs_masked,
+                                       levels=[ICE_EDGE],
+                                       colors=colors["obs"], **style))
             except Exception:
                 pass
+        for cs in sets:
+            cs.set_path_effects(outline)
         ax.legend(handles=[
-            Line2D([], [], color="red", lw=0.9, label="15 % edge, model"),
-            Line2D([], [], color="black", lw=0.9, ls="--",
+            Line2D([], [], color=colors["model"], lw=1.2, path_effects=outline,
+                   label="15 % edge, model"),
+            Line2D([], [], color=colors["obs"], lw=1.2, path_effects=outline,
                    label="15 % edge, NSIDC")],
             loc="lower left", fontsize=7, framealpha=0.8)
     return draw

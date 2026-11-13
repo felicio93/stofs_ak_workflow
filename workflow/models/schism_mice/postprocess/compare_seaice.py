@@ -13,8 +13,8 @@ Per day (Stage 1, SLURM array, one task per few days):
     frames/seaice__<YYYYMMDD>.jpg       model (on its mesh) above NSIDC (each
                                         25 km cell in lon/lat), in the
                                         compare_sst layout; both 15 % ice
-                                        edges on both (model solid orange,
-                                        NSIDC dashed yellow, black outline)
+                                        edges on both (dashed: model orange,
+                                        NSIDC cyan, black outline)
     frames_diff/seaice_diff__<YYYYMMDD>.jpg
                                         model - NSIDC, drawn on the mesh (each
                                         node shows its 25 km cell) with the
@@ -315,15 +315,15 @@ def _obs_lonlat(cfg, obs):
 def _edge_drawer(triang, model_nodes, lon_m, lat_m, obs_masked):
     """callable(ax) drawing the 15 % ice edges with a thin black outline
     (visible on navy water, white ice and the white of the difference map):
-    model (on its mesh) solid orange, NSIDC (on its cells; masked cells give
-    no edge) thinner dashed yellow, with a small legend."""
+    model (on its mesh) dashed orange, NSIDC (on its cells; masked cells give
+    no edge) thinner dashed cyan, with a small legend."""
     import numpy as np
     import matplotlib.patheffects as pe
     from matplotlib.lines import Line2D
     mod = np.nan_to_num(np.asarray(model_nodes, dtype="f8"), nan=0.0)
     edge = {  # color, width, line style, outline width
-        "model": ("orange", 1.2, "solid", 2.2),
-        "obs":   ("yellow", 0.9, "dashed", 1.8),
+        "model": ("orange", 1.2, "dashed", 2.2),
+        "obs":   ("cyan",   0.9, "dashed", 1.8),
     }
     outline = {k: [pe.Stroke(linewidth=v[3], foreground="black"), pe.Normal()]
                for k, v in edge.items()}

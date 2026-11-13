@@ -128,7 +128,7 @@ slurm:
   # Phase 5 postprocessing:
   plot_outputs_qos: windfall
   plot_outputs_walltime: "02:00:00"
-  plot_outputs_mem: "16G"
+  plot_outputs_mem: "40G"   # per rank, 10 ranks per node; 16G ran out on the Alaska mesh (2.29M nodes, peak ~27 GB, M51)
   plot_outputs_max_ntasks:                # MPI ranks, empty = 200 (each rank renders several files)
   plot_outputs_gif_walltime: "00:30:00"
   plot_outputs_gif_mem: "32G"
@@ -136,7 +136,7 @@ slurm:
   compare_sst_mem: "24G"
   compare_sst_gif_walltime: "00:30:00"
   compare_sst_gif_mem: "16G"
-  diag_run_walltime: "00:10:00"
+  diag_run_walltime: "00:30:00"   # 3D fields took longer than 10 min on the Alaska mesh (M51)
   diag_run_mem: "16G"
 
 # =============================================================================

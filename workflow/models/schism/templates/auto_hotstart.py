@@ -50,8 +50,12 @@ RUN_JOBNAME    = r"{{RUN_JOBNAME}}"
 #                      rpointer files for the next group (UFS models only).
 # CHAIN_WW3_RESTART  : copy the WW3 restart file for the next group
 #                      (UFS-SCHISM+WW3 only; controlled by chain_ww3_restart).
+# CHAIN_CICE_RESTART : copy the CICE restart (RESTART/iced.<date>.nc) and
+#                      write ice.restart_file for the next group
+#                      (UFS-SCHISM+CICE only; controlled by chain_cice_restart).
 CHAIN_UFS_RESTARTS = {{CHAIN_UFS_RESTARTS}}
 CHAIN_WW3_RESTART  = {{CHAIN_WW3_RESTART}}
+CHAIN_CICE_RESTART = {{CHAIN_CICE_RESTART}}
 
 # --- New I/O diagnostic plots (SCHISM standalone) ---
 DIAG_ENABLED        = {{DIAG_ENABLED}}
@@ -586,11 +590,34 @@ def _chain_ww3_restart():
     """
     if NEXT_RUNDIR is None:
         return
-    if not (CHAIN_UFS_RESTARTS or CHAIN_WW3_RESTART):
+    if not (CHAIN_UFS_RESTARTS or CHAIN_WW3_RESTART or CHAIN_CICE_RESTART):
         return
 
     import shutil
     next_rdir = Path(NEXT_RUNDIR)
+
+    # ---- CICE restart (chain_cice_restart) ----
+    # CICE writes RESTART/iced.<YYYY-MM-DD-SSSSS>.nc at the end of the group
+    # (restart_n of ufs.configure); the next group (start_type continue)
+    # reads the file named in its ice.restart_file (pointer_file of ice_in).
+    if CHAIN_CICE_RESTART:
+        ice_files = sorted(glob.glob(
+            str(Path(RUNDIR) / "RESTART" / "iced.*.nc")))
+        if ice_files:
+            src = Path(ice_files[-1])
+            next_restart = next_rdir / "RESTART"
+            next_restart.mkdir(parents=True, exist_ok=True)
+            dst = next_restart / src.name
+            if dst.exists() or dst.is_symlink():
+                dst.unlink()
+            shutil.copy2(str(src), str(dst))
+            (next_rdir / "ice.restart_file").write_text(
+                f"./RESTART/{src.name}\n")
+            log(f"Copied CICE restart: {src.name} -> "
+                f"{next_rdir.name}/RESTART/; wrote ice.restart_file")
+        else:
+            log(f"WARNING: no RESTART/iced.*.nc in {RUNDIR} — the next "
+                f"group's CICE cannot continue (it will stop at start-up).")
 
     # ---- WW3 restart (chain_ww3_restart) ----
     if CHAIN_WW3_RESTART:

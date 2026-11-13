@@ -24,7 +24,7 @@ from pathlib import Path
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "templates"
 MODELS = ("schism", "schism_2d", "schism_wwm", "schism_mice", "ufs_schism",
-          "ufs_schism_ww3")
+          "ufs_schism_ww3", "ufs_schism_cice")
 
 # Files made by a step (absence before that step is not an error).
 GENERATED = {
@@ -60,6 +60,9 @@ TEMPLATE_FILES = {
         "datm_in", "datm.streams", "fd_ufs.yaml", "noahmptable.tbl",
         "model_configure", "ww3_shel.nml", "ww3_ounp.inp", "namelists.nml",
         "ww3_grid.nml"],
+    "ufs_schism_cice": _JOB_CARDS + ["datm_in", "datm.streams", "fd_ufs.yaml",
+                                     "noahmptable.tbl", "model_configure",
+                                     "ice_in"],
 }
 
 # Files whose absence stops a step or the setup (everything else in the
@@ -77,6 +80,9 @@ REQUIRED = {
     "ufs_schism_ww3": _REQUIRED_BASE + [
         "datm_in", "datm.streams", "fd_ufs.yaml", "noahmptable.tbl",
         "model_configure", "ww3_shel.nml", "ww3_ounp.inp"],
+    "ufs_schism_cice": _REQUIRED_BASE + [
+        "datm_in", "datm.streams", "fd_ufs.yaml", "noahmptable.tbl",
+        "model_configure", "ice_in"],
 }
 # Read by gen_source (step gen_source) in every model.
 _SOURCE_CSV = ["source_glofas.csv", "source_schism.csv"]
@@ -87,6 +93,7 @@ _WW3_DEFAULT_FILES = ["mod_def.ww3", "namelists.nml", "ww3_points.list",
 # fix/ starter files are looked up in these template folders, first match wins:
 # ufs_schism_ww3 only stores what differs from ufs_schism.
 TEMPLATE_CHAIN = {"ufs_schism_ww3": ("ufs_schism_ww3", "ufs_schism"),
+                  "ufs_schism_cice": ("ufs_schism_cice", "ufs_schism"),
                   "schism_mice":    ("schism_mice", "schism")}
 _MODULES_RE = re.compile(r"@@MODULES:([a-z_]+)@@")
 
@@ -127,7 +134,7 @@ def _linked_files(model: str, cfg: dict = None) -> list:
         from workflow.models.schism_wwm.run.setup_run import FIX_LINKS as f
     elif model == "schism_mice":
         from workflow.models.schism_mice.run.setup_run import FIX_LINKS as f
-    elif model == "ufs_schism":
+    elif model in ("ufs_schism", "ufs_schism_cice"):
         from workflow.models.ufs_schism.run.setup_run import FIX_LINKS as f
     else:
         from workflow.models.ufs_schism_ww3.run.setup_run import (
@@ -184,8 +191,9 @@ def _consistency(model: str, cfg: dict, fix: Path) -> list:
         text = rt.read_text()
         m = re.search(r"(?m)^\s*srun\b[^\n]*?\./(\S+)", text)
         want = exes.get(model)
-        if m and want and m.group(1) != want and model != "ufs_schism_ww3":
-            # (ufs_schism_ww3: the workflow rewrites this line itself)
+        if m and want and m.group(1) != want and model not in (
+                "ufs_schism_ww3", "ufs_schism_cice"):
+            # (ufs_schism_ww3/_cice: the workflow rewrites this line itself)
             warns.append(f"run_test runs {m.group(1)} but executables.{model} "
                          f"is {want}")
         if model.startswith("ufs"):

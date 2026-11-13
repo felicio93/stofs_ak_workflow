@@ -42,8 +42,9 @@ BASE_CONFIG_FILES = ("project.yaml", "domain.yaml", "steps.yaml", "envs.yaml")
 # read from modelsetup.yaml only.
 SETUP_CONFIG_FILE = "modelsetup.yaml"
 SETUP_KEYS = ("vgrid", "replicate_from", "replicate_depth", "constant_gr3",
-              "nudge_gr3", "estuary_depth_threshold")
-KNOWN_MODEL_TYPES = ("schism", "schism_2d", "schism_wwm", "schism_mice", "ufs_schism", "ufs_schism_ww3")
+              "nudge_gr3", "estuary_depth_threshold", "cice_grid")
+KNOWN_MODEL_TYPES = ("schism", "schism_2d", "schism_wwm", "schism_mice", "ufs_schism", "ufs_schism_ww3",
+                     "ufs_schism_cice")
 
 # Canonical grouping values accepted in project.yaml.
 # Aliases are normalised to one of the two canonical forms at load time.

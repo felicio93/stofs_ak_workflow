@@ -479,6 +479,7 @@ def _setup_group(cfg: dict, mdir: Path, group_id: str,
         "MONTH":                  group_id,
         "CHAIN_UFS_RESTARTS":     False,
         "CHAIN_WW3_RESTART":      False,
+        "CHAIN_CICE_RESTART":     False,
         "RUN_JOBNAME":            run_jobname,
         # New I/O diagnostics (SCHISM standalone)
         "DIAG_ENABLED":           diag_enabled,

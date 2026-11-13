@@ -277,7 +277,18 @@ def _link(src: Path, dst: Path) -> bool:
 
 def _setup_group(cfg: dict, mdir: Path, group_id: str,
                  group_index: int, next_group_id: str,
-                 is_last: bool, config_dir: Path) -> bool:
+                 is_last: bool, config_dir: Path,
+                 exe_key: str = "ufs_schism", extra=None) -> bool:
+    """Set up one run directory.
+
+    exe_key : executables.<exe_key> is the UFS executable (models built on
+              ufs_schism, e.g. ufs_schism_cice, pass their own; the srun line
+              of run_test is then pointed at it).
+    extra   : optional object of a derived model with
+                links(cfg, mdir, idir, rdir, group_index, group_id) -> bool
+                    called after the common links (False stops the setup)
+                auto_hotstart -> dict of extra auto_hotstart.py values
+    """
     pid  = cfg["project_id"]
     fix  = mdir / "fix"
     bind = mdir / "bin"
@@ -304,13 +315,13 @@ def _setup_group(cfg: dict, mdir: Path, group_id: str,
 
     # --- validate executables ---
     exes               = cfg.get("executables", {})
-    ufs_exe            = exes.get("ufs_schism")
+    ufs_exe            = exes.get(exe_key)
     combine_exe        = exes.get("combine_hotstart")
     combine_output_exe = exes.get("combine_output",
                                   "combine_output11_MPI")
 
     if not ufs_exe or not combine_exe:
-        print("  ERROR: executables.ufs_schism and "
+        print(f"  ERROR: executables.{exe_key} and "
               "executables.combine_hotstart must be set in "
               "project.yaml")
         return False
@@ -424,6 +435,11 @@ def _setup_group(cfg: dict, mdir: Path, group_id: str,
             print("    Run gen_hotstart (Phase 3) first.")
             return False
 
+    # --- model-specific inputs (derived models) ---
+    if extra is not None and not extra.links(cfg, mdir, idir, rdir,
+                                             group_index, group_id):
+        return False
+
     # --- copy executables ---
     shutil.copy2(bind / ufs_exe, rdir / ufs_exe)
 
@@ -453,6 +469,11 @@ def _setup_group(cfg: dict, mdir: Path, group_id: str,
     run_test    = _set_sbatch_jobname(
         (fix / "run_test").read_text(), run_jobname)
     run_test    = _set_sbatch_workdir(run_test, ".")
+    if exe_key != "ufs_schism":
+        from workflow.models.ufs_schism_ww3.run.setup_run import (
+            _set_srun_executable,
+        )
+        run_test = _set_srun_executable(run_test, ufs_exe)
     (rdir / "run_test").write_text(run_test)
 
     # --- adapt run_comb ---
@@ -481,7 +502,7 @@ def _setup_group(cfg: dict, mdir: Path, group_id: str,
         mdir / f"R{pid}" / f"R{pid}_{next_group_id}"
         if next_group_id else None
     )
-    _render_auto_hotstart(rdir, {
+    auto_subs = {
         "RUNDIR":                 str(rdir),
         "NEXT_RUNDIR":            (f'r"{next_rdir}"'
                                    if next_rdir else "None"),
@@ -493,6 +514,7 @@ def _setup_group(cfg: dict, mdir: Path, group_id: str,
         "MONTH":                  group_id,
         "CHAIN_UFS_RESTARTS":     True,
         "CHAIN_WW3_RESTART":      False,
+        "CHAIN_CICE_RESTART":     False,
         "RUN_JOBNAME":            run_jobname,
         "DIAG_ENABLED":           False,
         "DIAG_SBATCH":            "",
@@ -504,7 +526,10 @@ def _setup_group(cfg: dict, mdir: Path, group_id: str,
         "COMBINE_OUTPUT_NRANKS":  combine_nranks,
         "COMBINE_OUTPUT_SBATCH":  str(
             combine_output_sbatch),
-    })
+    }
+    if extra is not None:
+        auto_subs.update(extra.auto_hotstart(cfg))
+    _render_auto_hotstart(rdir, auto_subs)
 
     (rdir / "setup_run.done").touch()
     print(f"  {group_id}: run directory ready  "
@@ -517,7 +542,8 @@ def _setup_group(cfg: dict, mdir: Path, group_id: str,
 # Entry point
 # =============================================================================
 
-def run_setup_run(cfg: dict, config_dir=None):
+def run_setup_run(cfg: dict, config_dir=None, exe_key: str = "ufs_schism",
+                  extra=None, label: str = "UFS-SCHISM"):
     from pathlib import Path as _Path
     pid        = cfg["project_id"]
     mdir       = model_dir(cfg)
@@ -529,7 +555,7 @@ def run_setup_run(cfg: dict, config_dir=None):
     )
 
     print(f"\n{'='*60}")
-    print(f"  setup_run for M{pid} (UFS-SCHISM)")
+    print(f"  setup_run for M{pid} ({label})")
     print(f"  Grouping  : {grouping}"
           + (f"  (group_ndays={cfg['group_ndays']})"
              if grouping == "ndays" else ""))
@@ -561,7 +587,7 @@ def run_setup_run(cfg: dict, config_dir=None):
         is_last       = (i + 1 == len(groups))
         if not _setup_group(cfg, mdir, group_id, i,
                             next_group_id, is_last,
-                            config_dir):
+                            config_dir, exe_key=exe_key, extra=extra):
             failed.append(group_id)
 
     print(f"\n{'='*60}")

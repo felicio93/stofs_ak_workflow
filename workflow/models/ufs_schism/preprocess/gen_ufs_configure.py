@@ -8,11 +8,13 @@ from ufs_schism.yaml (or ufs_schism_ww3.yaml) and the forecast length
 from the already-generated model_configure, and writes
 I{ID}/I{ID}_{group_id}/ufs.configure.
 
-Supports both:
+Supports:
   - ATM + OCN          (model_type: ufs_schism)
   - ATM + OCN + WAV    (model_type: ufs_schism_ww3)
+  - ATM + OCN + ICE    (model_type: ufs_schism_cice)
 
-WAV component is included when cfg contains 'wav_model' key.
+WAV component is included when cfg contains 'wav_model' key, ICE (CICE6)
+when it contains 'ice_model'.
 
 Restart configuration
 ---------------------
@@ -83,6 +85,11 @@ def _has_wav(cfg: dict) -> bool:
     return bool(cfg.get("wav_model", "").strip())
 
 
+def _has_ice(cfg: dict) -> bool:
+    """Return True if an ICE (CICE6) component is configured."""
+    return bool(str(cfg.get("ice_model", "") or "").strip())
+
+
 def _is_first_group(cfg: dict, group_id: str) -> bool:
     """Return True if group_id is the first group."""
     groups = list_groups(cfg)
@@ -121,6 +128,10 @@ def _build_ufs_configure(cfg: dict,
         raise ValueError(f"ocn_meshloc must be 'element' or 'node', "
                          f"got {meshloc!r}")
     with_wav         = _has_wav(cfg)
+    with_ice         = _has_ice(cfg)
+    if with_wav and with_ice:
+        raise ValueError("ufs.configure with both WAV and ICE is not "
+                         "supported by this workflow")
     ndays            = get_group_ndays(cfg, group_id)
     is_first         = _is_first_group(cfg, group_id)
 
@@ -137,6 +148,8 @@ def _build_ufs_configure(cfg: dict,
     # Component list
     if with_wav:
         comp_list = "ATM OCN WAV MED"
+    elif with_ice:
+        comp_list = "ATM OCN ICE MED"
     else:
         comp_list = "ATM OCN MED"
 
@@ -146,6 +159,8 @@ def _build_ufs_configure(cfg: dict,
   OCN_model = {cfg['ocn_model']}"""
     if with_wav:
         med_attrs += f"\n  WAV_model = {cfg['wav_model']}"
+    if with_ice:
+        med_attrs += f"\n  ICE_model = {cfg['ice_model']}"
     med_attrs += f"""
   history_n = 9999
   history_option = nhours
@@ -189,8 +204,50 @@ WAV_attributes::
 ::
 """
 
+    # ICE block (CICE6)
+    ice_block = ""
+    if with_ice:
+        ice_block = f"""
+# ICE #
+ICE_model:                      {cfg['ice_model']}
+ICE_petlist_bounds:             {cfg['ice_petlist_bounds']}
+ICE_omp_num_threads:            {cfg.get('ice_omp_num_threads', 1)}
+ICE_attributes::
+  Verbosity = 0
+  DumpFields = false
+  ProfileMemory = false
+  OverwriteSlice = true
+  mesh_ice = {cfg.get('ice_mesh_file', 'cice_grid/mesh_cice.nc')}
+  eps_imesh = {cfg.get('ice_eps_imesh', 0.5)}
+::
+"""
+
     # runSeq
-    if with_wav:
+    if with_ice:
+        # Order of the UFS-Coastal Bering Sea runs (Scott Durski, Hercules)
+        run_seq = f"""\
+runSeq::
+@{coupling_dt}
+  MED med_phases_prep_atm
+  MED -> ATM :remapMethod=redist
+  MED med_phases_prep_ocn_accum
+  MED med_phases_prep_ocn_avg
+  MED -> OCN :remapMethod=redist
+  MED med_phases_prep_ice
+  MED -> ICE :remapMethod=redist
+  ATM
+  OCN
+  ICE
+  ICE -> MED :remapMethod=redist
+  MED med_phases_post_ice
+  OCN -> MED :remapMethod=redist
+  MED med_phases_post_ocn
+  ATM -> MED :remapMethod=redist
+  MED med_phases_post_atm
+  MED med_phases_restart_write
+@
+::"""
+    elif with_wav:
         run_seq = f"""\
 runSeq::
 @{coupling_dt}
@@ -281,7 +338,7 @@ OCN_attributes::
   OverwriteSlice = true
   meshloc = {meshloc}
   CouplingConfig = {cfg.get('coupling_config', 'none')}
-::{wav_block}
+::{wav_block}{ice_block}
 # Run Sequence #
 {run_seq}
 
@@ -381,6 +438,13 @@ def gen_ufs_configure_group(cfg: dict,
 
     wav_str    = (f" + WAV({cfg.get('wav_model', '')})"
                   if with_wav else "")
+    if _has_ice(cfg):
+        wav_str += f" + ICE({cfg.get('ice_model')})"
+        ice_dt = int(cfg.get("ice_dt", 180))
+        if coupling_dt % ice_dt or coupling_dt % schism_dt:
+            print(f"  ERROR: coupling_dt={coupling_dt}s must be a multiple "
+                  f"of ice_dt={ice_dt}s and of the SCHISM dt={schism_dt}s.")
+            return False
     start_type = "startup" if is_first else "continue"
 
     print(f"--- gen_ufs_configure {group_id} -> "

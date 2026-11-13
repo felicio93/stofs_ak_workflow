@@ -142,6 +142,7 @@ PREPROCESS_STEPS = {
     "plot_hycom_outputs",
     "gen_wwminput", "gen_ww3_shel", "gen_ww3_ounp",
     "download_hycom_ice", "gen_mice_nml", "gen_ice_hotstart",
+    "gen_ice_in",
 }
 BUILD_STEPS       = {"build_executables"}
 RUN_PHASE_STEPS   = {"setup_run", "submit_run"}
@@ -585,8 +586,8 @@ def main():
         )
     )
     parser.add_argument("--model", help="--new-project: model_type "
-                        "(schism, schism_2d, schism_wwm, ufs_schism, "
-                        "ufs_schism_ww3)")
+                        "(schism, schism_2d, schism_wwm, schism_mice, "
+                        "ufs_schism, ufs_schism_ww3, ufs_schism_cice)")
     parser.add_argument("--id", dest="project_id",
                         help="--new-project: two-digit project id")
     parser.add_argument("--dir", dest="project_root",

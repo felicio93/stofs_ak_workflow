@@ -16,6 +16,8 @@ because each step reads what the earlier ones made:
   gen_wwmbnd        fix/wwmbnd.gr3 (schism_wwm)
   gen_ww3_mesh      mesh.msh, mod_def.ww3, ww3_ESMFmesh.nc (ufs_schism_ww3)
   gen_ww3_points    ww3_points.list from station.in (ufs_schism_ww3)
+  gen_cice_grid     fix/cice/: CICE grid, kmt, bathymetry, ESMF mesh from
+                    hgrid.ll (ufs_schism_cice, SLURM job)
   inspect_mesh      plots of every fix/ file (SLURM job)
 
 A driver lists the steps it supports in `setup_steps`; an enabled step it
@@ -28,7 +30,7 @@ from typing import Optional
 SETUP_STEPS = (
     "gen_vgrid", "gen_partition", "gen_constant_gr3", "replicate_fix",
     "gen_nudge_gr3", "gen_estuary", "gen_wwmbnd", "gen_ww3_mesh", "gen_ww3_points",
-    "inspect_mesh",
+    "gen_cice_grid", "inspect_mesh",
 )
 
 
@@ -93,6 +95,13 @@ def _gen_ww3_points(cfg, config_dir):
     run_gen_ww3_points(cfg)
 
 
+def _gen_cice_grid(cfg, config_dir):
+    from workflow.models.ufs_schism_cice.preprocess.gen_cice_grid import (
+        submit_gen_cice_grid,
+    )
+    return submit_gen_cice_grid(cfg, config_dir)
+
+
 def _inspect_mesh(cfg, config_dir):
     from workflow.diagnostics.submit_inspect_mesh import submit_inspect_mesh
     return submit_inspect_mesh(cfg, config_dir)
@@ -108,6 +117,7 @@ _RUNNERS = {
     "gen_wwmbnd": _gen_wwmbnd,
     "gen_ww3_mesh": _gen_ww3_mesh,
     "gen_ww3_points": _gen_ww3_points,
+    "gen_cice_grid": _gen_cice_grid,
     "inspect_mesh": _inspect_mesh,
 }
 

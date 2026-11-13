@@ -1,0 +1,24 @@
+! datm_in for model_type ufs_schism_cice.
+! datamode ERA5 (not ATMMESH as in ufs_schism): CICE needs the lowest-level
+! fields Sa_u, Sa_v, Sa_z, Sa_tbot, Sa_shum, Sa_pbot and the four shortwave
+! bands, which the ERA5 mode makes (bands = 0.28/0.31/0.24/0.17 x Faxa_swdn,
+! Sa_z = 10 m). ATMMESH exports only the SCHISM fields.
+! The ERA5 mode converts units when the forcing looks like ERA5 accumulations:
+! precipitation when its maximum is >= 0.01 kg m-2 s-1 (36 mm/h) and
+! radiation when the long-wave maximum is >= 1e4. The workflow's DATM files
+! are rates (kg m-2 s-1, W m-2), below both limits.
+&datm_nml
+  datamode = "ERA5"
+  factorfn_data = "null"
+  factorfn_mesh = "null"
+  flds_co2 = .false.
+  flds_presaero = .false.
+  flds_wiso = .false.
+  iradsw = 1
+  model_maskfile = "@[DATM_INPUT_DIR]/@[DATM_MESH_FILE]"
+  model_meshfile = "@[DATM_INPUT_DIR]/@[DATM_MESH_FILE]"
+  nx_global = @[NX_GLOBAL]
+  ny_global = @[NY_GLOBAL]
+  restfilm = "null"
+  export_all = .true.
+/

@@ -1,0 +1,78 @@
+# =============================================================================
+# Build recipe: what to compile, from which sources, with which toolchain.
+# Used by the `build` steps (executables are installed into M{id}/bin/ under
+# the names in `executables:` of project.yaml, with a BUILD_INFO record).
+#
+#   machine      machine profile: workflow/build/machines/<name>.yaml (or a
+#                path to your own .yaml). Holds modules, compilers, UFS modulefile.
+#   source_root  where the sources are cloned and built (outside the repo and M*).
+#   sources      one checkout per source: repo + ref (branch, tag or commit).
+#                "master" tracks upstream; the resolved commit is recorded in
+#                BUILD_INFO. Pin a commit/tag here to freeze a version.
+#   targets      what to build; `source` and `toolchain` refer to the entries above.
+# =============================================================================
+build:
+  machine: hercules
+  source_root: /work2/noaa/nos-surge/felicioc/STOFS_3D_AK/src
+
+  sources:
+    schism:
+      repo: https://github.com/schism-dev/schism.git
+      ref: master
+    # UFS-Coastal with SCHISM and its NUOPC cap (SCHISM-ESMF) moved to their
+    # upstream master: the cap restores the imported radiation/precipitation
+    # before every SCHISM step (4853d7a) and SCHISM keeps the CICE salt flux
+    # (48abc23e); CICE stays at the commit ufs-coastal pins. Pin the refs
+    # below (commit or tag) to freeze a version.
+    ufs-coastal-cice:
+      repo: https://github.com/oceanmodeling/ufs-coastal.git
+      ref: feature/coastal_app
+      submodules:
+        SCHISM-interface/SCHISM:
+          repo: https://github.com/schism-dev/schism.git
+          ref: master
+        SCHISM-interface/SCHISM-ESMF:
+          ref: master
+
+  targets:
+    # DATM + SCHISM + CICE (app CSTLSC).
+    #   -DUFS_CICE=ON  SCHISM's ice coupling (SCHISM master renamed USE_CICE)
+    #   -DCMAKE_Fortran_FLAGS=-DUFS_CICE
+    #                  the same define for the cap: schism-esmf master tests
+    #                  UFS_CICE, but ufs-coastal's SCHISM-interface/CMakeLists
+    #                  only defines USE_CICE for it, so without this the cap's
+    #                  ice coupling is compiled out without any error. Remove
+    #                  once ufs-coastal defines UFS_CICE for the cap. (The UFS
+    #                  Intel flags are appended to this value, not replaced.)
+    ufs_datm2sch2cice:
+      kind: ufs
+      source: ufs-coastal-cice
+      toolchain: ufs_esmf890
+      compile_id: datm2sch2cice
+      exe_key: ufs_schism_cice
+      make_opt: "-DAPP=CSTLSC -DUSE_ATMOS=ON -DUSE_CICE=ON -DUFS_CICE=ON -DCICE_IO=NetCDF -DCMAKE_Fortran_FLAGS=-DUFS_CICE -DPREC_EVAP=ON -DNO_PARMETIS=ON -DOLDIO=ON -DPDLIB=ON -DBUILD_TOOLS=ON"
+
+    # HYCOM utilities: _noscaling (float HYCOM data) and _noscaling_lonshift
+    # (HYCOM 0-360 -> mesh -180..180); the right one is chosen at run time
+    # (hycom_lon_shift). ssh_max_3Dth: |SSH| limit of gen_3Dth (stock is 6).
+    hycom_utils:
+      kind: hycom_utils
+      source: schism
+      toolchain: schism_intel
+      ssh_max_3Dth: 20
+
+    combine_hotstart:
+      kind: combine_hotstart
+      source: schism
+      toolchain: schism_intel
+
+    combine_output_mpi:          # old-I/O output combiner (UFS runs)
+      kind: combine_output_mpi
+      source: schism
+      toolchain: schism_intel
+
+    # metis_prep + gpmetis + partition_offline.pl, for making partition.prop
+    partition_tools:
+      kind: partition_tools
+      source: schism
+      toolchain: schism_intel

@@ -56,6 +56,7 @@ def make_driver(cfg: dict, config_dir: Path) -> ModelDriver:
     from workflow.models.schism_mice.driver import SchismMiceDriver
     from workflow.models.ufs_schism.driver import UfsSchismDriver
     from workflow.models.ufs_schism_ww3.driver import UfsSchismWw3Driver
+    from workflow.models.ufs_schism_cice.driver import UfsSchismCiceDriver
 
     registry = {
         "schism":         SchismDriver,
@@ -64,6 +65,7 @@ def make_driver(cfg: dict, config_dir: Path) -> ModelDriver:
         "schism_mice":    SchismMiceDriver,
         "ufs_schism":     UfsSchismDriver,
         "ufs_schism_ww3": UfsSchismWw3Driver,
+        "ufs_schism_cice": UfsSchismCiceDriver,
     }
 
     cls = registry.get(model_type)

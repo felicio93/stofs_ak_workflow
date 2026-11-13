@@ -72,6 +72,7 @@ Preprocessing steps run in different execution contexts:
 | `schism_wwm` | SCHISM + WWM (internally coupled waves) | `SchismWwmDriver(SchismDriver)` | implemented |
 | `ufs_schism` | UFS-Coastal: DATM + CMEPS + SCHISM (old I/O) | `UfsSchismDriver` | implemented |
 | `ufs_schism_ww3` | UFS-Coastal: DATM + CMEPS + SCHISM + WW3 | `UfsSchismWw3Driver(UfsSchismDriver)` | implemented |
+| `ufs_schism_cice` | UFS-Coastal: DATM + CMEPS + SCHISM + CICE6 | `UfsSchismCiceDriver(UfsSchismDriver)` | implemented, not yet built or run |
 | `schism_mice` | SCHISM + multi-class sea ice (MICE: Icepack column physics, mEVP dynamics) | `SchismMiceDriver(SchismDriver)` | implemented, not yet run (first test: Alaska mesh, Oct 2025 – Jun 2026) |
 
 Which steps apply to which model is listed in [Steps by phase](#steps-by-phase).
@@ -104,6 +105,45 @@ hotstart/boundary/nudging steps and the SST/Argo comparisons print `[N/A]`.
 - `--check-fix` also warns about a `vgrid.in` with more than one layer, a
   non-barotropic `param.nml`, a missing friction file and a `PREC_EVAP`
   executable.
+
+### UFS-SCHISM + CICE (`ufs_schism_cice`)
+
+UFS-Coastal app `CSTLSC`: DATM, SCHISM and CICE6 coupled through CMEPS in
+coastal mode, set up like the UFS-Coastal Bering Sea case and Scott Durski's
+Bering runs on Hercules. Study note:
+`handoffs/2026-11-13_ufs-schism-cice-study.md` (outside the repo).
+
+- **Build**: target `ufs_datm2sch2cice` (`fv3_datm2sch2cice.exe`) from source
+  `ufs-coastal-cice`: ufs-coastal with SCHISM and its cap (SCHISM-ESMF) moved
+  to upstream master (radiation/precipitation restore in the cap, CICE salt
+  flux kept in SCHISM); CICE as ufs-coastal pins it. `make_opt` carries
+  `-DCMAKE_Fortran_FLAGS=-DUFS_CICE`: the cap tests `UFS_CICE`, which
+  ufs-coastal does not define for it yet (without it the cap's ice coupling
+  compiles out silently).
+- **CICE grid** (`gen_cice_grid`, setup, SLURM): a regular lon/lat grid over
+  the bounding box of `hgrid.ll` (`cice_grid:` in `modelsetup.yaml`, 4 km by
+  default) written to `fix/cice/`: `grid_cice.nc` (radians, cm, as the Bering
+  `grid_reg_BER.nc`), `kmt_cice.nc` (ocean where at least half the cell is
+  inside the SCHISM mesh), `bathy_cice.nc`, the ESMF mesh `mesh_cice.nc`
+  (elementMask = kmt) and `cice_grid.png`.
+- **ice_in** (`gen_ice_in`): `fix/ice_in` per group (dates, initial/continue,
+  `nprocs` from `ice_petlist_bounds`, grid size, history, restoring).
+  Physics from the Bering runs: 5 categories, 7 layers, mushy, EVP, seabed
+  stress, prognostic salt flux, coupled tilt.
+- **DATM**: datamode `ERA5` (CICE needs `Sa_tbot/Sa_shum/Sa_pbot/Sa_u/Sa_v/
+  Sa_z` and the shortwave bands, made from `Faxa_swdn`); `fix/datm.streams`
+  maps the extra fields from the same forcing file.
+- **ufs.configure**: `ATM OCN ICE MED`, ICE block (`mesh_ice`, `eps_imesh`),
+  the Bering run sequence, `coupling_dt` 180 s (= `ice_dt`).
+- **Run**: `cice_grid/` (-> `fix/cice`), `ice_in` and `history/` in every run
+  directory; `auto_hotstart` copies `RESTART/iced.<date>.nc` to the next group
+  and writes its `ice.restart_file` (`chain_cice_restart`).
+- **Not yet**: initial ice from HYCOM (now ice free, or a CICE restart given in
+  `ice_initial`), boundary files `BRY_<year>.nc` for `ice_restore_bry` (only
+  the north edge is restored in this CICE; a group crossing 1 January keeps
+  the boundary year it started with), `compare_seaice` from CICE history.
+  Snowfall: this CICE takes snow only from negative `Faxa_rain` in coastal
+  mode, so with ERA5 all precipitation reaches the ice as rain.
 
 ### SCHISM + sea ice (`schism_mice`)
 
@@ -243,8 +283,10 @@ stofs_ak_workflow/                      <- git repo (clone this to Hercules)
         ├── ufs_schism_ww3/             driver, preprocess/ (gen_ww3_shel/ounp),
         │                               run/setup_run.py, postprocess/ (wave_skill,
         │                               altimetry, plot_outputs_ww3), templates/
-        └── schism_mice/                driver, mice_nml.py, preprocess/ (gen_mice_nml,
-                                        gen_ice_hotstart), run/setup_run.py, templates/
+        ├── schism_mice/                driver, mice_nml.py, preprocess/ (gen_mice_nml,
+        │                               gen_ice_hotstart), run/setup_run.py, templates/
+        └── ufs_schism_cice/            driver, preprocess/ (gen_cice_grid, gen_ice_in),
+                                        run/setup_run.py, templates/
 ```
 
 ---
@@ -316,7 +358,8 @@ Running the tool never writes into `$WF`; all generated data goes under
 ## Starting a new project
 
 ```bash
-# one of: schism | schism_2d | schism_wwm | ufs_schism | ufs_schism_ww3
+# one of: schism | schism_2d | schism_wwm | schism_mice | ufs_schism |
+#         ufs_schism_ww3 | ufs_schism_cice
 stofs-ak --new-project --model ufs_schism_ww3 --id 14 --dir <project_dir>
 export CFG=<project_dir>/M14/config
 
@@ -512,7 +555,7 @@ the ones you want to change into your `<model_type>.yaml`.
 | Field | Description |
 |-------|-------------|
 | `project_id` | two-digit string (`"01"`) -> `M01`, `I01`, ... |
-| `model_type` | `schism`, `schism_2d`, `schism_wwm`, `schism_mice`, `ufs_schism`, `ufs_schism_ww3` |
+| `model_type` | `schism`, `schism_2d`, `schism_wwm`, `schism_mice`, `ufs_schism`, `ufs_schism_ww3`, `ufs_schism_cice` |
 | `project_dir` | absolute parent directory on HPC |
 | `start_date` / `end_date` | inclusive, `YYYY-MM-DD` |
 | `grouping` | `monthly` (default), `ndays`, or alias `daily` / `weekly` / `biweekly` |
@@ -592,6 +635,7 @@ on mismatch); SLURM steps call the env interpreter by full path.
 | `schism_wwm.yaml` | `wwm_cutoff_freq`, `wwm_outstyle_station`, `wwm_lsp1d`, `wwm_lsp2d`, `wwm_deltc_hotfile`, `wwm_procname` |
 | `ufs_schism.yaml` | DATM (`datm_subdir`, `datm_filename_template`, `dt_atmos`), coupling (`coupling_dt`, `*_model`, `cpl_mode`, `coupling_config`, `case_name`), PET lists (`med/atm/ocn_petlist_bounds`), OMP threads |
 | `ufs_schism_ww3.yaml` | all of the above (self-contained) + `wav_model`, `wav_petlist_bounds`, `wav_omp_num_threads`, `med_pio_*`, `wav_mesh_file`, `wav_pio_*`, `ww3_point_output_dt`, `ww3_fix_files`, `chain_ww3_restart` |
+| `ufs_schism_cice.yaml` | the `ufs_schism.yaml` keys + `ice_model`, `ice_petlist_bounds`, `ice_omp_num_threads`, `ice_dt`, `ice_block_size_x/y`, `ice_eps_imesh`, `ice_initial`, `ice_restore_bry`, `ice_bry_dir`, `ice_history_freq`, `ice_history_n`, `chain_cice_restart` |
 | `build.yaml` | `build:` block: `machine`, `source_root`, `sources`, `targets` (see the build section) |
 | `postprocess.yaml` | isobaths, `diag_run_vars`, `plot_outputs_*`, `compare_sst_*`, `station_skill_*`, `coops_*`, `ndbc_*`, `argo_*`/`collocate_argo_*`, altimetry and WW3 plot keys (documented inline) |
 
@@ -609,8 +653,9 @@ are still chained). Configs copied from an older template that contain
 ## Steps by phase
 
 Legend: **S** = schism, **2** = schism_2d, **W** = schism_wwm, **I** =
-schism_mice (sea ice), **U** = ufs_schism, **R** = ufs_schism_ww3 (WW3); "all"
-includes 2D and I unless noted.
+schism_mice (sea ice), **U** = ufs_schism, **R** = ufs_schism_ww3 (WW3),
+**C** = ufs_schism_cice (CICE; also runs every U step); "all" includes 2D and I
+unless noted.
 Steps not valid for a model print `[N/A]`.
 
 ### Phase B: build (`--phase build`, first in `--phase all`)
@@ -633,6 +678,7 @@ Once per project, in this order; settings in `modelsetup.yaml`.
 | `gen_estuary` | interactive | all but 2 | `fix/estuary.gr3` + `bin/gen_*_from_nc.in` |
 | `gen_wwmbnd` | interactive | W | `fix/wwmbnd.gr3` |
 | `gen_ww3_mesh` | interactive + 1 SLURM job | R | once per project: `mesh.msh` (from `hgrid.ll`, same numbering), `mod_def.ww3` + `ST4TABUHF2.bin` (`ww3_grid` from the UFS build), `ww3_ESMFmesh.nc` (`ESMF_Scrip2Unstruct`). Files already in `fix/` are kept and checked, never overwritten |
+| `gen_cice_grid` | 1 SLURM job | C | once per project: `fix/cice/` grid, `kmt`, bathymetry and ESMF mesh from `hgrid.ll` (`cice_grid:` in `modelsetup.yaml`); kept if present |
 | `gen_ww3_points` | interactive | R | once: `ww3_points.list` from `fix/station.in`, one point per distinct lon/lat (surface only), named by station id (`KU2`, `KU2b`, ...). A `ww3_points.list` already in `fix/` is kept |
 | `inspect_mesh` | SLURM | all | plots of `fix/` inputs, resolution, layers -> `D{ID}/D{ID}_fix/` (JPEG) |
 
@@ -658,7 +704,8 @@ Once per project, in this order; settings in `modelsetup.yaml`.
 | `gen_wwminput` | interactive | W | `wwminput.nml` per group (`BEGTC/ENDTC` from `param.nml`) |
 | `gen_datm`, `plot_datm` | SLURM | U, R | sflux -> CDEPS DATM forcing; debug GIFs |
 | `gen_esmf_mesh` | SLURM | U, R | ESMF mesh of the DATM grid |
-| `gen_datm_in`, `gen_datm_streams`, `gen_model_configure`, `gen_ufs_configure` | interactive | U, R | UFS config files per group |
+| `gen_datm_in`, `gen_datm_streams`, `gen_model_configure`, `gen_ufs_configure` | interactive | U, R, C | UFS config files per group |
+| `gen_ice_in` | interactive | C | CICE `ice_in` per group from `fix/ice_in` |
 | `copy_fd_ufs`, `copy_noahmptable`, `copy_modulefiles` | interactive | U, R | copy static UFS files into each `I{ID}_*` |
 | `gen_ww3_shel`, `gen_ww3_ounp` | interactive | R | `ww3_shel.nml`, `ww3_ounp.inp` per group |
 

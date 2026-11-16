@@ -40,20 +40,23 @@ build:
     #                  SCHISM's atmosphere and ice coupling: SCHISM master
     #                  renamed USE_ATMOS/USE_CICE/USE_WW3 to UFS_* (e49b8e04)
     #                  and silently ignores the old names
-    #   -DCMAKE_Fortran_FLAGS=-DUFS_CICE
-    #                  the same define for the cap: schism-esmf master tests
+    #   compile_definitions: [UFS_CICE]
+    #                  the same macro for the cap: schism-esmf master tests
     #                  UFS_CICE, but ufs-coastal's SCHISM-interface/CMakeLists
-    #                  only defines USE_CICE for it, so without this the cap's
-    #                  ice coupling is compiled out without any error. Remove
-    #                  once ufs-coastal defines UFS_CICE for the cap. (The UFS
-    #                  Intel flags are appended to this value, not replaced.)
+    #                  only defines USE_CICE for it (and replaces
+    #                  CMAKE_Fortran_FLAGS, so -D in make_opt is lost there).
+    #                  Without it the cap's ice coupling is compiled out with
+    #                  no error. The builder adds it to every directory through
+    #                  CMAKE_PROJECT_INCLUDE. Remove once ufs-coastal defines
+    #                  UFS_CICE for the cap.
     ufs_datm2sch2cice:
       kind: ufs
       source: ufs-coastal-cice
       toolchain: ufs_esmf890
       compile_id: datm2sch2cice
       exe_key: ufs_schism_cice
-      make_opt: "-DAPP=CSTLSC -DUFS_ATMOS=ON -DUSE_CICE=ON -DUFS_CICE=ON -DCICE_IO=NetCDF -DCMAKE_Fortran_FLAGS=-DUFS_CICE -DPREC_EVAP=ON -DNO_PARMETIS=ON -DOLDIO=ON -DPDLIB=ON -DBUILD_TOOLS=ON"
+      make_opt: "-DAPP=CSTLSC -DUFS_ATMOS=ON -DUSE_CICE=ON -DUFS_CICE=ON -DCICE_IO=NetCDF -DPREC_EVAP=ON -DNO_PARMETIS=ON -DOLDIO=ON -DPDLIB=ON -DBUILD_TOOLS=ON"
+      compile_definitions: [UFS_CICE]
 
     # HYCOM utilities: _noscaling (float HYCOM data) and _noscaling_lonshift
     # (HYCOM 0-360 -> mesh -180..180); the right one is chosen at run time

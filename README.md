@@ -116,10 +116,14 @@ Bering runs on Hercules. Study note:
 - **Build**: target `ufs_datm2sch2cice` (`fv3_datm2sch2cice.exe`) from source
   `ufs-coastal-cice`: ufs-coastal with SCHISM and its cap (SCHISM-ESMF) moved
   to upstream master (radiation/precipitation restore in the cap, CICE salt
-  flux kept in SCHISM); CICE as ufs-coastal pins it. `make_opt` carries
-  `-DCMAKE_Fortran_FLAGS=-DUFS_CICE`: the cap tests `UFS_CICE`, which
-  ufs-coastal does not define for it yet (without it the cap's ice coupling
-  compiles out silently).
+  flux kept in SCHISM); CICE as ufs-coastal pins it. The target sets
+  `compile_definitions: [UFS_CICE]`: the cap tests `UFS_CICE`, which
+  ufs-coastal does not define for it yet, and its `SCHISM-interface/CMakeLists`
+  replaces `CMAKE_Fortran_FLAGS`, so a `-D` in `make_opt` does not reach the cap
+  (without the macro the cap's ice coupling compiles out silently). The builder
+  adds `compile_definitions` to every directory through
+  `-DCMAKE_PROJECT_INCLUDE`. SCHISM master also needs `-DUFS_ATMOS=ON` (the
+  old `USE_ATMOS` is ignored).
 - **CICE grid** (`gen_cice_grid`, setup, SLURM): a regular lon/lat grid over
   the bounding box of `hgrid.ll` (`cice_grid:` in `modelsetup.yaml`, 4 km by
   default) written to `fix/cice/`: `grid_cice.nc` (radians, cm, as the Bering

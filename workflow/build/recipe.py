@@ -27,6 +27,12 @@ build.yaml layout::
           toolchain: schism_intel
           exe_key: schism             # executables.<exe_key> in project.yaml
           options: {NO_PARMETIS: true, TVD_LIM: VL}
+        ufs_x:
+          kind: ufs                   # UFS-Coastal tests/compile.sh
+          make_opt: "-DAPP=..."       # passed to compile.sh
+          compile_definitions: [X]    # optional: macros for every directory
+                                      # (CMAKE_PROJECT_INCLUDE), for flags a
+                                      # component's CMakeLists would drop
 """
 
 import hashlib
@@ -42,7 +48,8 @@ MACHINES_DIR = Path(__file__).resolve().parent / "machines"
 KINDS = {
     "schism":             ({"source", "toolchain", "exe_key", "options"}, set()),
     "ufs":                ({"source", "toolchain", "compile_id", "make_opt",
-                            "exe_key"}, {"install_tools"}),
+                            "exe_key"}, {"install_tools",
+                                         "compile_definitions"}),
     "hycom_utils":        ({"source", "toolchain"}, {"ssh_max_3Dth"}),
     "combine_hotstart":   ({"source", "toolchain"}, set()),
     "combine_output_mpi": ({"source", "toolchain"}, set()),

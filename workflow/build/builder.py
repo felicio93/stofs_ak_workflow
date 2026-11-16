@@ -211,11 +211,28 @@ def _build_ufs(cfg, config_dir, target, dry_run) -> str:
     if not dry_run:
         (sdir / "modulefiles" / lua_name).write_text(lua_text)
 
+    # compile_definitions: preprocessor macros for EVERY directory of the
+    # build. UFS-Coastal's component CMakeLists may replace CMAKE_Fortran_FLAGS
+    # (SCHISM-interface does), so -D... in make_opt can be lost; a directory
+    # compile definition set right after the top-level project() is
+    # inherited by all subdirectories instead (CMAKE_PROJECT_INCLUDE).
+    make_opt = t["make_opt"]
+    defs = [str(d) for d in (t.get("compile_definitions") or [])]
+    if defs:
+        inc = bdir / "workflow_compile_definitions.cmake"
+        if not dry_run:
+            bdir.mkdir(parents=True, exist_ok=True)
+            inc.write_text("# written by stofs_ak_workflow (build target "
+                           f"{target}: compile_definitions)\n"
+                           f"add_compile_definitions({' '.join(defs)})\n")
+        make_opt = f"{make_opt} -DCMAKE_PROJECT_INCLUDE={inc}"
+
     tests = sdir / "tests"
     installs = [
         {"built": str(tests / f"fv3_{cid}.exe"),
          "name": cfg["executables"][t["exe_key"]],
-         "meta": {"make_opt": t["make_opt"], "compile_id": cid,
+         "meta": {"make_opt": make_opt, "compile_id": cid,
+                  "compile_definitions": defs,
                   "modulefile": lua_name,
                   "modulefile_sha256": hashlib.sha256(
                       lua_text.encode()).hexdigest()}},
@@ -239,7 +256,7 @@ def _build_ufs(cfg, config_dir, target, dry_run) -> str:
         "MACHINE_ID":     tc["machine_id"],
         "RT_COMPILER":    tc["rt_compiler"],
         "COMPILE_ID":     cid,
-        "MAKE_OPT":       t["make_opt"],
+        "MAKE_OPT":       make_opt,
         "SOURCE_COMMIT":  info["commit"][:8],
         "CONFIG_DIR":     str(config_dir),
         "MEM":            slurm.get("build_ufs_mem", "32G"),

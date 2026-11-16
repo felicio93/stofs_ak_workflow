@@ -36,7 +36,10 @@ build:
 
   targets:
     # DATM + SCHISM + CICE (app CSTLSC).
-    #   -DUFS_CICE=ON  SCHISM's ice coupling (SCHISM master renamed USE_CICE)
+    #   -DUFS_ATMOS=ON -DUFS_CICE=ON
+    #                  SCHISM's atmosphere and ice coupling: SCHISM master
+    #                  renamed USE_ATMOS/USE_CICE/USE_WW3 to UFS_* (e49b8e04)
+    #                  and silently ignores the old names
     #   -DCMAKE_Fortran_FLAGS=-DUFS_CICE
     #                  the same define for the cap: schism-esmf master tests
     #                  UFS_CICE, but ufs-coastal's SCHISM-interface/CMakeLists
@@ -50,7 +53,7 @@ build:
       toolchain: ufs_esmf890
       compile_id: datm2sch2cice
       exe_key: ufs_schism_cice
-      make_opt: "-DAPP=CSTLSC -DUSE_ATMOS=ON -DUSE_CICE=ON -DUFS_CICE=ON -DCICE_IO=NetCDF -DCMAKE_Fortran_FLAGS=-DUFS_CICE -DPREC_EVAP=ON -DNO_PARMETIS=ON -DOLDIO=ON -DPDLIB=ON -DBUILD_TOOLS=ON"
+      make_opt: "-DAPP=CSTLSC -DUFS_ATMOS=ON -DUSE_CICE=ON -DUFS_CICE=ON -DCICE_IO=NetCDF -DCMAKE_Fortran_FLAGS=-DUFS_CICE -DPREC_EVAP=ON -DNO_PARMETIS=ON -DOLDIO=ON -DPDLIB=ON -DBUILD_TOOLS=ON"
 
     # HYCOM utilities: _noscaling (float HYCOM data) and _noscaling_lonshift
     # (HYCOM 0-360 -> mesh -180..180); the right one is chosen at run time

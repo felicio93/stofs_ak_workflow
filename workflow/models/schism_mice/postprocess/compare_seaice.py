@@ -3,11 +3,18 @@ models/schism_mice/postprocess/compare_seaice.py
 ================================================
 Phase 5 step "compare_seaice" — model vs. NOAA/NSIDC sea-ice concentration.
 
-The model's daily-mean ice concentration (iceTracer_2 in out2d_*.nc) is
-averaged onto the 25 km NSIDC polar stereographic cells (each node weighted
+The model's daily-mean ice concentration is averaged onto the 25 km NSIDC polar stereographic cells (each node weighted
 by its area) and compared on the cells that are NSIDC ocean
 (surface_type_mask = 50), have a valid observation and are covered by the
 mesh for at least compare_seaice_min_coverage of their area (default 0.5).
+
+Model concentration at the SCHISM nodes:
+    schism_mice      iceTracer_2 in out2d_*.nc, mean of the day's records
+    ufs_schism_cice  aice of the CICE daily history (history/iceh.<date>.nc,
+                     or the mean of the day's files for sub-daily history),
+                     taken at every node from the CICE cell that contains it
+                     (fix/cice/grid_cice.nc; land cells give no value)
+so both models go through the same binning, statistics and plots.
 
 Per day (Stage 1, SLURM array, one task per few days):
     frames/seaice__<YYYYMMDD>.jpg       model (on its mesh) above NSIDC (each
@@ -71,6 +78,25 @@ def _outputs(cfg, gid) -> Path:
     return model_dir(cfg) / f"R{pid}" / f"R{pid}_{gid}" / "outputs"
 
 
+def _is_cice(cfg) -> bool:
+    return str(cfg.get("model_type", "")).lower() == "ufs_schism_cice"
+
+
+def _model_name(cfg) -> str:
+    return "CICE (UFS)" if _is_cice(cfg) else "SCHISM"
+
+
+def _mesh_file(cfg) -> Path:
+    """An output file of the first group with the mesh in it: out2d_*.nc
+    (new I/O) or schout_*.nc (old I/O, UFS runs)."""
+    out = _outputs(cfg, list_groups(cfg)[0])
+    stacks = (pc.list_output_stacks(out, "out2d")
+              or pc.list_oldio_stacks(out))
+    if not stacks:
+        raise SystemExit(f"ERROR: no out2d_*.nc or schout_*.nc in {out}")
+    return stacks[0]
+
+
 # =============================================================================
 # Observation
 # =============================================================================
@@ -130,11 +156,7 @@ def mesh_bins(cfg, obs: dict) -> dict:
             return {k: z[k] for k in z.files}
 
     from pyproj import Proj, Transformer
-    gid = list_groups(cfg)[0]
-    stacks = pc.list_output_stacks(_outputs(cfg, gid), "out2d")
-    if not stacks:
-        raise SystemExit(f"ERROR: no out2d_*.nc in {_outputs(cfg, gid)}")
-    lon, lat, _dep, triang, _ = pc.load_mesh(stacks[0])
+    lon, lat, _dep, triang, _ = pc.load_mesh(_mesh_file(cfg))
     node_area = _node_areas(lon, lat, triang.triangles)
 
     tr = Transformer.from_crs("EPSG:4326", obs["proj4"], always_xy=True)
@@ -167,6 +189,66 @@ def mesh_bins(cfg, obs: dict) -> dict:
     return out
 
 
+_CICE_GRID = {}
+
+
+def _cice_index(cfg, lon, lat):
+    """Flat CICE cell index (j*nx + i) of every node, -1 outside the grid.
+    The grid is the regular lon/lat grid of gen_cice_grid."""
+    import numpy as np
+    import netCDF4
+    key = cfg["project_id"]
+    if key not in _CICE_GRID:
+        gpath = model_dir(cfg) / "fix" / "cice" / "grid_cice.nc"
+        with netCDF4.Dataset(str(gpath)) as nc:
+            tlon = np.rad2deg(np.asarray(nc["tlon"][:], dtype="f8"))
+            tlat = np.rad2deg(np.asarray(nc["tlat"][:], dtype="f8"))
+        ny, nx = tlon.shape
+        dlon, dlat = tlon[0, 1] - tlon[0, 0], tlat[1, 0] - tlat[0, 0]
+        reg = (np.abs(np.diff(tlon, axis=1) - dlon).max() < 1e-6
+               and np.abs(np.diff(tlat, axis=0) - dlat).max() < 1e-6)
+        if not reg:
+            raise SystemExit(f"ERROR: {gpath} is not a regular lon/lat grid; "
+                             f"compare_seaice reads only gen_cice_grid grids.")
+        _CICE_GRID[key] = (tlon[0, 0] - dlon / 2, tlat[0, 0] - dlat / 2,
+                           dlon, dlat, nx, ny)
+    lon0, lat0, dlon, dlat, nx, ny = _CICE_GRID[key]
+    i = np.floor(((lon - lon0) % 360.0) / dlon).astype(np.int64)
+    j = np.floor((lat - lat0) / dlat).astype(np.int64)
+    inside = (i >= 0) & (i < nx) & (j >= 0) & (j < ny)
+    return np.where(inside, j * nx + i, -1)
+
+
+def _cice_conc_for_day(cfg, d: date, gid: str):
+    """CICE daily mean aice at the SCHISM nodes, or (None, reason)."""
+    import numpy as np
+    import netCDF4
+    pid = cfg["project_id"]
+    hdir = model_dir(cfg) / f"R{pid}" / f"R{pid}_{gid}" / "history"
+    files = [hdir / f"iceh.{d:%Y-%m-%d}.nc"]
+    if not files[0].exists():
+        files = sorted(hdir.glob(f"iceh.{d:%Y-%m-%d}-*.nc"))
+    if not files or not files[0].exists():
+        return None, f"no CICE history for {d} in {hdir}"
+    total, n = None, 0
+    for f in files:
+        with netCDF4.Dataset(str(f)) as nc:
+            if "aice" not in nc.variables:
+                return None, f"{f.name} has no aice (f_aice in ice_in)"
+            a = np.ma.filled(nc["aice"][:].astype("f8"), np.nan)
+        a = a.reshape(-1, a.shape[-2], a.shape[-1])
+        for k in range(a.shape[0]):
+            total = a[k] if total is None else total + a[k]
+            n += 1
+    field = (total / n).ravel()
+    field[(field < 0) | (field > 1.0001)] = np.nan       # fill values
+    x, y = _mesh(cfg)[:2]
+    idx = _cice_index(cfg, x, y)
+    nodes = np.where(idx >= 0, field[np.clip(idx, 0, None)], np.nan)
+    return nodes, (f"CICE daily mean of {n} history file(s), at the "
+                   f"SCHISM nodes")
+
+
 def model_conc_for_day(cfg, d: date):
     """Daily mean model ice concentration at the nodes, or (None, reason)."""
     import numpy as np
@@ -174,6 +256,8 @@ def model_conc_for_day(cfg, d: date):
     gid = _group_for_day(cfg, d)
     if gid is None:
         return None, "no run group for this day"
+    if _is_cice(cfg):
+        return _cice_conc_for_day(cfg, d, gid)
     stacks = pc.list_output_stacks(_outputs(cfg, gid), "out2d")
     if not stacks:
         return None, f"no out2d_*.nc for group {gid}"
@@ -269,9 +353,7 @@ def _mesh(cfg):
     loaded once per process."""
     key = cfg["project_id"]
     if key not in _MESH:
-        stacks = pc.list_output_stacks(_outputs(cfg, list_groups(cfg)[0]),
-                                       "out2d")
-        x, y, depth, triang, is_tri = pc.load_mesh(stacks[0])
+        x, y, depth, triang, is_tri = pc.load_mesh(_mesh_file(cfg))
         boundaries = None
         for hp in (model_dir(cfg) / "fix" / "hgrid.ll",
                    model_dir(cfg) / "fix" / "hgrid.gr3"):
@@ -386,11 +468,14 @@ def _plot_pair(cfg, d, model_nodes, model_desc, obs, obs_file):
     ax1 = fig.add_subplot(2, 1, 1)
     ax2 = fig.add_subplot(2, 1, 2)
 
-    tp1 = ax1.tripcolor(triang, np.asarray(model_nodes), shading="flat",
+    tp1 = ax1.tripcolor(triang, np.ma.masked_invalid(np.asarray(model_nodes,
+                                                                dtype="f8")),
+                        shading="flat",
                         cmap=cmap, vmin=vmin, vmax=vmax, rasterized=True)
     tp2 = ax2.pcolormesh(lon_c, lat_c, ob, cmap=cmap, vmin=vmin, vmax=vmax,
                          rasterized=True)
-    titles = (f"SCHISM sea-ice concentration — {d:%Y-%m-%d}  ({model_desc})",
+    titles = (f"{_model_name(cfg)} sea-ice concentration — {d:%Y-%m-%d}  "
+              f"({model_desc})",
               f"NOAA/NSIDC CDR sea-ice concentration (25 km) — {d:%Y-%m-%d}"
               f"  ({obs_file.name.split('_')[-1].replace('.nc', '')})")
     labels = ("Model ice concentration", "NSIDC ice concentration")
@@ -506,7 +591,8 @@ def _plot_timeseries(cfg, stats, out):
     loc = mdates.AutoDateLocator()
     ax[2].xaxis.set_major_locator(loc)
     ax[2].xaxis.set_major_formatter(mdates.ConciseDateFormatter(loc))
-    fig.suptitle(f"M{cfg['project_id']} sea ice vs NOAA/NSIDC CDR (25 km), on "
+    fig.suptitle(f"M{cfg['project_id']} {_model_name(cfg)} sea ice vs "
+                 f"NOAA/NSIDC CDR (25 km), on "
                  f"NSIDC ocean cells covered by the mesh", fontsize=10)
     fig.tight_layout()
     fig.savefig(out, dpi=130)

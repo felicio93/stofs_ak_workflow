@@ -72,7 +72,7 @@ Preprocessing steps run in different execution contexts:
 | `schism_wwm` | SCHISM + WWM (internally coupled waves) | `SchismWwmDriver(SchismDriver)` | implemented |
 | `ufs_schism` | UFS-Coastal: DATM + CMEPS + SCHISM (old I/O) | `UfsSchismDriver` | implemented |
 | `ufs_schism_ww3` | UFS-Coastal: DATM + CMEPS + SCHISM + WW3 | `UfsSchismWw3Driver(UfsSchismDriver)` | implemented |
-| `ufs_schism_cice` | UFS-Coastal: DATM + CMEPS + SCHISM + CICE6 | `UfsSchismCiceDriver(UfsSchismDriver)` | implemented, not yet built or run |
+| `ufs_schism_cice` | UFS-Coastal: DATM + CMEPS + SCHISM + CICE6 | `UfsSchismCiceDriver(UfsSchismDriver)` | implemented; first week run (M61, Oct 2025) |
 | `schism_mice` | SCHISM + multi-class sea ice (MICE: Icepack column physics, mEVP dynamics) | `SchismMiceDriver(SchismDriver)` | implemented, not yet run (first test: Alaska mesh, Oct 2025 – Jun 2026) |
 
 Which steps apply to which model is listed in [Steps by phase](#steps-by-phase).
@@ -142,10 +142,14 @@ Bering runs on Hercules. Study note:
 - **Run**: `cice_grid/` (-> `fix/cice`), `ice_in` and `history/` in every run
   directory; `auto_hotstart` copies `RESTART/iced.<date>.nc` to the next group
   and writes its `ice.restart_file` (`chain_cice_restart`).
+- **Ice vs observations**: `download_seaice` / `compare_seaice` as for
+  `schism_mice`; the model concentration is CICE's daily `aice`
+  (`history/iceh.<date>.nc`) taken at every SCHISM node from its CICE cell, so
+  both ice models go through the same binning, statistics and plots.
 - **Not yet**: initial ice from HYCOM (now ice free, or a CICE restart given in
   `ice_initial`), boundary files `BRY_<year>.nc` for `ice_restore_bry` (only
   the north edge is restored in this CICE; a group crossing 1 January keeps
-  the boundary year it started with), `compare_seaice` from CICE history.
+  the boundary year it started with).
   Snowfall: this CICE takes snow only from negative `Faxa_rain` in coastal
   mode, so with ERA5 all precipitation reaches the ice as rain.
 

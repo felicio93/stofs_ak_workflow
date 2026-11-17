@@ -25,6 +25,9 @@ Known limits of the public code this model is built from (Nov 2026):
   - Boundary restoring (ice_restore_bry) reads BRY_<year>.nc files that the
     workflow does not make yet; the default is open edges, no restoring.
   - The initial ice is none (ice free) or a CICE restart given by the user.
+
+Postprocessing: the SCHISM steps plus download_seaice / compare_seaice
+(CICE daily aice at the SCHISM nodes vs NOAA/NSIDC, as for schism_mice).
 """
 
 from typing import Optional
@@ -49,6 +52,16 @@ class UfsSchismCiceDriver(UfsSchismDriver):
         else:
             print("[SKIP] gen_ice_in")
         return _slurm_jobs
+
+    def postprocess(self, only: Optional[str] = None):
+        """The SCHISM postprocessing (old I/O outputs) plus the sea-ice
+        comparison with NOAA/NSIDC, reading the CICE history."""
+        from workflow.models.schism_mice.postprocess.seaice_steps import (
+            ICE_STEPS, run_seaice_steps,
+        )
+        if only not in ICE_STEPS:
+            super().postprocess(only=only)
+        run_seaice_steps(self.cfg, self.config_dir, only=only)
 
     def run(self, only: Optional[str] = None):
         self._warn_no_run_diagnostics()

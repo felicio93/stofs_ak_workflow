@@ -72,6 +72,7 @@ Preprocessing steps run in different execution contexts:
 | `schism_wwm` | SCHISM + WWM (internally coupled waves) | `SchismWwmDriver(SchismDriver)` | implemented |
 | `ufs_schism` | UFS-Coastal: DATM + CMEPS + SCHISM (old I/O) | `UfsSchismDriver` | implemented |
 | `ufs_schism_ww3` | UFS-Coastal: DATM + CMEPS + SCHISM + WW3 | `UfsSchismWw3Driver(UfsSchismDriver)` | implemented |
+| `schism_wwm_mice` | SCHISM + WWM + MICE, both modules internal, one run | `SchismWwmMiceDriver(SchismMiceDriver)` | implemented, not yet built or run |
 | `ufs_schism_cice` | UFS-Coastal: DATM + CMEPS + SCHISM + CICE6 | `UfsSchismCiceDriver(UfsSchismDriver)` | implemented; first week run (M61, Oct 2025) |
 | `schism_mice` | SCHISM + multi-class sea ice (MICE: Icepack column physics, mEVP dynamics) | `SchismMiceDriver(SchismDriver)` | implemented, not yet run (first test: Alaska mesh, Oct 2025 – Jun 2026) |
 
@@ -105,6 +106,26 @@ hotstart/boundary/nudging steps and the SST/Argo comparisons print `[N/A]`.
 - `--check-fix` also warns about a `vgrid.in` with more than one layer, a
   non-barotropic `param.nml`, a missing friction file and a `PREC_EVAP`
   executable.
+
+### SCHISM + waves + sea ice (`schism_wwm_mice`)
+
+SCHISM with both internal modules in one run: WWM as in `schism_wwm` and MICE
+as in `schism_mice`. The two exchange nothing directly; they affect each other
+only through the shared ocean (wave forces and drag; ice stress, heat and fresh
+water). WWM does not see the ice: waves grow and propagate under it.
+
+- **Build**: target `schism_wwm_mice` (`USE_WWM` + `USE_MICE` + `PREC_EVAP`),
+  `executables.schism_wwm_mice`
+  (`pschism_HERCULES_WWM_NO_PARMETIS_PREC_EVAP_BLD_STANDALONE_SH_MEM_COMM_MICE_TVD-VL`).
+- **fix/**: the files of both models (`wwminput.nml`, `mice.nml`,
+  `namelist.icepack`; `wwmbnd.gr3` and `hgrid_WWM.gr3` from `gen_wwmbnd`);
+  `param.nml` = the MICE one with `icou_elfe_wwm = 1`, `nstep_wwm` and the
+  `iof_wwm` outputs.
+- **Steps**: the union of both models (`gen_wwmbnd`, `gen_wwminput`;
+  `download_hycom_ice`, `gen_mice_nml`, `gen_ice_hotstart`; `wave_skill`,
+  altimetry, `download_seaice`, `compare_seaice`). ERA5 snowfall as for
+  `schism_mice`. Restarts: the WWM hotfile and the ice (in the SCHISM hotstart)
+  are chained by `auto_hotstart`.
 
 ### UFS-SCHISM + CICE (`ufs_schism_cice`)
 
@@ -293,6 +314,7 @@ stofs_ak_workflow/                      <- git repo (clone this to Hercules)
         │                               altimetry, plot_outputs_ww3), templates/
         ├── schism_mice/                driver, mice_nml.py, preprocess/ (gen_mice_nml,
         │                               gen_ice_hotstart), run/setup_run.py, templates/
+        ├── schism_wwm_mice/            driver, run/setup_run.py (WWM + MICE run profile)
         └── ufs_schism_cice/            driver, preprocess/ (gen_cice_grid, gen_ice_in),
                                         run/setup_run.py, templates/
 ```
@@ -367,7 +389,7 @@ Running the tool never writes into `$WF`; all generated data goes under
 
 ```bash
 # one of: schism | schism_2d | schism_wwm | schism_mice | ufs_schism |
-#         ufs_schism_ww3 | ufs_schism_cice
+#         ufs_schism_ww3 | ufs_schism_cice | schism_wwm_mice
 stofs-ak --new-project --model ufs_schism_ww3 --id 14 --dir <project_dir>
 export CFG=<project_dir>/M14/config
 
@@ -563,7 +585,7 @@ the ones you want to change into your `<model_type>.yaml`.
 | Field | Description |
 |-------|-------------|
 | `project_id` | two-digit string (`"01"`) -> `M01`, `I01`, ... |
-| `model_type` | `schism`, `schism_2d`, `schism_wwm`, `schism_mice`, `ufs_schism`, `ufs_schism_ww3`, `ufs_schism_cice` |
+| `model_type` | `schism`, `schism_2d`, `schism_wwm`, `schism_mice`, `schism_wwm_mice`, `ufs_schism`, `ufs_schism_ww3`, `ufs_schism_cice` |
 | `project_dir` | absolute parent directory on HPC |
 | `start_date` / `end_date` | inclusive, `YYYY-MM-DD` |
 | `grouping` | `monthly` (default), `ndays`, or alias `daily` / `weekly` / `biweekly` |

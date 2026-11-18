@@ -76,7 +76,7 @@ SNOWFALL_VARIABLE = "mean_snowfall_rate"
 
 # Models whose sflux_prc files need the snowfall rate (srate): SCHISM's
 # multi-class ice module splits prate into rain and snow with it.
-SNOWFALL_MODELS = ("schism_mice",)
+SNOWFALL_MODELS = ("schism_mice", "schism_wwm_mice")
 
 
 def wants_snowfall(cfg: dict) -> bool:

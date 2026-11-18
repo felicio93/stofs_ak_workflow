@@ -586,7 +586,7 @@ def main():
         )
     )
     parser.add_argument("--model", help="--new-project: model_type "
-                        "(schism, schism_2d, schism_wwm, schism_mice, "
+                        "(schism, schism_2d, schism_wwm, schism_mice, schism_wwm_mice, "
                         "ufs_schism, ufs_schism_ww3, ufs_schism_cice)")
     parser.add_argument("--id", dest="project_id",
                         help="--new-project: two-digit project id")

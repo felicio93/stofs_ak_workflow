@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "templates"
-MODELS = ("schism", "schism_2d", "schism_wwm", "schism_mice", "ufs_schism",
+MODELS = ("schism", "schism_2d", "schism_wwm", "schism_mice", "schism_wwm_mice", "ufs_schism",
           "ufs_schism_ww3", "ufs_schism_cice")
 
 # Files made by a step (absence before that step is not an error).
@@ -54,6 +54,8 @@ TEMPLATE_FILES = {
     "schism_2d":  _JOB_CARDS + ["vgrid.in"],
     "schism_wwm": _JOB_CARDS + ["wwminput.nml"],
     "schism_mice": _JOB_CARDS + ["mice.nml", "namelist.icepack"],
+    "schism_wwm_mice": _JOB_CARDS + ["wwminput.nml", "mice.nml",
+                                     "namelist.icepack"],
     "ufs_schism": _JOB_CARDS + ["datm_in", "datm.streams", "fd_ufs.yaml",
                                 "noahmptable.tbl", "model_configure"],
     "ufs_schism_ww3": _JOB_CARDS + [
@@ -75,6 +77,8 @@ REQUIRED = {
     "schism_2d":  _REQUIRED_BASE,
     "schism_wwm": _REQUIRED_BASE + ["wwminput.nml", "station.in"],
     "schism_mice": _REQUIRED_BASE + ["mice.nml", "namelist.icepack"],
+    "schism_wwm_mice": _REQUIRED_BASE + ["wwminput.nml", "station.in",
+                                         "mice.nml", "namelist.icepack"],
     "ufs_schism": _REQUIRED_BASE + ["datm_in", "datm.streams", "fd_ufs.yaml",
                                     "noahmptable.tbl", "model_configure"],
     "ufs_schism_ww3": _REQUIRED_BASE + [
@@ -94,7 +98,9 @@ _WW3_DEFAULT_FILES = ["mod_def.ww3", "namelists.nml", "ww3_points.list",
 # ufs_schism_ww3 only stores what differs from ufs_schism.
 TEMPLATE_CHAIN = {"ufs_schism_ww3": ("ufs_schism_ww3", "ufs_schism"),
                   "ufs_schism_cice": ("ufs_schism_cice", "ufs_schism"),
-                  "schism_mice":    ("schism_mice", "schism")}
+                  "schism_mice":    ("schism_mice", "schism"),
+                  "schism_wwm_mice": ("schism_wwm_mice", "schism_mice",
+                                      "schism_wwm", "schism")}
 _MODULES_RE = re.compile(r"@@MODULES:([a-z_]+)@@")
 
 
@@ -134,6 +140,9 @@ def _linked_files(model: str, cfg: dict = None) -> list:
         from workflow.models.schism_wwm.run.setup_run import FIX_LINKS as f
     elif model == "schism_mice":
         from workflow.models.schism_mice.run.setup_run import FIX_LINKS as f
+    elif model == "schism_wwm_mice":
+        from workflow.models.schism_wwm_mice.run.setup_run import (
+            FIX_LINKS as f)
     elif model in ("ufs_schism", "ufs_schism_cice"):
         from workflow.models.ufs_schism.run.setup_run import FIX_LINKS as f
     else:
@@ -181,7 +190,8 @@ def _norm(text: str) -> str:
 def _consistency(model: str, cfg: dict, fix: Path) -> list:
     """Cross-checks between fix/ files and the config (warnings only)."""
     warns = []
-    if not (fix / "station.in").exists() and model != "schism_wwm":
+    if not (fix / "station.in").exists() and model not in (
+            "schism_wwm", "schism_wwm_mice"):
         warns.append("no station.in: the runs will have no station output "
                      "(setup_run sets iout_sta = 0) and the station "
                      "downloads and station_skill are skipped")
@@ -225,7 +235,7 @@ def _consistency(model: str, cfg: dict, fix: Path) -> list:
     warns += _domain_covers_mesh(cfg, fix)
     if model == "schism_2d":
         warns += _consistency_2d(cfg, fix)
-    if model == "schism_mice":
+    if model in ("schism_mice", "schism_wwm_mice"):
         warns += _consistency_mice(cfg, fix)
     return warns
 

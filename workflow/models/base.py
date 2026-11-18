@@ -54,6 +54,7 @@ def make_driver(cfg: dict, config_dir: Path) -> ModelDriver:
     from workflow.models.schism_2d.driver import Schism2dDriver
     from workflow.models.schism_wwm.driver import SchismWwmDriver
     from workflow.models.schism_mice.driver import SchismMiceDriver
+    from workflow.models.schism_wwm_mice.driver import SchismWwmMiceDriver
     from workflow.models.ufs_schism.driver import UfsSchismDriver
     from workflow.models.ufs_schism_ww3.driver import UfsSchismWw3Driver
     from workflow.models.ufs_schism_cice.driver import UfsSchismCiceDriver
@@ -63,6 +64,7 @@ def make_driver(cfg: dict, config_dir: Path) -> ModelDriver:
         "schism_2d":      Schism2dDriver,
         "schism_wwm":     SchismWwmDriver,
         "schism_mice":    SchismMiceDriver,
+        "schism_wwm_mice": SchismWwmMiceDriver,
         "ufs_schism":     UfsSchismDriver,
         "ufs_schism_ww3": UfsSchismWw3Driver,
         "ufs_schism_cice": UfsSchismCiceDriver,

@@ -190,6 +190,13 @@ station_skill_end:   null
 
 # Resample interval for skill metrics.
 station_skill_resample: "1h"
+# y-axis of the station figures:
+#   global  : one range per variable (water level, temperature, salinity,
+#             each wind component pair, ...) over all stations, observed and
+#             model values in the assessment window, so stations compare
+#             directly (default)
+#   station : each figure its own range
+station_skill_ylim: global
 
 # =============================================================================
 # Argo float collocation (download_argo + collocate_argo)

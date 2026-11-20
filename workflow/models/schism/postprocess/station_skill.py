@@ -431,7 +431,7 @@ def _depth_label(depth: float) -> str:
 
 
 def _plot(obs_idx, obs_vals, mod_idx, mod_vals,
-          title, ylabel, color, mod_label, out_jpg):
+          title, ylabel, color, mod_label, out_jpg, ylim=None):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -444,6 +444,8 @@ def _plot(obs_idx, obs_vals, mod_idx, mod_vals,
             color=color,  linewidth=1)
     ax.set_title(title, fontsize=10)
     ax.set_ylabel(ylabel)
+    if ylim is not None:
+        ax.set_ylim(*ylim)
     ax.grid(True, linestyle="--", color="gray",
             linewidth=0.5)
     ax.legend(loc="best")
@@ -526,9 +528,13 @@ def _assess_station(st, source, cfg,
                     model_frame_fn,
                     lookup,
                     rule, start_str, end_str,
-                    out_dir, rows,
+                    out_dir, rows, plots,
                     ndbc_token_filter=None):
     """Assess all variables for one station.
+
+    The figures are not drawn here: each one is appended to `plots` as
+    (axis group, _plot keyword arguments), so that run_station_skill can
+    give every figure of a variable the same y-axis (station_skill_ylim).
 
     For each variable the correct depth entry is selected:
     - Surface vars (WL, pressure, wind): z=0m model output
@@ -594,15 +600,14 @@ def _assess_station(st, source, cfg,
                     f"[R\u00b2: {r2:.2f}; "
                     f"RMSE: {rmse:.2f} m/s; "
                     f"Bias: {bias:.2f} m/s]")
-                _plot(
-                    o.index, o.values,
-                    m.index, m.values,
-                    f"{src_tag} ({sid}): {name} "
-                    f"\u2014 Wind {comp_label} (m/s)",
-                    f"{comp_label} (m/s)",
-                    "purple", mod_label,
-                    out_dir
-                    / f"{sid}_{comp_label}.jpg")
+                plots.append(("wind", dict(
+                    obs_idx=o.index, obs_vals=o.values,
+                    mod_idx=m.index, mod_vals=m.values,
+                    title=(f"{src_tag} ({sid}): {name} "
+                           f"\u2014 Wind {comp_label} (m/s)"),
+                    ylabel=f"{comp_label} (m/s)",
+                    color="purple", mod_label=mod_label,
+                    out_jpg=out_dir / f"{sid}_{comp_label}.jpg")))
                 rows.append(dict(
                     station_id=sid, name=name,
                     source=src_tag,
@@ -655,14 +660,14 @@ def _assess_station(st, source, cfg,
             f"[R\u00b2: {r2:.2f}; "
             f"RMSE: {rmse:.2f} {unit}; "
             f"Bias: {bias:.2f} {unit}]")
-        _plot(
-            o.index, o.values,
-            m.index, m.values,
-            f"{src_tag} ({sid}): {name} \u2014 "
-            f"{plan['label']} [{dlabel}]",
-            f"{plan['label']} ({unit})",
-            plan["color"], mod_label,
-            out_dir / f"{sid}_{plan['product']}.jpg")
+        plots.append((plan["product"], dict(
+            obs_idx=o.index, obs_vals=o.values,
+            mod_idx=m.index, mod_vals=m.values,
+            title=(f"{src_tag} ({sid}): {name} \u2014 "
+                   f"{plan['label']} [{dlabel}]"),
+            ylabel=f"{plan['label']} ({unit})",
+            color=plan["color"], mod_label=mod_label,
+            out_jpg=out_dir / f"{sid}_{plan['product']}.jpg")))
         rows.append(dict(
             station_id=sid, name=name,
             source=src_tag,
@@ -675,6 +680,30 @@ def _assess_station(st, source, cfg,
         print(f"  {src_tag} {sid} {T} [{dlabel}]: "
               f"n={n} bias={bias:.3f} "
               f"rmse={rmse:.3f} r2={r2:.3f}")
+
+
+def _shared_ylims(plots, margin=0.05):
+    """{axis group: (ymin, ymax)} over the observed and modelled values of
+    every station of that group (finite values only), widened by `margin`
+    of the range on each side."""
+    import numpy as np
+    lims = {}
+    for key, kw in plots:
+        vals = np.concatenate([
+            np.asarray(kw["obs_vals"], dtype="f8").ravel(),
+            np.asarray(kw["mod_vals"], dtype="f8").ravel()])
+        vals = vals[np.isfinite(vals)]
+        if not vals.size:
+            continue
+        lo, hi = float(vals.min()), float(vals.max())
+        if key in lims:
+            lo, hi = min(lo, lims[key][0]), max(hi, lims[key][1])
+        lims[key] = (lo, hi)
+    out = {}
+    for key, (lo, hi) in lims.items():
+        pad = (hi - lo) * margin if hi > lo else max(abs(hi), 1.0) * margin
+        out[key] = (lo - pad, hi + pad)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -755,21 +784,38 @@ def run_station_skill(cfg: dict, config_dir=None):
                 start_str, end_str)
         return model_cache[staout_num]
 
-    rows = []
+    rows  = []
+    plots = []
 
     for st in coops:
         _assess_station(
             st, "CO-OPS", cfg,
             model_frame_fn, lookup, rule,
-            start_str, end_str, out_dir, rows,
+            start_str, end_str, out_dir, rows, plots,
             ndbc_token_filter=None)
 
     for st in ndbc:
         _assess_station(
             st, "NDBC", cfg,
             model_frame_fn, lookup, rule,
-            start_str, end_str, out_dir, rows,
+            start_str, end_str, out_dir, rows, plots,
             ndbc_token_filter=ndbc_token_filter)
+
+    # y-axis: one range per variable over all stations (station_skill_ylim:
+    # global, default), or each figure its own range (station)
+    mode = str(cfg.get("station_skill_ylim", "global")).lower()
+    if mode not in ("global", "station"):
+        print(f"  WARNING: station_skill_ylim={mode!r} unknown; using "
+              f"global.")
+        mode = "global"
+    lims = _shared_ylims(plots) if mode == "global" else {}
+    if lims:
+        print("  Shared y-axis per variable (all stations, observed and "
+              "model):")
+        for key, (lo, hi) in sorted(lims.items()):
+            print(f"    {key:<24s} {lo:10.3f} .. {hi:10.3f}")
+    for key, kw in plots:
+        _plot(**kw, ylim=lims.get(key))
 
     if rows:
         df = pd.DataFrame(rows, columns=[

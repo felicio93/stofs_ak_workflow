@@ -25,11 +25,12 @@ run on the DTN, preprocessing/execution on compute nodes via SLURM.
 11. [Running the workflow](#running-the-workflow)
 12. [Run management in detail (Phase 4)](#run-management-in-detail-phase-4)
 13. [Post-processing (Phase 5)](#post-processing-phase-5)
-14. [Sentinels, resuming and `--refresh`](#sentinels-resuming-and---refresh)
-15. [Conventions](#conventions)
-16. [Adding a new model](#adding-a-new-model)
-17. [Known limitations](#known-limitations)
-18. [Troubleshooting](#troubleshooting)
+14. [Variant projects (sharing inputs)](#variant-projects-sharing-inputs)
+15. [Sentinels, resuming and `--refresh`](#sentinels-resuming-and---refresh)
+16. [Conventions](#conventions)
+17. [Adding a new model](#adding-a-new-model)
+18. [Known limitations](#known-limitations)
+19. [Troubleshooting](#troubleshooting)
 
 See also `tutorials/hercules_walkthrough.md` (copy-paste walkthrough for a
 real Hercules project) and `docs/AUDIT.md` (code review record).
@@ -502,6 +503,41 @@ build:
 submodule commit are recorded in `BUILD_INFO.yaml`, so a moving branch is
 always traceable. Pin a tag or commit to freeze a version.
 
+**Component overrides.** A source can move some of its git submodules to
+another commit, e.g. the SCHISM and SCHISM-ESMF inside UFS-Coastal to their
+upstream master (`ufs_schism_cice` does this):
+
+```yaml
+  sources:
+    ufs-coastal-cice:
+      repo: https://github.com/oceanmodeling/ufs-coastal.git
+      ref: feature/coastal_app
+      submodules:
+        SCHISM-interface/SCHISM:      {repo: https://github.com/schism-dev/schism.git, ref: master}
+        SCHISM-interface/SCHISM-ESMF: {ref: master}    # repo: the submodule's own remote
+```
+
+Give such a variant its own source name: the checkout directory is named after
+the source, so other projects' checkouts are untouched. `BUILD_INFO.yaml`
+records the override commits.
+
+**`compile_definitions`** (UFS targets): preprocessor macros added to every
+directory of the build through `-DCMAKE_PROJECT_INCLUDE` (a two-line cmake file
+in the build directory). Use it for a macro a component's CMakeLists would
+drop: ufs-coastal's `SCHISM-interface/CMakeLists.txt` replaces
+`CMAKE_Fortran_FLAGS`, so `-DCMAKE_Fortran_FLAGS=-D...` in `make_opt` never
+reaches the SCHISM cap. `ufs_schism_cice` sets `compile_definitions:
+[UFS_CICE]`: schism-esmf master tests `UFS_CICE`, which ufs-coastal does not
+define for the cap yet; without it the cap's ice coupling compiles out with no
+error (check: `strings <build>/ufs_build/SCHISM-interface/CMakeFiles/schism.dir/SCHISM-ESMF/src/schism/schism_nuopc_cap.F90.o | grep -c Fioi_meltw`
+must be > 0).
+
+**SCHISM flag names.** SCHISM master (e49b8e04, Nov 2026) renamed
+`USE_ATMOS`/`USE_WW3`/`USE_CICE` to `UFS_ATMOS`/`UFS_WW3`/`UFS_CICE` and
+silently ignores the old names. A UFS build with an overridden (master) SCHISM
+needs the new names in `make_opt` (`-DUFS_ATMOS=ON ...`); the SCHISM that
+ufs-coastal pins still uses the old ones.
+
 | `kind` | Builds | Installed into `bin/` as | Notes |
 |--------|--------|--------------------------|-------|
 | `schism` | standalone SCHISM (`pschism`): `cmake -C <schism>/cmake/<machine cache> -D<options>`, `make pschism` | `executables.<exe_key>` | the built name follows from the options (e.g. `pschism_HERCULES_NO_PARMETIS_PREC_EVAP_BLD_STANDALONE_SH_MEM_COMM_TVD-VL`); `USE_WWM: true` gives the SCHISM+WWM build |
@@ -869,13 +905,25 @@ Configured in `postprocess.yaml`. All field plots overlay the 200 m and
    `postprocess.yaml`). `layer` is `surface` (last level), `bottom` (first
    wet level) or an integer index.
 4. **`download_coops` / `download_ndbc` -> `station_skill`**: station time
-   series and `skill_metrics.csv` under `P{ID}/P{ID}_station_skill/`.
+   series and `skill_metrics.csv` under `P{ID}/P{ID}_station_skill/`. By
+   default every figure of a variable has the same y-axis: the min/max of the
+   observed and model values of all stations in the window (+5 %), so
+   stations compare directly; the wind components share one range.
+   `station_skill_ylim: station` gives each figure its own range.
 5. **`download_argo` -> `collocate_argo` -> `plot_argo`**: OCSTrack 3-D
    collocation of T/S profiles.
 6. **`wave_skill`** (W, R): NDBC Hs / period / direction vs WWM or WW3 stations
    (direction metrics are circular).
 7. **`download_altimetry` -> `collocate_altimetry` -> `plot_altimetry`** (W, R).
 8. **`plot_outputs_ww3`** (R): WW3 field GIFs.
+9. **`download_seaice` -> `compare_seaice`** (I, C, `schism_wwm_mice`):
+   NOAA/NSIDC sea-ice concentration CDR (25 km, daily) vs the model's daily
+   mean concentration (MICE `iceTracer_2` at the nodes; CICE `aice` of
+   `history/iceh.<date>.nc` taken at every SCHISM node from its CICE cell),
+   averaged onto the NSIDC cells covered by the mesh: daily maps (model and
+   NSIDC; model - NSIDC), both 15 % ice edges, extent / area / IIEE / bias /
+   RMSE (CSV + time series), GIFs, in `P{ID}/P{ID}_compare_seaice/`. Range:
+   `compare_seaice_start/end`; on by default for the ice models.
 
 ### `station.in` convention
 
@@ -897,6 +945,46 @@ no salinity.
 
 ---
 
+## Variant projects (sharing inputs)
+
+Sensitivity runs often differ from a base project in one `fix/` file or one
+`param.nml` value (e.g. M71 = M70 with `tvd.prop` = 1, M72 = M70 with
+`shapiro.gr3` = 0). They can reuse the base project's build, downloads and
+group inputs instead of redoing them. With base `M70` and variant `M71`:
+
+```bash
+R=<project_dir>
+mkdir -p $R/M71
+cp -r $R/M70/config $R/M70/fix $R/M70/bin $R/M71/      # config, fix files, executables
+sed -i 's/^project_id: "70"/project_id: "71"/' $R/M71/config/project.yaml
+ln -s $R/M70/raw $R/M71/raw                            # downloads
+# ... change the variant's fix/ file(s) ...
+stofs-ak --init --config $R/M71/config
+# after the base project's preprocessing has finished: link its group inputs,
+# with param.nml as a real copy (the variant may edit it)
+cp -rs $R/M70/I70/I70_202509/. $R/M71/I71/I71_202509/
+cp --remove-destination $R/M70/I70/I70_202509/param.nml $R/M71/I71/I71_202509/param.nml
+stofs-ak --run --phase run --only setup_run --config $R/M71/config
+```
+
+`setup_run` links `fix/` files from the variant's own `fix/`, so the changed
+file is used. Only do this when the group inputs really are identical (same
+mesh and depths, forcing, `param.nml` apart from what you change). Downloads
+of two earlier projects can be combined file by file:
+`cp -rs $R/M21/raw/hycom $R/M70/raw/` then `cp -rsn $R/M51/raw/hycom/. $R/M70/raw/hycom/`
+(HYCOM files are per day, ERA5 per month; GloFAS is one file per year, so
+download it for the new period). For a new mesh with the same nodes (only
+depths changed), copy the property files from the base `fix/` instead of
+interpolating them (`replicate_fix`), and make `vgrid.in` and
+`partition.prop` anew.
+
+Check `param.nml` before relying on a file: `shapiro.gr3` is read with
+`ishapiro = -1` (filter strength, <= 0.5) and `ishapiro = 2` (coefficient of
+the Smagorinsky-like filter, strength = 0.5 tanh(dt |grad u| coef)); `tvd.prop`
+applies with `itr_met = 3/4`, and only where the total depth >= `h_tvd`.
+
+---
+
 ## Sentinels, resuming and `--refresh`
 
 Most steps are resume-safe through `*.done` files and output-presence checks.
@@ -904,11 +992,12 @@ Re-run the same command; check logs for `ERROR:`.
 
 | Location | Sentinels |
 |----------|-----------|
-| `I{ID}_{g}/` | `gen_hotstart.done`, `gen_3Dth.done`, `gen_nudge.done`, `bctides.done`, `sflux/gen_sflux.done`, `gen_wwminput.done`, `gen_ww3_shel.done`, `gen_ww3_ounp.done`, `{datm_subdir}/gen_datm.done`, `{datm_subdir}/gen_esmf_mesh.done`, `gen_datm_in.done`, `gen_datm_streams.done`, `gen_model_configure.done`, `gen_ufs_configure.done`, `copy_*.done` |
+| `I{ID}_{g}/` | `gen_hotstart.done`, `gen_3Dth.done`, `gen_nudge.done`, `bctides.done`, `sflux/gen_sflux.done`, `gen_wwminput.done`, `gen_ww3_shel.done`, `gen_ww3_ounp.done`, `{datm_subdir}/gen_datm.done`, `{datm_subdir}/gen_esmf_mesh.done`, `gen_datm_in.done`, `gen_datm_streams.done`, `gen_model_configure.done`, `gen_ufs_configure.done`, `copy_*.done`, `gen_ice_hotstart.done` (MICE), `gen_ice_in.done` (CICE) |
 | `R{ID}_{g}/` | `setup_run.done`, `run.done`, `outputs/combine_output.done`, `convert_ww3_sta.done` |
+| `M{ID}/fix/cice/` | `gen_cice_grid.done` (CICE grid; holds nx, ny) |
 | `M{ID}/build/` | `<target>.done` (the recipe hash; **not** reset by `--refresh`: delete it to rebuild) |
 | `D{ID}_{g}/` | `plot_hycom.done`, `plot_hycom_outputs.done`, `plot_sflux.done`, `plot_datm.done`, `diag/diag_*.done` |
-| `P{ID}/P{ID}_*/` | `plot_outputs.done`, `compare_sst.done`, `station_skill.done`, `wave_skill.done`, `collocate_argo.done`, `plot_argo.done`, `collocate_altimetry.done`, `plot_outputs_ww3.done`, `.frames_done` |
+| `P{ID}/P{ID}_*/` | `plot_outputs.done`, `compare_sst.done`, `station_skill.done`, `wave_skill.done`, `collocate_argo.done`, `plot_argo.done`, `collocate_altimetry.done`, `plot_outputs_ww3.done`, `compare_seaice.done`, `.frames_done` |
 
 `stofs-ak --refresh` deletes the sentinels of the first three directory
 types (except `combine_output.done`, `convert_ww3_sta.done` and the
@@ -977,8 +1066,35 @@ templates track upstream branches (`master`, `feature/coastal_app`) by
 default, so a rebuild after changing the recipe may pick up newer sources
 (pin `ref` to avoid it); `--new-project` needs the repository checkout
 (editable install); the `run_test` executable and (for UFS) modulefile names
-are checked by `--check-fix` but only the WW3 `srun` executable is rewritten
-by `setup_run`.
+are checked by `--check-fix` but only the WW3 and CICE `srun` executables are
+rewritten by `setup_run`.
+
+Found while running (Nov 2026):
+
+- **`bctides.in` and SCHISM master.** Since SCHISM 9a53ad68 (17 Nov 2026,
+  dynamic nodal factors) the first line of `bctides.in` is read as `nf_flag`
+  (0 static, 1 dynamic nodal factors). `gen_bctides` still writes a comment
+  (the start date) there, which a master build rejects ("list-directed I/O
+  syntax error, unit 31, bctides.in"). Until `gen_bctides` is changed, put
+  `0 ` in front of line 1 of every group's `bctides.in`:
+  `sed -i '1s/^!/0 !nf_flag (0: static nodal factors); /' I{ID}_<group>/bctides.in`.
+  Older SCHISM builds skip line 1, so the edited file works with both.
+- **Old-I/O combine and the 8 h QOS.** `combine_output11_MPI` combines one
+  stack per rank: a stack's time grows with the number of variables written,
+  not with the rank count. On the 200 m Alaska mesh a day of output with the
+  3D extras (`iof_hydro` 20-24, 28) is ~72 GB and one week took 7.5-8+ h. The
+  `nos-surge` QOS (`batch`, `windfall`) allows 8 h; `long` (16 h) is not
+  available to the account. Turn off unneeded 3D outputs in UFS runs.
+- **`chain_hotstart: false` in UFS runs.** The UFS `submit_run` goes on to the
+  next group after the first (which then stops for lack of `hotstart.nc`);
+  the SCHISM `submit_run` launches only the first group.
+- **Ice models.** `ufs_schism_cice` uses public code: the pinned CICE takes
+  snow only from negative `Faxa_rain` (with ERA5 all precipitation reaches the
+  ice as rain), boundary restoring needs `BRY_<year>.nc` files the workflow
+  does not make, and the first group starts ice free (or from a given CICE
+  restart). In `schism_wwm_mice` WWM does not see the ice.
+- **Templates.** `templates/schism_wwm/fix/param.nml` still has `ibdef`
+  (SCHISM master needs `nbdef`; an unread name aborts the namelist read).
 
 ---
 
@@ -1003,3 +1119,9 @@ by `setup_run`.
 | `Longitude check ... ERROR: no mesh node falls inside the HYCOM longitude range` | `fix/hgrid.ll` and the HYCOM download use different longitude conventions or boxes (`lon_reference`, `lon_min/lon_max`) |
 | `ERROR: invalid mesh in fix/` (clockwise or zero-area elements), or SCHISM aborts with `Negative elem. areas` | regenerate the mesh with counter-clockwise elements (the workflow does not fix meshes), then redo `vgrid.in`, `partition.prop` and the property files; `python utils/check_mesh_orientation.py fix/hgrid.gr3 fix/hgrid.ll` checks a mesh by hand |
 | `--check-fix` warns that `run_test` runs a different executable or modulefile | edit `fix/run_test` (or `executables:`) so they agree with the build |
+| SCHISM stops at start-up: `list-directed I/O syntax error, unit 31, ... bctides.in` | a SCHISM master build reads line 1 of `bctides.in` as `nf_flag`: see Known limitations |
+| `ERROR: setup settings must be in modelsetup.yaml ... found in domain.yaml` | the config comes from an older project: move the key (e.g. `estuary_depth_threshold`) to `modelsetup.yaml` |
+| `sbatch: error: QOSMaxWallDurationPerJobLimit` / `Invalid qos specification` | the walltime exceeds the QOS limit (8 h for `batch`/`windfall`) or the account may not use that QOS (`sacctmgr show assoc user=$USER format=QOS%60`) |
+| combine job ended `TIMEOUT`; `schout_N.nc.incomplete` files | the per-rank files are kept: shorten the job (fewer outputs) and re-run `submit_run`; if a combine did complete but was not recorded (monitor stopped), check the `schout_N.nc` sizes against an earlier group and `touch outputs/combine_output.done` before re-running |
+| the terminal running `submit_run` disconnected | the SLURM jobs keep going; re-run the same `submit_run` command, it resumes from where the group is (completed model run -> combine, chain, next group) |
+| UFS+CICE run: no `Fioi_meltw` in the cap object, or SCHISM gets no ice | the build lost `UFS_CICE` for the cap: see `compile_definitions` |

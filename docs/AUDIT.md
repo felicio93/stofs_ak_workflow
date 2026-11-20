@@ -167,3 +167,15 @@ SCHISM, WWM, WW3 and CMEPS sources.
 | `start_day` (`gen_param`) | First group kept the template's `start_day`; right only when the run starts on the template's day. | `start_day` from the group start for all groups. |
 | `convert_ww3_sta` job | Name `ww3sta_<YYYYMM>` shared by all weekly groups of a month; default memory for a job reading the ~1 GB `mod_def.ww3`. | Full group id in the name; `--mem` (`slurm.convert_ww3_mem`, 32G). |
 | Station output, SCHISM since a3e58bff (2026-10-19) | SCHISM writes `outputs/staout.nc` instead of the ASCII `staout_N`, which stayed empty: `station_skill` found no model data. With `ihot=2` the file is only opened to append (`schism_init.F90`, errors unchecked), so the first group of M21/M23 (fresh run directory) has no station output for Sep 1-7. | `station_skill` reads `staout.nc` (ASCII fallback for the UFS SCHISM). The standalone `param.nml` templates use `ihot = 1`; `gen_param` warns on `ihot = 2`. |
+
+---
+
+## Addendum (Nov 2026)
+
+The audit above covers the package as of early November 2026. Added since,
+not part of the review: `schism_mice`, `ufs_schism_cice`, `schism_wwm_mice`,
+`download_seaice` / `compare_seaice`, build component overrides and
+`compile_definitions`, the shared y-axis of `station_skill`. Issues found while
+running them are listed in README, "Known limitations" (Found while running)
+and "Troubleshooting".
+

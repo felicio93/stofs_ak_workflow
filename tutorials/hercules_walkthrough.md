@@ -6,7 +6,8 @@ below are hardcoded to my case:
 - Repo clone:   `/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/stofs_ak_workflow`
 - Project dir:  `/work2/noaa/nos-surge/felicioc/STOFS_3D_AK`
 - Model:        `M01`  (so `M01/`, `I01/`, `R01/`, `P01/`, `D01/`)
-- model_type:   `schism` (SCHISM+WWM, UFS-SCHISM and UFS-SCHISM+WW3 differences are in sections 11-14)
+- model_type:   `schism` (SCHISM+WWM, UFS-SCHISM and UFS-SCHISM+WW3 differences are in sections 11-14;
+                the sea-ice models and variant projects in sections 16-19)
 - Executables:  built by the workflow itself (`--phase build`, section 3b) from `build.yaml`
 - conda base:   `/work2/noaa/nos-surge/felicioc/envs/miniconda3`
 - Envs:         `swf_main` (download + aggregate + SCHISM preproc), `swf_plot` (plotting + mesh diagnostics)
@@ -47,7 +48,8 @@ starter files of `M01/fix/` (`param.nml`, `run_test`, `run_comb`, ...).
 export WF=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/stofs_ak_workflow
 export CFG=/work2/noaa/nos-surge/felicioc/STOFS_3D_AK/M01/config
 
-# model: schism | schism_wwm | ufs_schism | ufs_schism_ww3 (sections 12-14).
+# model: schism | schism_2d | schism_wwm | ufs_schism | ufs_schism_ww3 (sections 12-14)
+#        schism_mice | ufs_schism_cice | schism_wwm_mice (sections 16-18).
 # Needs pyyaml: run it from swf_main (bootstrap in section 2, first command)
 # or any env that has it; `stofs-ak` exists after `pip install -e $WF`.
 python $WF/orchestrator.py --new-project --model schism --id 01 \
@@ -891,6 +893,33 @@ and `wind`. The model column is selected by the station's line index in
 > the already-downloaded observations and model output. `station_skill_resample`
 > (default `1H`) sets the cadence for the skill metrics.
 
+> **Y-axes.** All figures of one variable share the same y-axis range (min/max
+> of the observed and model values of every station in the window, +5 %; the
+> two wind components share one range), so stations can be compared side by
+> side; the ranges are printed at the end of the step. `station_skill_ylim:
+> station` in `postprocess.yaml` gives each figure its own range instead.
+
+### Step 10g — download_seaice + compare_seaice (sea-ice models)
+
+For `schism_mice`, `ufs_schism_cice` and `schism_wwm_mice` (on by default for
+them). `download_seaice` (DTN) gets the daily NOAA/NSIDC sea-ice concentration
+CDR into `obs/seaice_nsidc/`; `compare_seaice` (SLURM: one array over the days,
+then one job for the GIFs/CSV) compares the model's daily-mean concentration
+with it on the 25 km NSIDC cells covered by the mesh.
+
+```bash
+stofs-ak --run --phase postprocess --only download_seaice --config $CFG   # DTN
+stofs-ak --run --phase postprocess --only compare_seaice  --config $CFG   # login node
+ls $SWF_PROJ/M01/P01/P01_compare_seaice/
+# compare_seaice.gif (model and NSIDC), compare_seaice_diff.gif (model - NSIDC),
+# compare_seaice_stats.csv, compare_seaice_timeseries.png, frames/, stats/
+```
+
+`compare_seaice_start` / `compare_seaice_end` limit the days (e.g. to the part
+of a run that has finished). To redo it, move `compare_seaice.done` aside.
+Another project's downloads can be used by linking its folder:
+`ln -s $SWF_PROJ/M51/obs/seaice_nsidc $SWF_PROJ/M61/obs/seaice_nsidc`.
+
 ---
 
 ## 11. Phase 5 extras — Argo, waves and altimetry
@@ -1077,6 +1106,97 @@ otherwise.
 
 ---
 
+## 16. SCHISM + sea ice (`model_type: schism_mice`)
+
+SCHISM's internal multi-class ice module (MICE, Icepack). Everything of
+`schism` applies, plus (README, "SCHISM + sea ice"):
+
+```bash
+stofs-ak --new-project --model schism_mice --id 51 --dir $SWF_PROJ
+# fix/: mice.nml, namelist.icepack (templates), param.nml with nws = 2, ihconsv = 1,
+#       nstep_ice and the iof_mice outputs
+stofs-ak --run --phase build --config $CFG                       # target schism_mice (USE_MICE + PREC_EVAP)
+stofs-ak --run --only download_hycom_ice --config $CFG           # DTN, only when fix/mice.nml has ihot_mice = 2
+stofs-ak --run --config $CFG                                     # + gen_mice_nml, gen_ice_hotstart; ERA5 snowfall -> sflux srate
+stofs-ak --run --phase run --config $CFG
+stofs-ak --run --phase postprocess --config $CFG                 # + download_seaice / compare_seaice
+```
+
+`ihot_mice = 2` starts the ice from HYCOM (`sic/sih/siu/siv` into the first
+hotstart); the later groups restart from the ice state in the chained SCHISM
+hotstart. A known SCHISM issue loses the HYCOM ice at the first step (see the
+MICE study note), so a HYCOM start currently behaves like an ice-free one.
+
+---
+
+## 17. UFS-SCHISM + CICE (`model_type: ufs_schism_cice`)
+
+DATM + SCHISM + CICE6 through CMEPS (coastal mode). Everything of
+`ufs_schism` applies, plus:
+
+```bash
+stofs-ak --new-project --model ufs_schism_cice --id 61 --dir $SWF_PROJ
+cp <mesh project>/fix/hgrid.gr3 <mesh project>/fix/hgrid.ll $SWF_PROJ/M61/fix/
+stofs-ak --run --phase build --config $CFG          # ufs_datm2sch2cice + HYCOM/combine/partition tools
+stofs-ak --run --phase setup --only gen_cice_grid --config $CFG   # fix/cice/ (SLURM, ~minutes)
+stofs-ak --run --phase setup --only gen_estuary --config $CFG     # bin/gen_hot_from_nc.in for gen_hotstart
+stofs-ak --init --config $CFG
+stofs-ak --run --config $CFG                        # + gen_ice_in (one ice_in per group)
+stofs-ak --run --phase run --only setup_run --config $CFG
+stofs-ak --run --phase run --only submit_run --config $CFG
+```
+
+Checks after the build (`D` = `$SWF_PROJ/src/_build/M61/ufs_datm2sch2cice/ufs_build`):
+
+```bash
+grep -E "^(APP|UFS_ATMOS|UFS_CICE|CICE_IO):" $D/CMakeCache.txt     # CSTLSC, ON, ON, NetCDF
+strings $D/SCHISM-interface/CMakeFiles/schism.dir/SCHISM-ESMF/src/schism/schism_nuopc_cap.F90.o | grep -c Fioi_meltw   # > 0
+```
+
+and after `gen_cice_grid`: `M61/fix/cice/cice_grid.png` (land mask and depth on
+the CICE grid). The job layout (`*_petlist_bounds` in `ufs_schism_cice.yaml`)
+must match `fix/run_test` (`-N 43 -n 3434` in the template: ATM 80, ICE 160,
+SCHISM 3194; `partition.prop` for 3194 cores). Coupling is every 180 s.
+
+In a run directory: `cice_grid -> fix/cice`, `ice_in`, `history/` (daily
+`iceh.<date>.nc`), `RESTART/iced.<date>.nc` at the end of the group (chained to
+the next group with `ice.restart_file`). `ice_diag.d` is CICE's log (area,
+extent, budgets). The SCHISM log's `Si_hi is not a StandardName` and
+`NUOPC/Instance/Connected` errors are harmless (unused fields).
+
+---
+
+## 18. SCHISM + WWM + MICE (`model_type: schism_wwm_mice`)
+
+Both internal modules in one run; the steps are the union of sections 12 and 16:
+`gen_wwmbnd` (setup), `gen_wwminput` + the MICE steps (preprocess),
+`wave_skill` / altimetry + `compare_seaice` (postprocess). Build target
+`schism_wwm_mice` (`USE_WWM` + `USE_MICE` + `PREC_EVAP`); check the executable
+name the build reports against `executables.schism_wwm_mice`.
+
+---
+
+## 19. Variant projects (sensitivity runs)
+
+To run a project that differs from a finished or running one only in a
+`fix/` file (e.g. M71 = M70 with `tvd.prop` = 1 everywhere; M72 = M70 with
+`shapiro.gr3` = 0), reuse its build, downloads and group inputs: README,
+"Variant projects (sharing inputs)". The file changes used for M71/M72:
+
+```bash
+cd $SWF_PROJ/M71/fix
+mv tvd.prop tvd.prop.m70
+awk '{print $1, 1}' tvd.prop.m70 > tvd.prop
+cd $SWF_PROJ/M72/fix
+mv shapiro.gr3 shapiro.gr3.m70
+awk 'NR==2{np=$2} NR<=2{print; next} NR<=np+2{print $1, $2, $3, 0; next} {print}' shapiro.gr3.m70 > shapiro.gr3
+```
+
+Check that `param.nml` uses the file (`ishapiro = -1` or `2` for
+`shapiro.gr3`; `itr_met = 3/4` and `h_tvd` for `tvd.prop`).
+
+---
+
 ## Single-step override
 
 To run one step regardless of the `steps.yaml` flags:
@@ -1150,6 +1270,7 @@ stofs-ak --run --phase all --config $CFG
 | `--init` | — | any | swf_main | no |
 | `gen_vgrid` / `gen_partition` / `replicate_fix` / `gen_estuary` | setup | any | swf_main | no |
 | `inspect_mesh` (submit) | setup | login | swf_main | no |
+| `gen_cice_grid` (submit; CICE) | setup | login | swf_main (job: swf_plot) | no |
 | inspect_mesh job | setup | compute | swf_plot (auto) | no |
 | `download_hycom` | 1 | DTN | swf_main | yes |
 | `download_era5` | 1 | DTN | swf_main | yes |
@@ -1161,6 +1282,9 @@ stofs-ak --run --phase all --config $CFG
 | plotting jobs | 2 | compute | swf_plot (auto) | no |
 | `gen_bctides` / `gen_source` / `gen_param` | 3 | any | swf_main | no |
 | `gen_hotstart` / `gen_3Dth` / `gen_nudge` (submit) | 3 | login | swf_main | no |
+| `download_hycom_ice` (MICE) | 1 | DTN | swf_main | yes |
+| `gen_mice_nml` (MICE) / `gen_ice_in` (CICE) | 3 | any | swf_main | no |
+| `gen_ice_hotstart` (MICE, submit) | 3 | login | swf_main | no |
 | gen_* SLURM jobs | 3 | compute | none (Fortran) | no |
 | `setup_run` | 4 | login | swf_main | no |
 | `submit_run` (auto_hotstart loop) | 4 | login | swf_main | no |
@@ -1180,6 +1304,8 @@ stofs-ak --run --phase all --config $CFG
 | `wave_skill` (WWM / WW3) | 5 | login/any | swf_main | no |
 | `download_altimetry` (WWM / WW3) | 5 | DTN | swf_main | yes |
 | `collocate_altimetry` (WWM / WW3) | 5 | compute (SLURM) | swf_plot (auto) | no |
+| `download_seaice` (ice models) | 5 | DTN | swf_main | yes |
+| `compare_seaice` (ice models) | 5 | compute (SLURM) | swf_plot (auto) | no |
 
 ---
 

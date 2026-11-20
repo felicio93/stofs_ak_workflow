@@ -44,6 +44,7 @@ def run_submit_run(cfg: dict):
     print(f"{'='*60}")
 
     launched_any = False
+    chain        = bool(cfg.get("chain_hotstart", True))
 
     for group_id in groups:
         rdir = mdir / f"R{pid}" / f"R{pid}_{group_id}"
@@ -85,6 +86,19 @@ def run_submit_run(cfg: dict):
             print(f"  Inspect {rdir}/outputs/mirror.out "
                   f"and re-run submit_run to resume.")
             sys.exit(result.returncode)
+
+        if not chain:
+            # chain_hotstart=False: one group per submit_run; the next group
+            # has no hotstart.nc / restarts until they are put in place
+            rest = [g for g in groups[groups.index(group_id) + 1:]
+                    if not (mdir / f"R{pid}" / f"R{pid}_{g}"
+                            / "run.done").exists()]
+            if rest:
+                print(f"\n  chain_hotstart=False: stopping after "
+                      f"{group_id}; {len(rest)} group(s) not started "
+                      f"(put the next group's hotstart and restarts in "
+                      f"place, then run submit_run again).")
+            break
 
     print(f"\n{'='*60}")
     if launched_any:

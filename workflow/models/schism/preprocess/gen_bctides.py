@@ -6,6 +6,12 @@ Step: Generate bctides.in for each group (interactive, swf_main).
 Works for all grouping modes (monthly, ndays/weekly/daily).
 The tidal constituent computation (nodal factors, Greenwich equilibrium
 arguments) uses the group start date and the group length in days.
+
+Line 1 is nf_flag = 0 (static nodal factors: the factors and arguments
+written in this file), followed by the start date as a comment. SCHISM
+master reads it as a number since 9a53ad68 (Nov 2026, dynamic nodal
+factors, nf_flag = 1); older SCHISM skips line 1, so the file works with
+both.
 """
 
 import sys
@@ -70,7 +76,8 @@ def write_bctides(out_path: Path, start_date, rnday: int,
     lines = []
 
     lines.append(
-        f"!{start_date.strftime('%Y-%m-%d %H:%M:%S')} UTC")
+        f"0 !nf_flag (0: static nodal factors); "
+        f"{start_date.strftime('%Y-%m-%d %H:%M:%S')} UTC")
 
     if add_earth_tidal:
         etp_constituents = [

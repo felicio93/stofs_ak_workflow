@@ -5,8 +5,9 @@ Phase 4, step "submit_run".
 
 When chain_hotstart=True, launches ONLY the first pending group.
 auto_hotstart.py chains subsequent groups automatically.
-When chain_hotstart=False (single-group testing), only the first pending
-group can start: later groups have no hotstart.nc link until chained.
+When chain_hotstart=False (single-group testing), also only the first
+pending group is launched: later groups have no hotstart.nc link until it is
+put in place by hand; the next submit_run then launches the next group.
 """
 
 import subprocess
@@ -48,16 +49,20 @@ def run_submit_run(cfg: dict):
         print(f"{'='*60}\n")
         return
 
+    # Only the first pending group: with chain_hotstart=True auto_hotstart.py
+    # launches the next ones; with False the next group has no hotstart.nc
+    # until it is put in place by hand, so each submit_run runs one group.
+    launch_groups = pending[:1]
     if chain:
-        launch_groups = pending[:1]
         print(f"\n  chain_hotstart=True: launching only "
               f"group {launch_groups[0]}. "
               f"Remaining {len(pending)-1} group(s) will be "
               f"chained automatically by auto_hotstart.py.")
     else:
-        launch_groups = pending
-        print(f"\n  chain_hotstart=False: launching "
-              f"{len(launch_groups)} group(s) independently.")
+        print(f"\n  chain_hotstart=False: launching only group "
+              f"{launch_groups[0]} ({len(pending)-1} more pending group(s) "
+              f"are not started: put each one's hotstart in place, then "
+              f"run submit_run again).")
 
     for group_id in launch_groups:
         rdir = mdir / f"R{pid}" / f"R{pid}_{group_id}"

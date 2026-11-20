@@ -472,6 +472,9 @@ ls $SWF_PROJ/M01/I01/I01_*/bctides.done | wc -l   # should equal number of month
 head -20 $SWF_PROJ/M01/I01/I01_202409/bctides.in
 ```
 
+Line 1 is `0 !nf_flag (0: static nodal factors); <start> UTC`: SCHISM master
+(since Nov 2026) reads it as the nodal-factor flag; older builds skip it.
+
 Re-run a month: `rm $SWF_PROJ/M01/I01/I01_202410/bctides.done`.
 
 ### Step 3C — gen_source (interactive, once per month)
@@ -1031,8 +1034,11 @@ ls $SWF_PROJ/M01/R01/R01_202512/
   `collocate_argo`) reads the combined `schout_*.nc` files automatically.
 - **No in-run diagnostics**: `diag_run_plots` is not supported (partition
   files are only combined at the end of each group).
-- `chain_hotstart: false` is for single-group tests only: groups after the
-  first have no `hotstart.nc` link and cannot start.
+- `chain_hotstart: false` is for single-group tests: `submit_run` runs only
+  the first pending group. To continue, put the next group's `hotstart.nc`,
+  DATM/mediator (and WW3/CICE) restarts and pointer files in place and run
+  `submit_run` again, or switch to `true`, move the remaining groups'
+  `setup_run.done` aside, re-run `setup_run` and `submit_run`.
 
 ---
 

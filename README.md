@@ -706,8 +706,12 @@ on mismatch); SLURM steps call the env interpreter by full path.
 | `postprocess.yaml` | isobaths, `diag_run_vars`, `plot_outputs_*`, `compare_sst_*`, `station_skill_*`, `coops_*`, `ndbc_*`, `argo_*`/`collocate_argo_*`, altimetry and WW3 plot keys (documented inline) |
 
 `chain_hotstart` (default `true`): `true` chains group N -> N+1
-automatically; `false` is for **single-group testing** only (later groups
-have no `hotstart.nc` link and cannot start).
+automatically; `false` is for **single-group testing**: `submit_run` launches
+only the first pending group and stops after it (the later groups have no
+`hotstart.nc` link). To go on, put the next group's hotstart (and, for UFS
+models, its restarts and pointer files) in place and run `submit_run` again,
+or set `true`, re-run `setup_run` for the remaining groups (move their
+`setup_run.done` aside) and run `submit_run`.
 
 `chain_ww3_restart` (UFS+WW3, default `true`): copy the WW3 restart to the
 next group; `false` cold-starts WW3 every group (DATM and mediator restarts
@@ -1073,21 +1077,20 @@ Found while running (Nov 2026):
 
 - **`bctides.in` and SCHISM master.** Since SCHISM 9a53ad68 (17 Nov 2026,
   dynamic nodal factors) the first line of `bctides.in` is read as `nf_flag`
-  (0 static, 1 dynamic nodal factors). `gen_bctides` still writes a comment
-  (the start date) there, which a master build rejects ("list-directed I/O
-  syntax error, unit 31, bctides.in"). Until `gen_bctides` is changed, put
-  `0 ` in front of line 1 of every group's `bctides.in`:
-  `sed -i '1s/^!/0 !nf_flag (0: static nodal factors); /' I{ID}_<group>/bctides.in`.
-  Older SCHISM builds skip line 1, so the edited file works with both.
+  (0 static, 1 dynamic nodal factors). `gen_bctides` now writes
+  `0 !nf_flag (0: static nodal factors); <start date> UTC` there (static
+  factors, as before; older SCHISM builds skip line 1). A `bctides.in` made
+  before this change (first line a `!` comment) is rejected by a master build
+  ("list-directed I/O syntax error, unit 31, bctides.in"): fix it with
+  `sed -i '1s/^!/0 !nf_flag (0: static nodal factors); /' I{ID}_<group>/bctides.in`,
+  or move `bctides.done` aside and re-run `gen_bctides`. Dynamic nodal factors
+  (`nf_flag = 1`, a different file layout) are not offered yet.
 - **Old-I/O combine and the 8 h QOS.** `combine_output11_MPI` combines one
   stack per rank: a stack's time grows with the number of variables written,
   not with the rank count. On the 200 m Alaska mesh a day of output with the
   3D extras (`iof_hydro` 20-24, 28) is ~72 GB and one week took 7.5-8+ h. The
   `nos-surge` QOS (`batch`, `windfall`) allows 8 h; `long` (16 h) is not
   available to the account. Turn off unneeded 3D outputs in UFS runs.
-- **`chain_hotstart: false` in UFS runs.** The UFS `submit_run` goes on to the
-  next group after the first (which then stops for lack of `hotstart.nc`);
-  the SCHISM `submit_run` launches only the first group.
 - **Ice models.** `ufs_schism_cice` uses public code: the pinned CICE takes
   snow only from negative `Faxa_rain` (with ERA5 all precipitation reaches the
   ice as rain), boundary restoring needs `BRY_<year>.nc` files the workflow
@@ -1119,7 +1122,7 @@ Found while running (Nov 2026):
 | `Longitude check ... ERROR: no mesh node falls inside the HYCOM longitude range` | `fix/hgrid.ll` and the HYCOM download use different longitude conventions or boxes (`lon_reference`, `lon_min/lon_max`) |
 | `ERROR: invalid mesh in fix/` (clockwise or zero-area elements), or SCHISM aborts with `Negative elem. areas` | regenerate the mesh with counter-clockwise elements (the workflow does not fix meshes), then redo `vgrid.in`, `partition.prop` and the property files; `python utils/check_mesh_orientation.py fix/hgrid.gr3 fix/hgrid.ll` checks a mesh by hand |
 | `--check-fix` warns that `run_test` runs a different executable or modulefile | edit `fix/run_test` (or `executables:`) so they agree with the build |
-| SCHISM stops at start-up: `list-directed I/O syntax error, unit 31, ... bctides.in` | a SCHISM master build reads line 1 of `bctides.in` as `nf_flag`: see Known limitations |
+| SCHISM stops at start-up: `list-directed I/O syntax error, unit 31, ... bctides.in` | a `bctides.in` made before the `nf_flag` change, run with a SCHISM master build: see Known limitations |
 | `ERROR: setup settings must be in modelsetup.yaml ... found in domain.yaml` | the config comes from an older project: move the key (e.g. `estuary_depth_threshold`) to `modelsetup.yaml` |
 | `sbatch: error: QOSMaxWallDurationPerJobLimit` / `Invalid qos specification` | the walltime exceeds the QOS limit (8 h for `batch`/`windfall`) or the account may not use that QOS (`sacctmgr show assoc user=$USER format=QOS%60`) |
 | combine job ended `TIMEOUT`; `schout_N.nc.incomplete` files | the per-rank files are kept: shorten the job (fewer outputs) and re-run `submit_run`; if a combine did complete but was not recorded (monitor stopped), check the `schout_N.nc` sizes against an earlier group and `touch outputs/combine_output.done` before re-running |

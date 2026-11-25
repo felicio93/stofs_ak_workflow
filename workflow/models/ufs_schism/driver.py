@@ -112,7 +112,7 @@ class UfsSchismDriver(ModelDriver):
             from workflow.models.schism.preprocess.aggregate_hycom import (
                 run_aggregate,
             )
-            run_aggregate(cfg)
+            run_aggregate(cfg, config_dir)
         else:
             print("[SKIP] aggregate_hycom")
 

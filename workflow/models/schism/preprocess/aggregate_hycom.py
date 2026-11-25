@@ -1,7 +1,12 @@
 """
 models/schism/preprocess/aggregate_hycom.py
 ===========================================
-Step 2 (interactive, runs in swf_main on any node -- no internet needed).
+Step 2 (no internet needed). By default one SLURM array task per group and
+variable (SSH, UV, TS), on compute nodes, and the preprocess phase waits
+for them (template
+templates/slurm/aggregate_hycom.sbatch; slurm.aggregate_hycom_mem /
+_walltime in project.yaml). aggregate_hycom_mode: local runs it in this
+process instead (also the fallback where there is no sbatch).
 
 For each group in the date range, concatenate the daily raw HYCOM files into
 SCHISM "stack" files inside the corresponding I{ID}_{group_id}/ directory:
@@ -292,123 +297,179 @@ def aggregate_ts(present, out_file: Path, tmp_dir: Path) -> bool:
     return True
 
 
-def run_aggregate(cfg: dict):
+def _aggregate_var(var: str, var_dir: Path, out_file: Path, func,
+                   cfg: dict, group_id: str, tmp_dir: Path) -> bool:
+    """One variable of one group; True on success (or already done)."""
+    label = f"{var.upper()}:".ljust(5)
+    if is_complete_file(out_file):
+        print(f"  {label} already aggregated, skipping.")
+        return True
+    present, missing = daily_files_for_stack(var_dir, var, cfg, group_id)
+    present, missing, unfilled = fill_group_gaps(
+        var_dir, var, cfg, group_id, present, missing)
+    report_missing(var, group_id, missing)
+    try:
+        if unfilled:
+            raise RuntimeError(
+                "missing day(s) inside the group could not be filled "
+                "(gap > 3 days or no good neighbours): "
+                + ", ".join(d.strftime("%Y%m%d") for d in unfilled))
+        present, regridded = harmonise_grids(present, var, tmp_dir)
+        try:
+            func(present, out_file, tmp_dir)
+        finally:
+            cleanup(*regridded)
+    except Exception as exc:
+        print(f"  ERROR: {var.upper()} aggregation failed for {group_id}: "
+              f"{exc}")
+        return False
+    return True
+
+
+# variable -> (output file name, aggregation function)
+VARIABLES = {"ssh": ("SSH_1.nc", aggregate_ssh),
+             "uv":  ("UV_1.nc",  aggregate_uv),
+             "ts":  ("TS_1.nc",  aggregate_ts)}
+
+
+def group_dir(cfg: dict, group_id: str) -> Path:
+    pid = cfg["project_id"]
+    return model_dir(cfg) / f"I{pid}" / f"I{pid}_{group_id}"
+
+
+def aggregate_group(cfg: dict, group_id: str, variables=None) -> list:
+    """The stacks of one group (all variables, or the ones given); returns
+    the failed variables.
+
+    Temporary files go to raw/hycom/tmp/<group_id>_<var>/, so groups and
+    variables can run at the same time (the read-ahead days of one group
+    are the first days of the next)."""
+    raw = model_dir(cfg) / "raw" / "hycom"
+    idir = group_dir(cfg, group_id)
+    idir.mkdir(parents=True, exist_ok=True)
+    ceil = stack_ceiling(cfg, group_id)
+    gstart, gend = group_date_range(cfg, group_id)
+    print(f"\n--- {group_id}  ({gstart} -> {gend}, ceiling={ceil} records)"
+          f"  ({idir}) ---")
+    failed = []
+    for var in variables or list(VARIABLES):
+        name, func = VARIABLES[var]
+        tmp_dir = raw / "tmp" / f"{group_id}_{var}"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        if not _aggregate_var(var, raw / var, idir / name, func, cfg,
+                              group_id, tmp_dir):
+            failed.append(var)
+        try:
+            tmp_dir.rmdir()
+        except OSError:
+            pass
+    return failed
+
+
+def _pending(cfg: dict) -> list:
+    """[(group_id, var), ...] whose stack is not complete yet."""
+    return [(g, v) for g in list_groups(cfg) for v, (name, _) in VARIABLES.items()
+            if not is_complete_file(group_dir(cfg, g) / name)]
+
+
+def _submit_tasks(cfg: dict, config_dir: Path, pending: list) -> str:
+    """One SLURM array task per (group, variable); returns the job id."""
+    from workflow.core.environment import env_python
+    from workflow.core.slurm import (
+        DEFAULT_ACCOUNT, DEFAULT_MAIL_USER, DEFAULT_PARTITION,
+        SlurmSubmitter, write_manifest,
+    )
+    pid = cfg["project_id"]
+    mdir = model_dir(cfg)
+    logdir = mdir / "logs"
+    logdir.mkdir(parents=True, exist_ok=True)
+    manifest = write_manifest([f"{g} {v}" for g, v in pending],
+                              logdir / "aggregate_hycom_tasks.manifest")
+    slurm = cfg.get("slurm", {})
+    py = env_python(cfg, "aggregate_hycom")
+    subs = {
+        "ACCOUNT":    slurm.get("account", DEFAULT_ACCOUNT),
+        "PARTITION":  slurm.get("partition", DEFAULT_PARTITION),
+        "MAILUSER":   slurm.get("mail_user", DEFAULT_MAIL_USER),
+        "JOBNAME":    f"agghycom_M{pid}",
+        "WORKDIR":    str(mdir),
+        "NTASKS":     str(len(pending)),
+        "MEM":        slurm.get("aggregate_hycom_mem", "32G"),
+        "WALLTIME":   slurm.get("aggregate_hycom_walltime", "02:00:00"),
+        "LOGDIR":     str(logdir),
+        "MANIFEST":   str(manifest),
+        "PY":         py,
+        "ENVBIN":     str(Path(py).parent),
+        "CONFIG_DIR": str(config_dir),
+    }
+    templates = Path(__file__).resolve().parent.parent / "templates" / "slurm"
+    print(f"  Submitting aggregate_hycom: {len(pending)} job(s), one per group "
+          f"and variable ({pending[0][0]} -> {pending[-1][0]})")
+    out = SlurmSubmitter(templates).render_and_submit(
+        "aggregate_hycom.sbatch", subs, logdir / "aggregate_hycom.sbatch")
+    print(f"  Logs: {logdir}/aggregate_hycom_<task>.out")
+    return SlurmSubmitter.parse_jobid(out)
+
+
+def run_aggregate(cfg: dict, config_dir=None):
+    """All groups: as a SLURM array job (one task per group and variable,
+    on compute nodes; the default) and wait for it, or in this process with
+    aggregate_hycom_mode: local (or when there is no sbatch/config_dir)."""
     global _DEBUG
-    check_active_env(cfg)
-    check_required_tools()
-
-    pid    = cfg["project_id"]
-    mdir   = model_dir(cfg)
-    raw    = mdir / "raw" / "hycom"
-    ssh_dir, ts_dir, uv_dir = raw / "ssh", raw / "ts", raw / "uv"
-    tmp_dir = raw / "tmp"
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-
-    _DEBUG = DebugLog(mdir / "logs", "aggregate_hycom")
-
+    pid      = cfg["project_id"]
+    mdir     = model_dir(cfg)
     groups   = list_groups(cfg)
     grouping = cfg.get("grouping", "monthly")
+    mode     = str(cfg.get("aggregate_hycom_mode", "slurm")).lower()
+    if mode not in ("slurm", "local"):
+        sys.exit(f"ERROR: aggregate_hycom_mode must be slurm or local, "
+                 f"got {mode!r}")
+    if mode == "slurm" and (config_dir is None or shutil.which("sbatch") is None):
+        print("  aggregate_hycom: no sbatch here (or no config folder); "
+              "running in this process.")
+        mode = "local"
 
     print(f"\n{'='*60}")
-    print(f"  HYCOM aggregation for M{pid}")
+    print(f"  HYCOM aggregation for M{pid}  ({mode})")
     print(f"  Grouping : {grouping}"
           + (f"  (group_ndays={cfg['group_ndays']})"
              if grouping == "ndays" else ""))
     print(f"  {len(groups)} group(s): {groups[0]} -> {groups[-1]}")
+    print(f"{'='*60}")
+
+    pending = _pending(cfg)
+    if not pending:
+        print("  All groups already aggregated. Nothing to do.\n")
+        return
+    done = len(groups) * len(VARIABLES) - len(pending)
+    if done:
+        print(f"  {done} stack(s) already aggregated, skipped.")
+
+    if mode == "slurm":
+        from workflow.core.slurm import wait_for_slurm_jobs
+        jid = _submit_tasks(cfg, Path(config_dir), pending)
+        wait_for_slurm_jobs([jid], label="aggregate_hycom job(s)",
+                            tag="[aggregate_hycom]",
+                            next_step="the next preprocessing steps")
+        left = _pending(cfg)
+        if left:
+            print("  ERROR: aggregate_hycom: stack(s) still incomplete: "
+                  + ", ".join(f"{g} {v}" for g, v in left)
+                  + f"; see {mdir / 'logs'}/aggregate_hycom_<task>.err "
+                  f"(task = line of logs/aggregate_hycom_tasks.manifest)")
+            sys.exit(1)
+        print("  Aggregation complete (SLURM). No failures.\n")
+        return
+
+    check_active_env(cfg)
+    check_required_tools()
+    _DEBUG = DebugLog(mdir / "logs", "aggregate_hycom")
     print(f"  Debug trace: {_DEBUG.path}")
-    print(f"{'='*60}\n")
-
     failures = []
-    prog     = ProgressTracker(total=len(groups))
-
-    for group_id in groups:
-        idir = mdir / f"I{pid}" / f"I{pid}_{group_id}"
-        idir.mkdir(parents=True, exist_ok=True)
-
-        ceil = stack_ceiling(cfg, group_id)
-        gstart, gend = group_date_range(cfg, group_id)
-        print(f"\n--- {group_id}  ({gstart} -> {gend}, "
-              f"ceiling={ceil} records)  ({idir}) ---")
-
-        ssh_out = idir / "SSH_1.nc"
-        ts_out  = idir / "TS_1.nc"
-        uv_out  = idir / "UV_1.nc"
-
-        # SSH
-        if is_complete_file(ssh_out):
-            print("  SSH: already aggregated, skipping.")
-        else:
-            present, missing = daily_files_for_stack(
-                ssh_dir, "ssh", cfg, group_id)
-            present, missing, unfilled = fill_group_gaps(
-                ssh_dir, "ssh", cfg, group_id, present, missing)
-            report_missing("ssh", group_id, missing)
-            try:
-                if unfilled:
-                    raise RuntimeError(
-                        "missing day(s) inside the group could not be "
-                        "filled (gap > 3 days or no good neighbours): "
-                        + ", ".join(d.strftime("%Y%m%d")
-                                    for d in unfilled))
-                present, regridded = harmonise_grids(present, "ssh", tmp_dir)
-                try:
-                    aggregate_ssh(present, ssh_out, tmp_dir)
-                finally:
-                    cleanup(*regridded)
-            except Exception as exc:
-                print(f"  ERROR: SSH aggregation failed for {group_id}: {exc}")
-                failures.append((group_id, "ssh"))
-
-        # UV
-        if is_complete_file(uv_out):
-            print("  UV:  already aggregated, skipping.")
-        else:
-            present, missing = daily_files_for_stack(
-                uv_dir, "uv", cfg, group_id)
-            present, missing, unfilled = fill_group_gaps(
-                uv_dir, "uv", cfg, group_id, present, missing)
-            report_missing("uv", group_id, missing)
-            try:
-                if unfilled:
-                    raise RuntimeError(
-                        "missing day(s) inside the group could not be "
-                        "filled (gap > 3 days or no good neighbours): "
-                        + ", ".join(d.strftime("%Y%m%d")
-                                    for d in unfilled))
-                present, regridded = harmonise_grids(present, "uv", tmp_dir)
-                try:
-                    aggregate_uv(present, uv_out, tmp_dir)
-                finally:
-                    cleanup(*regridded)
-            except Exception as exc:
-                print(f"  ERROR: UV aggregation failed for {group_id}: {exc}")
-                failures.append((group_id, "uv"))
-
-        # TS
-        if is_complete_file(ts_out):
-            print("  TS:  already aggregated, skipping.")
-        else:
-            present, missing = daily_files_for_stack(
-                ts_dir, "ts", cfg, group_id)
-            present, missing, unfilled = fill_group_gaps(
-                ts_dir, "ts", cfg, group_id, present, missing)
-            report_missing("ts", group_id, missing)
-            try:
-                if unfilled:
-                    raise RuntimeError(
-                        "missing day(s) inside the group could not be "
-                        "filled (gap > 3 days or no good neighbours): "
-                        + ", ".join(d.strftime("%Y%m%d")
-                                    for d in unfilled))
-                present, regridded = harmonise_grids(present, "ts", tmp_dir)
-                try:
-                    aggregate_ts(present, ts_out, tmp_dir)
-                finally:
-                    cleanup(*regridded)
-            except Exception as exc:
-                print(f"  ERROR: TS aggregation failed for {group_id}: {exc}")
-                failures.append((group_id, "ts"))
-
+    todo = [g for g in groups if any(p[0] == g for p in pending)]
+    prog = ProgressTracker(total=len(todo))
+    for group_id in todo:
+        failures += [(group_id, v) for v in aggregate_group(cfg, group_id)]
         prog.update(group_id)
 
     print(f"\n{'='*60}")
@@ -420,5 +481,33 @@ def run_aggregate(cfg: dict):
             print(f"    {gid}  {var}")
     print(f"  Full command trace: {_DEBUG.path}")
     print(f"{'='*60}\n")
-
     _DEBUG.close()
+
+
+def main(argv=None):
+    """One group, or one variable of it (what each SLURM array task runs)."""
+    global _DEBUG
+    import argparse
+    from workflow.core.config import load_config
+    ap = argparse.ArgumentParser(description="Aggregate the HYCOM stacks "
+                                             "of one group")
+    ap.add_argument("--config", required=True)
+    ap.add_argument("--group", required=True)
+    ap.add_argument("--var", choices=list(VARIABLES), default=None,
+                    help="only this variable (default: all)")
+    a = ap.parse_args(argv)
+    cfg = load_config(Path(a.config))
+    check_required_tools()
+    tag = a.group + (f"_{a.var}" if a.var else "")
+    _DEBUG = DebugLog(model_dir(cfg) / "logs", f"aggregate_hycom_{tag}")
+    print(f"  Debug trace: {_DEBUG.path}")
+    failed = aggregate_group(cfg, a.group, [a.var] if a.var else None)
+    _DEBUG.close()
+    if failed:
+        print(f"  FAILED: {', '.join(failed)}")
+        sys.exit(1)
+    print(f"  {tag}: aggregation complete.")
+
+
+if __name__ == "__main__":
+    main()

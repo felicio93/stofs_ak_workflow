@@ -59,8 +59,8 @@ Preprocessing steps run in different execution contexts:
 |---------|-------|----------|----------|
 | Build | login node (git) + SLURM job per target | git only | `build_executables` (SCHISM, UFS-Coastal, HYCOM/combine/partition utilities) |
 | Downloads | DTN | yes | `download_hycom`, `download_era5`, `download_glofas`, `download_sst`, `download_coops`, `download_ndbc`, `download_argo`, `download_altimetry` |
-| Interactive | any node | no | `gen_vgrid`, `gen_partition`, `aggregate_hycom`, `gen_estuary`, `gen_bctides`, `gen_source`, `gen_param`, `gen_datm_in`, ... |
-| SLURM | login node, runs on compute | no | `inspect_mesh`, `gen_sflux`, `gen_hotstart`, `gen_3Dth`, `gen_nudge`, `gen_datm`, `gen_esmf_mesh`, plot steps |
+| Interactive | any node | no | `gen_vgrid`, `gen_partition`, `gen_estuary`, `gen_bctides`, `gen_source`, `gen_param`, `gen_datm_in`, ... |
+| SLURM | login node, runs on compute | no | `aggregate_hycom` (waits for its jobs), `inspect_mesh`, `gen_sflux`, `gen_hotstart`, `gen_3Dth`, `gen_nudge`, `gen_datm`, `gen_esmf_mesh`, plot steps |
 
 ---
 
@@ -760,7 +760,7 @@ Once per project, in this order; settings in `modelsetup.yaml`.
 | `download_hycom_ice` | DTN | I | HYCOM `sic/sih/siu/siv` at `start_date` 00 UTC -> `raw/hycom/ice/` (only when `fix/mice.nml` has `ihot_mice = 2`) |
 | `download_era5` | DTN | all | monthly ERA5 (CDS API); I also gets the snowfall rate |
 | `download_glofas` | DTN | all | annual GloFAS discharge (EWDS) |
-| `aggregate_hycom` | any | all but 2 | daily -> `SSH_1/TS_1/UV_1` stacks per group; missing days inside a group are interpolated (<=3 in a row), otherwise that stack fails |
+| `aggregate_hycom` | SLURM array (waits) | all but 2 | daily -> `SSH_1/TS_1/UV_1` stacks per group, one job per group and variable on compute nodes (`slurm.aggregate_hycom_mem`/`_walltime`; `aggregate_hycom_mode: local` runs it in the terminal, also the fallback without `sbatch`); missing days inside a group are interpolated (<=3 in a row), otherwise that stack fails |
 | `plot_hycom`, `plot_sflux` | SLURM array | all (`plot_hycom` not 2) | debug GIFs |
 | `gen_sflux` | SLURM array | all | ERA5 -> sflux files per group (I: `srate` in `sflux_prc`) |
 | `gen_bctides` | interactive | all | `bctides.in` from TPXO9 |

@@ -171,7 +171,7 @@ class SchismDriver(ModelDriver):
             from workflow.models.schism.preprocess.aggregate_hycom import (
                 run_aggregate,
             )
-            run_aggregate(cfg)
+            run_aggregate(cfg, config_dir)
         else:
             self._skip("aggregate_hycom")
 

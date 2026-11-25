@@ -114,6 +114,9 @@ slurm:
   plot_mem: "16G"
   inspect_walltime: "00:10:00"
   inspect_mem: "16G"
+  # aggregate_hycom: one job per group and variable (SSH, UV, TS)
+  aggregate_hycom_mem: "32G"
+  aggregate_hycom_walltime: "02:00:00"
   # Build jobs (workflow.build); UFS builds compile much more
   build_cpus: 8
   build_mem: "16G"

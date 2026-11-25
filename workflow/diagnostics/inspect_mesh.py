@@ -20,6 +20,10 @@ One plot per file:
                        D = 2*sqrt(Area/pi) metres (diameter of
                        equivalent circle, not radius)
   vertical_layers   -> computed from vgrid.in (nvrt - kbp + 1 per node)
+  partition         -> partition.prop: each MPI rank's elements in one
+                       colour, neighbouring ranks always in different
+                       colours (a rank split into pieces shows as several
+                       separate patches of one colour)
 
 Outputs are JPEG files. A sentinel file (inspect_mesh.done) is
 written after all plots complete.
@@ -157,6 +161,38 @@ def compute_resolution_m(lon, lat, triangles):
     # Diameter of the equivalent circle
     return 2.0 * np.sqrt(area / np.pi)
 
+
+
+def partition_colours(rank, tri_arr, elem_map, np_nodes):
+    """Colour class per rank such that ranks sharing a node never share a
+    colour (greedy colouring of the rank adjacency graph, highest degree
+    first). Returns (class per rank, number of classes, number of ranks).
+    Falls back to shuffled ranks mod 20 without scipy or beyond 40
+    classes."""
+    nrank = int(rank.max()) + 1
+    try:
+        from scipy import sparse
+        er = rank[elem_map]                       # rank of each triangle
+        A = sparse.csr_matrix(
+            (np.ones(tri_arr.size, np.int8),
+             (np.repeat(er, tri_arr.shape[1]), tri_arr.ravel())),
+            shape=(nrank, np_nodes))
+        A.sum_duplicates(); A.data[:] = 1
+        nb = (A @ A.T).tocsr()
+        cls = np.full(nrank, -1, dtype=np.int64)
+        for r in np.argsort(-np.diff(nb.indptr), kind="stable"):
+            used = set(cls[nb.indices[nb.indptr[r]:nb.indptr[r + 1]]])
+            c = 0
+            while c in used:
+                c += 1
+            cls[r] = c
+        ncls = int(cls.max()) + 1
+        if ncls <= 40:
+            return cls, ncls, nrank
+    except ImportError:
+        pass
+    perm = np.random.default_rng(15).permutation(nrank)
+    return perm % 20, 20, nrank
 
 # =============================================================================
 # Plot helper
@@ -310,6 +346,30 @@ def inspect_mesh(cfg: dict):
             is_elem=True, boundaries=boundaries)
     else:
         print("  tvd.prop not found in fix/, skipping.")
+
+    # --- partition.prop (element-based): one colour per MPI rank ---
+    part_path = fix / "partition.prop"
+    if part_path.exists():
+        print("  Processing partition.prop ...")
+        rank = np.loadtxt(part_path, usecols=1, dtype=np.int64)
+        cls, ncls, nrank = partition_colours(rank, tri_arr, elem_map,
+                                             np_nodes)
+        from matplotlib.colors import ListedColormap
+        import matplotlib.pyplot as plt
+        cmap = ListedColormap(
+            (list(plt.get_cmap("tab20").colors)
+             + list(plt.get_cmap("tab20b").colors))[:max(ncls, 2)])
+        make_plot(
+            triang, cls[rank][elem_map].astype(float),
+            f"Domain decomposition ({nrank} ranks, partition.prop)",
+            out / "partition.jpg",
+            lon_min, lon_max, lat_min, lat_max,
+            cmap=cmap, vmin=-0.5, vmax=max(ncls, 2) - 0.5,
+            cbar_label=f"colour class ({ncls} colours; neighbouring "
+                       f"ranks always differ)",
+            is_elem=True, boundaries=boundaries)
+    else:
+        print("  partition.prop not found in fix/, skipping.")
 
     # --- Bottom friction (auto-detect) ---
     friction_found = None

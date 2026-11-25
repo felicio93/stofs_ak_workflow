@@ -335,8 +335,8 @@ def inspect_mesh(cfg: dict):
     # D = 2 * sqrt(Area/pi)  — diameter of equivalent circle
     print("  Computing mesh resolution ...")
     resolution = compute_resolution_m(lon, lat, tri_arr)
-    res_pos  = resolution[resolution > 0]
-    res_vmax = float(np.percentile(res_pos, 98))
+    # colour scale over the full range (smallest to largest element)
+    res_vmax = float(resolution.max())
     make_frame_tripcolor(
         triang, resolution,
         "Mesh Resolution  D = 2√(Area/π)  (m)",

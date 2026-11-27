@@ -11,10 +11,11 @@ with every value read from the config instead of the source code:
     vgrid:
       dz_bot_min: 0.1           # minimum bottom layer thickness [m]
       a_vqs0: 0.0               # bias of the shallowest class (-1..1)
-      theta_b: 0.0              # S-transformation bottom parameter
+      theta_b: 0.0              # S-transformation bottom parameter (default
+                                # for classes without their own 4th value)
       downward_fix: [2, 3]      # classes forced to step down (optional)
       classes:                  # master grids, depth increasing
-        - [1.0, 2, 0.0001]      # [max depth m, levels, theta_f]
+        - [1.0, 2, 0.0001]      # [max depth m, levels, theta_f(, theta_b)]
         - ...
         - {depth: 1050.0, extend: 18, z: [-400, ..., -1050]}
 
@@ -106,17 +107,21 @@ def master_grid(vcfg: dict):
             extend[i - 1] = (src - 1, z)
             cols.append(None)
         else:
-            if not (isinstance(c, (list, tuple)) and len(c) == 3):
-                _fail(f"class {i}: expected [max depth, levels, theta_f] or "
+            if not (isinstance(c, (list, tuple)) and len(c) in (3, 4)):
+                _fail(f"class {i}: expected [max depth, levels, theta_f] "
+                      f"(optionally a 4th value theta_b) or "
                       f"{{depth, extend, z}}, got {c!r}")
             depth, levels, theta_f = float(c[0]), int(c[1]), float(c[2])
+            cb = float(c[3]) if len(c) == 4 else theta_b
+            if not 0.0 <= cb <= 1.0:
+                _fail(f"class {i}: theta_b must be in 0..1, got {cb}")
             if levels < 2:
                 _fail(f"class {i}: levels must be >= 2, got {levels}")
             if theta_f <= 0:
                 _fail(f"class {i}: theta_f must be > 0, got {theta_f}")
             h1 = depth if i == 1 else hsm[0]
             hsm.append(depth)
-            cols.append(_s_column(levels, depth, h1, theta_f, theta_b))
+            cols.append(_s_column(levels, depth, h1, theta_f, cb))
     nv = [len(col) if col is not None else 0 for col in cols]
     for j, (src, z) in extend.items():
         nv[j] = nv[src] + z.size

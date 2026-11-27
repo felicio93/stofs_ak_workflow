@@ -25,9 +25,17 @@
 #   a_vqs0:        bias of class 1 (-1 surface, 0 none, 1 bottom)
 #   theta_b:       S-coordinate bottom parameter (0..1)
 #   downward_fix:  classes forced to step down from the class before them
+#   shallow:       optional hybrid grid: {depth: D, classes: [...]} (and
+#                  optionally its own dz_bot_min, a_vqs0, theta_b) for nodes
+#                  shallower than D m (land included); deeper nodes keep the
+#                  main classes exactly
 # The mesh's deepest node must not be deeper than the last class. Outputs:
 # fix/vgrid.in, and M{ID}/vgrid_work/ nlev.gr3 (levels per node, for plots),
-# vgrid_master.out and gen_vgrid.log (nvrt, prisms, average layers).
+# vgrid_master.out and gen_vgrid.log (nvrt, prisms, average layers, and
+# diagnostics: layer jumps, hydrostatic consistency rx1, thinnest layer,
+# shelf surface/bottom layers, layers per depth band). To compare
+# candidates on a mesh first: python -m workflow.core.vgrid_eval (see
+# docs/vgrid_candidates_alaska.yaml).
 # Uncomment one example below (or copy it and edit the values).
 #
 # ---- Alaska (M26, M27; gen_vqs_1.f90): 10 classes, up to 51 levels ----

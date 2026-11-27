@@ -18,6 +18,20 @@ with every value read from the config instead of the source code:
         - ...
         - {depth: 1050.0, extend: 18, z: [-400, ..., -1050]}
 
+Optional hybrid grid: a shallow: block gives nodes shallower than
+shallow.depth their own classes (and optionally their own dz_bot_min,
+a_vqs0, theta_b); every other node keeps the main classes exactly, level
+for level. vgrid.in stores each node's levels, so the two need not come from
+one class list:
+
+    vgrid:
+      ...main classes...
+      shallow:
+        depth: 3.0              # nodes with dp < 3 m (land included)
+        classes:
+          - [1.0, 3, 0.0001]
+          - [3.0, 7, 0.0001]    # the last class must reach depth
+
 A list class is an S-coordinate master grid. A dict class copies the levels
 of class `extend` (1-based) and appends the fixed depths z below them; its
 level count is the sum of the two.
@@ -225,6 +239,159 @@ def node_sigma(dp: np.ndarray, vcfg: dict, hsm, nv, z_mas):
     return kbp, sigma
 
 
+def _sub_cfg(vcfg: dict) -> dict:
+    """The shallow: block as a stand-alone vgrid config (inherits the main
+    dz_bot_min, a_vqs0 and theta_b unless it sets its own)."""
+    sh = vcfg["shallow"]
+    if not isinstance(sh, dict) or "depth" not in sh or "classes" not in sh:
+        _fail("vgrid.shallow needs depth and classes")
+    sub = {k: sh.get(k, vcfg.get(k)) for k in ("dz_bot_min", "a_vqs0",
+                                              "theta_b")}
+    sub = {k: v for k, v in sub.items() if v is not None}
+    sub["classes"] = sh["classes"]
+    sub["downward_fix"] = sh.get("downward_fix", [])
+    return sub
+
+
+def compute_grid(dp: np.ndarray, vcfg: dict):
+    """(kbp, sigma, info) for every node, with the shallow: block applied
+    when present. info = dict(hsm, nv, z_mas, n_shallow, shallow_depth)."""
+    hsm, nv, z_mas = master_grid(vcfg)
+    info = dict(hsm=hsm, nv=nv, z_mas=z_mas, n_shallow=0, shallow_depth=None)
+    sh = vcfg.get("shallow")
+    if not sh:
+        kbp, sigma = node_sigma(dp, vcfg, hsm, nv, z_mas)
+        return kbp, sigma, info
+    sub = _sub_cfg(vcfg)
+    depth = float(sh["depth"])
+    shs, snv, sz = master_grid(sub)
+    if shs[-1] < depth:
+        _fail(f"vgrid.shallow: the last shallow class ({shs[-1]:g} m) must "
+              f"reach shallow.depth ({depth:g} m)")
+    shallow = dp < depth
+    deep = ~shallow
+    nrow = int(max(nv.max(), snv.max()))
+    kbp = np.empty(dp.size, dtype=np.int64)
+    sigma = np.full((nrow, dp.size), _BELOW)
+    if deep.any():
+        k1, s1 = node_sigma(dp[deep], vcfg, hsm, nv, z_mas)
+        kbp[deep] = k1
+        sigma[:s1.shape[0], deep] = s1
+    if shallow.any():
+        k2, s2 = node_sigma(dp[shallow], sub, shs, snv, sz)
+        kbp[shallow] = k2
+        sigma[:s2.shape[0], shallow] = s2
+    info.update(n_shallow=int(shallow.sum()), shallow_depth=depth)
+    return kbp, sigma, info
+
+
+_BANDS = [(-1e9, 0.0, "land (dp<=0)"), (0.0, 1.0, "0-1 m"), (1.0, 3.0, "1-3 m"),
+          (3.0, 10.0, "3-10 m"), (10.0, 50.0, "10-50 m"),
+          (50.0, 200.0, "50-200 m"), (200.0, 1000.0, "200-1000 m"),
+          (1000.0, 1e9, ">1000 m")]
+
+
+def grid_diagnostics(dp, kbp, sigma, conn, chunk=400_000) -> dict:
+    """Quality and cost numbers of a vertical grid on a mesh.
+
+    prisms           sum over elements of their level count (as gen_vqs)
+    jump             largest difference in layers between the nodes of one
+                     element (max, 99th percentile, elements with > 5)
+    rx1              hydrostatic consistency (Haney): for each side and each
+                     pair of levels present at both its nodes,
+                     |dz_k + dz_k+1| / (layer thickness at node a + at b),
+                     dz = level depth difference between the two nodes;
+                     the max over levels per side, then max / 99.9 / 99th
+                     percentile over the sides (only wet sides, dp > 0)
+    thinnest         thinnest layer of any node at least 1 m deep (and the
+                     1st percentile)
+    shelf_top/bottom median surface / bottom layer thickness, 20-200 m
+    bands            node count and mean layers per depth band
+    """
+    layers = kbp - 1
+    tri = conn[:, :3] - 1
+    quad = conn[:, 3] > 0
+    k = np.where(conn > 0, kbp[np.maximum(conn, 1) - 1], 0)
+    prisms = int(k.max(axis=1).sum())
+    kmin = np.where(conn > 0, k, 10**9).min(axis=1)
+    jump = k.max(axis=1) - kmin
+
+    # sides (unique node pairs)
+    e = [tri[:, [0, 1]], tri[:, [1, 2]], tri[:, [2, 0]]]
+    if quad.any():
+        q = conn[quad] - 1
+        e = [tri[~quad][:, [0, 1]], tri[~quad][:, [1, 2]], tri[~quad][:, [2, 0]],
+             q[:, [0, 1]], q[:, [1, 2]], q[:, [2, 3]], q[:, [3, 0]]]
+    sides = np.unique(np.sort(np.concatenate(e), axis=1), axis=0)
+    wet = (dp[sides[:, 0]] > 0) & (dp[sides[:, 1]] > 0)
+    sides = sides[wet]
+    nrow = sigma.shape[0]
+    rows = np.arange(nrow - 1)[:, None]
+    rx = np.zeros(len(sides))
+    for a0 in range(0, len(sides), chunk):
+        sa, sb = sides[a0:a0 + chunk, 0], sides[a0:a0 + chunk, 1]
+        za = sigma[:, sa] * dp[sa]
+        zb = sigma[:, sb] * dp[sb]
+        ok = (rows + 1 < np.minimum(kbp[sa], kbp[sb])[None, :])
+        num = np.abs((za[:-1] - zb[:-1]) + (za[1:] - zb[1:]))
+        den = (za[:-1] - za[1:]) + (zb[:-1] - zb[1:])
+        r = np.where(ok & (den > 0), num / np.where(den > 0, den, 1.0), 0.0)
+        rx[a0:a0 + chunk] = r.max(axis=0)
+
+    wetn = np.flatnonzero(dp >= 1.0)    # thin layers of nodes < 1 m deep are
+                                        # unavoidable (sigma) and not counted
+    thin = np.full(dp.size, np.inf)
+    top = np.full(dp.size, np.nan)
+    bot = np.full(dp.size, np.nan)
+    for a0 in range(0, wetn.size, chunk):
+        ids = wetn[a0:a0 + chunk]
+        z = sigma[:, ids] * dp[ids]
+        valid = np.arange(nrow)[:, None] < kbp[ids][None, :]
+        dz = np.where(valid[1:], z[:-1] - z[1:], np.inf)
+        thin[ids] = dz.min(axis=0)
+        top[ids] = dz[0]
+        bot[ids] = (z[kbp[ids] - 2, np.arange(ids.size)]
+                    - z[kbp[ids] - 1, np.arange(ids.size)])
+    shelf = (dp >= 20) & (dp <= 200)
+    bands = []
+    for lo, hi, name in _BANDS:
+        m = (dp > lo) & (dp <= hi)
+        bands.append((name, int(m.sum()),
+                      float(layers[m].mean()) if m.any() else float("nan")))
+    th = thin[np.isfinite(thin)]
+    return dict(
+        nvrt=int(kbp.max()), prisms=prisms, avg_levels=prisms / len(conn),
+        jump_max=int(jump.max()), jump_p99=float(np.percentile(jump, 99)),
+        jump_gt5=int(np.sum(jump > 5)),
+        rx1_max=float(rx.max()) if rx.size else 0.0,
+        rx1_p999=float(np.percentile(rx, 99.9)) if rx.size else 0.0,
+        rx1_p99=float(np.percentile(rx, 99)) if rx.size else 0.0,
+        thinnest=float(th.min()) if th.size else float("nan"),
+        thin_p01=float(np.percentile(th, 1)) if th.size else float("nan"),
+        shelf_top=float(np.nanmedian(top[shelf])) if shelf.any() else float("nan"),
+        shelf_bottom=float(np.nanmedian(bot[shelf])) if shelf.any() else float("nan"),
+        bands=bands)
+
+
+def format_diagnostics(d: dict, ref_prisms=None) -> str:
+    cost = (f"  ({d['prisms'] / ref_prisms:.2f} x reference)"
+            if ref_prisms else "")
+    lines = [
+        f"nvrt = {d['nvrt']}   # of prisms = {d['prisms']}{cost}   "
+        f"average # of levels = {d['avg_levels']:.2f}",
+        f"layer jump within an element: max {d['jump_max']}, 99th pct "
+        f"{d['jump_p99']:.0f}, elements with > 5: {d['jump_gt5']}",
+        f"hydrostatic consistency rx1 (wet sides): max {d['rx1_max']:.2f}, "
+        f"99.9th pct {d['rx1_p999']:.2f}, 99th pct {d['rx1_p99']:.2f}",
+        f"thinnest layer (nodes >= 1 m): {d['thinnest']:.3f} m (1st pct "
+        f"{d['thin_p01']:.3f} m)"
+        f";  shelf 20-200 m median top {d['shelf_top']:.2f} m, bottom "
+        f"{d['shelf_bottom']:.2f} m",
+        "layers per depth band:  " + "   ".join(
+            f"{n}: {c} nodes, {m:.1f}" for n, c, m in d["bands"] if c)]
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Files
 # ---------------------------------------------------------------------------
@@ -320,12 +487,17 @@ def run_gen_vgrid(cfg: dict):
     hsm, nv, z_mas = master_grid(vcfg)
     print(f"  {len(hsm)} classes, up to {nv.max()} levels, deepest "
           f"{hsm[-1]:g} m")
+    if vcfg.get("shallow"):
+        print(f"  hybrid: nodes shallower than {float(vcfg['shallow']['depth']):g}"
+              f" m use the {len(vcfg['shallow']['classes'])} shallow classes")
     print(f"  Reading {hgrid} ...")
     x, y, dp, i34, conn = read_hgrid(hgrid)
     ne = len(i34)
     print(f"  {dp.size} nodes, {ne} elements, depth {dp.min():.2f} to "
           f"{dp.max():.2f} m")
-    kbp, sigma = node_sigma(dp, vcfg, hsm, nv, z_mas)
+    kbp, sigma, info = compute_grid(dp, vcfg)
+    if info["n_shallow"]:
+        print(f"  {info['n_shallow']} node(s) on the shallow classes")
     nprism = int(element_levels(kbp, conn).sum())
 
     work.mkdir(parents=True, exist_ok=True)
@@ -336,7 +508,10 @@ def run_gen_vgrid(cfg: dict):
     write_master(work / "vgrid_master.out", hsm, nv, z_mas)
     summary = (f"nvrt = {nvrt}\n# of prisms = {nprism}\n"
                f"Average # of layers = {nprism / ne:.6f}\n")
-    (work / "gen_vgrid.log").write_text(summary)
     print("  " + summary.strip().replace("\n", "\n  "))
+    print("  Diagnostics ...")
+    diag = format_diagnostics(grid_diagnostics(dp, kbp, sigma, conn))
+    (work / "gen_vgrid.log").write_text(summary + diag + "\n")
+    print("  " + diag.replace("\n", "\n  "))
     print(f"  Wrote {out}")
     print(f"  Wrote {work}/nlev.gr3, vgrid_master.out, gen_vgrid.log")

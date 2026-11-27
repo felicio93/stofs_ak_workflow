@@ -296,7 +296,8 @@ _BANDS = [(-1e9, 0.0, "land (dp<=0)"), (0.0, 1.0, "0-1 m"), (1.0, 3.0, "1-3 m"),
           (1000.0, 1e9, ">1000 m")]
 
 
-def grid_diagnostics(dp, kbp, sigma, conn, chunk=400_000) -> dict:
+def grid_diagnostics(dp, kbp, sigma, conn, chunk=400_000,
+                     maps: bool = False) -> dict:
     """Quality and cost numbers of a vertical grid on a mesh.
 
     prisms           sum over elements of their level count (as gen_vqs)
@@ -312,6 +313,8 @@ def grid_diagnostics(dp, kbp, sigma, conn, chunk=400_000) -> dict:
                      1st percentile)
     shelf_top/bottom median surface / bottom layer thickness, 20-200 m
     bands            node count and mean layers per depth band
+    With maps=True also rx1_node: per node the largest rx1 of its sides
+    (0 on dry nodes), for plotting where the levels slope most.
     """
     layers = kbp - 1
     tri = conn[:, :3] - 1
@@ -364,7 +367,13 @@ def grid_diagnostics(dp, kbp, sigma, conn, chunk=400_000) -> dict:
         bands.append((name, int(m.sum()),
                       float(layers[m].mean()) if m.any() else float("nan")))
     th = thin[np.isfinite(thin)]
-    return dict(
+    extra = {}
+    if maps:
+        rn = np.zeros(dp.size)
+        np.maximum.at(rn, sides[:, 0], rx)
+        np.maximum.at(rn, sides[:, 1], rx)
+        extra["rx1_node"] = rn
+    return dict(**extra,
         nvrt=int(kbp.max()), prisms=prisms, avg_levels=prisms / len(conn),
         jump_max=int(jump.max()), jump_p99=float(np.percentile(jump, 99)),
         jump_gt5=int(np.sum(jump > 5)),
@@ -442,7 +451,19 @@ def write_nlev(path: Path, x, y, kbp, i34, conn):
         f.write("# of levels at each node\n")
         f.write(f"{len(i34)} {kbp.size}\n")
         for i in range(kbp.size):
-            f.write(f"{i + 1} {x[i]!r} {y[i]!r} {int(kbp[i])}\n")
+            f.write(f"{i + 1} {float(x[i])!r} {float(y[i])!r} {int(kbp[i])}\n")
+        for e in range(len(i34)):
+            n = int(i34[e])
+            f.write(f"{e + 1} {n} " + " ".join(map(str, conn[e, :n])) + "\n")
+
+
+def write_node_gr3(path: Path, title: str, x, y, vals, i34, conn):
+    """A .gr3 with one value per node (for plotting)."""
+    with open(path, "w") as f:
+        f.write(title + "\n")
+        f.write(f"{len(i34)} {len(vals)}\n")
+        f.write("".join(f"{i + 1} {float(x[i])!r} {float(y[i])!r} {float(vals[i]):.4f}\n"
+                        for i in range(len(vals))))
         for e in range(len(i34)):
             n = int(i34[e])
             f.write(f"{e + 1} {n} " + " ".join(map(str, conn[e, :n])) + "\n")
@@ -515,8 +536,18 @@ def run_gen_vgrid(cfg: dict):
                f"Average # of layers = {nprism / ne:.6f}\n")
     print("  " + summary.strip().replace("\n", "\n  "))
     print("  Diagnostics ...")
-    diag = format_diagnostics(grid_diagnostics(dp, kbp, sigma, conn))
+    d = grid_diagnostics(dp, kbp, sigma, conn, maps=True)
+    diag = format_diagnostics(d)
     (work / "gen_vgrid.log").write_text(summary + diag + "\n")
     print("  " + diag.replace("\n", "\n  "))
+    write_node_gr3(work / "rx1.gr3", "max rx1 (hydrostatic consistency) of "
+                   "the sides at each node, from gen_vgrid", x, y,
+                   d["rx1_node"], i34, conn)
+    print(f"  Wrote {work}/rx1.gr3 (plotted by inspect_mesh)")
     print(f"  Wrote {out}")
     print(f"  Wrote {work}/nlev.gr3, vgrid_master.out, gen_vgrid.log")
+    # an rx1 plot of an older inspect_mesh run would be stale
+    stale = mdir / f"D{cfg['project_id']}" / f"D{cfg['project_id']}_fix" / "inspect_mesh.done"
+    if stale.exists():
+        stale.unlink()
+        print(f"  Removed {stale} (vgrid changed: inspect_mesh will plot again)")

@@ -20,7 +20,8 @@ the cost ratio:
 For each candidate it prints the numbers of core.vgrid.grid_diagnostics
 (cost in prisms and relative to the reference, layer jumps between nodes,
 hydrostatic consistency rx1, thinnest layer, shelf surface/bottom layer,
-layers per depth band). A candidate that fails (e.g. a node deeper than
+layers per depth band); with --maps a .gr3 of the largest rx1 at each node
+per candidate. A candidate that fails (e.g. a node deeper than
 its last class) is reported and skipped.
 """
 
@@ -35,10 +36,12 @@ from workflow.core.vgrid import (compute_grid, format_diagnostics,
                                  grid_diagnostics, read_hgrid)
 
 
-def evaluate(hgrid: Path, candidates: dict, out=None) -> list:
+def evaluate(hgrid: Path, candidates: dict, out=None, maps=None) -> list:
     t0 = time.time()
     print(f"Reading {hgrid} ...", flush=True)
-    _, _, dp, _, conn = read_hgrid(hgrid)
+    x, y, dp, i34, conn = read_hgrid(hgrid)
+    if maps:
+        Path(maps).mkdir(parents=True, exist_ok=True)
     print(f"  {dp.size} nodes, {len(conn)} elements, depth {dp.min():.2f} "
           f"to {dp.max():.2f} m ({time.time() - t0:.0f} s)", flush=True)
     results, ref = [], None
@@ -52,8 +55,14 @@ def evaluate(hgrid: Path, candidates: dict, out=None) -> list:
             print(msg, flush=True)
             text.append(msg)
             continue
-        d = grid_diagnostics(dp, kbp, sigma, conn)
+        d = grid_diagnostics(dp, kbp, sigma, conn, maps=bool(maps))
         del sigma
+        if maps:
+            from workflow.core.vgrid import write_node_gr3
+            f = Path(maps) / f"rx1_{name}.gr3"
+            write_node_gr3(f, f"max rx1 at each node, candidate {name}", x, y,
+                           d["rx1_node"], i34, conn)
+            print(f"  wrote {f}", flush=True)
         if ref is None:
             ref = d["prisms"]
         block = (f"\n== {name}" + (f"  ({info['n_shallow']} nodes on the "
@@ -75,11 +84,14 @@ def main(argv=None):
     ap.add_argument("--hgrid", required=True, type=Path)
     ap.add_argument("--candidates", required=True, type=Path)
     ap.add_argument("--out", default=None)
+    ap.add_argument("--maps", default=None,
+                    help="folder for one rx1_<name>.gr3 per candidate "
+                         "(max rx1 at each node, for QGIS)")
     a = ap.parse_args(argv)
     cands = yaml.safe_load(a.candidates.read_text())
     if not isinstance(cands, dict) or not cands:
         sys.exit("candidates file must map names to vgrid blocks")
-    evaluate(a.hgrid, cands, a.out)
+    evaluate(a.hgrid, cands, a.out, a.maps)
 
 
 if __name__ == "__main__":

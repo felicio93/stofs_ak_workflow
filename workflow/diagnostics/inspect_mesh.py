@@ -20,6 +20,8 @@ One plot per file:
                        D = 2*sqrt(Area/pi) metres (diameter of
                        equivalent circle, not radius)
   vertical_layers   -> computed from vgrid.in (nvrt - kbp + 1 per node)
+  rx1               -> vgrid_work/rx1.gr3 from gen_vgrid (largest
+                       hydrostatic-consistency rx1 of the sides at each node)
   partition         -> partition.prop: each MPI rank's elements in one
                        colour, neighbouring ranks always in different
                        colours (a rank split into pieces shows as several
@@ -425,6 +427,27 @@ def inspect_mesh(cfg: dict):
     else:
         print("  WARNING: vgrid.in not found in fix/, "
               "skipping vertical layers plot.")
+
+    # --- Hydrostatic consistency rx1 (written by gen_vgrid) ---
+    rx1_path = mdir / "vgrid_work" / "rx1.gr3"
+    if rx1_path.exists():
+        print("  Processing vgrid_work/rx1.gr3 ...")
+        rx = read_gr3_values(rx1_path, np_nodes)
+        wet = rx[rx > 0]
+        top = float(np.percentile(wet, 99.9)) if wet.size else 1.0
+        make_plot(
+            triang, rx,
+            f"Hydrostatic consistency rx1 (max per node; max "
+            f"{rx.max():.1f}, 99th pct {np.percentile(wet, 99):.1f})"
+            if wet.size else "Hydrostatic consistency rx1",
+            out / "rx1.jpg",
+            lon_min, lon_max, lat_min, lat_max,
+            cmap="magma_r", vmin=0, vmax=max(top, 1.0),
+            cbar_label="rx1 (colour scale to the 99.9th percentile)",
+            boundaries=boundaries)
+    else:
+        print("  vgrid_work/rx1.gr3 not found (made by gen_vgrid), "
+              "skipping the rx1 plot.")
 
     sentinel.touch()
     print(f"\n  All mesh diagnostic plots written to {out}")
